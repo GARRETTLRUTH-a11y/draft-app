@@ -1,6 +1,8 @@
 "use client";
 
 import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { supabase } from "@/lib/supabaseClient";
 
 type AppTab = "setup" | "draft" | "results";
 
@@ -46,6 +48,13 @@ type SavedDraftState = {
 type FullDraftExport = SavedDraftState & {
   exportedAt: string;
   appVersion: string;
+};
+
+type CloudDraft = {
+  id: string;
+  title: string;
+  draft_data: SavedDraftState;
+  updated_at: string;
 };
 
 const LOCAL_STORAGE_KEY = "draft-anything-current-draft";
@@ -264,6 +273,14 @@ export default function Home() {
   const [hasLoadedSavedDraft, setHasLoadedSavedDraft] = useState(false);
   const [importMessage, setImportMessage] = useState("");
 
+  const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [cloudDrafts, setCloudDrafts] = useState<CloudDraft[]>([]);
+  const [currentCloudDraftId, setCurrentCloudDraftId] = useState<string | null>(
+    null
+  );
+  const [cloudMessage, setCloudMessage] = useState("");
+  const [isCloudLoading, setIsCloudLoading] = useState(false);
+
   const [selectedTemplateId, setSelectedTemplateId] = useState(defaultTemplate.id);
   const [draftTitle, setDraftTitle] = useState(defaultTemplate.title);
   const [drafters, setDrafters] = useState<Drafter[]>(
@@ -292,15 +309,7 @@ export default function Home() {
       try {
         const parsedDraft = JSON.parse(savedDraft) as SavedDraftState;
 
-        setSelectedTemplateId(parsedDraft.selectedTemplateId || defaultTemplate.id);
-        setDraftTitle(parsedDraft.draftTitle || defaultTemplate.title);
-        setDrafters(parsedDraft.drafters || cloneDrafters(defaultTemplate.drafters));
-        setAvailableItems(
-          parsedDraft.availableItems || cloneItems(defaultTemplate.items)
-        );
-        setPicks(parsedDraft.picks || []);
-        setSnakeDraft(Boolean(parsedDraft.snakeDraft));
-        setLotteryHasRun(Boolean(parsedDraft.lotteryHasRun));
+        applyDraftState(parsedDraft);
       } catch {
         localStorage.removeItem(LOCAL_STORAGE_KEY);
       }
@@ -310,17 +319,39 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    async function loadUser() {
+      const { data } = await supabase.auth.getUser();
+      setUserEmail(data.user?.email ?? null);
+
+      if (data.user) {
+        await loadCloudDrafts();
+      }
+    }
+
+    loadUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUserEmail(session?.user?.email ?? null);
+
+      if (session?.user) {
+        loadCloudDrafts();
+      } else {
+        setCloudDrafts([]);
+        setCurrentCloudDraftId(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
     if (!hasLoadedSavedDraft) return;
 
-    const draftToSave: SavedDraftState = {
-      selectedTemplateId,
-      draftTitle,
-      drafters,
-      availableItems,
-      picks,
-      snakeDraft,
-      lotteryHasRun,
-    };
+    const draftToSave = buildDraftState();
 
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(draftToSave));
   }, [
@@ -390,6 +421,153 @@ export default function Home() {
     return searchText.includes(search.toLowerCase());
   });
 
+  function buildDraftState(): SavedDraftState {
+    return {
+      selectedTemplateId,
+      draftTitle,
+      drafters,
+      availableItems,
+      picks,
+      snakeDraft,
+      lotteryHasRun,
+    };
+  }
+
+  function applyDraftState(draftState: SavedDraftState) {
+    setSelectedTemplateId(draftState.selectedTemplateId || defaultTemplate.id);
+    setDraftTitle(draftState.draftTitle || defaultTemplate.title);
+    setDrafters(draftState.drafters || cloneDrafters(defaultTemplate.drafters));
+    setAvailableItems(
+      draftState.availableItems || cloneItems(defaultTemplate.items)
+    );
+    setPicks(draftState.picks || []);
+    setSnakeDraft(Boolean(draftState.snakeDraft));
+    setLotteryHasRun(Boolean(draftState.lotteryHasRun));
+  }
+
+  async function loadCloudDrafts() {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in to load saved drafts.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("drafts")
+      .select("id, title, draft_data, updated_at")
+      .eq("user_id", userData.user.id)
+      .order("updated_at", { ascending: false });
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      setCloudDrafts((data || []) as CloudDraft[]);
+    }
+
+    setIsCloudLoading(false);
+  }
+
+  async function saveDraftToAccount() {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in before saving drafts to your account.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const draftState = buildDraftState();
+
+    if (currentCloudDraftId) {
+      const { error } = await supabase
+        .from("drafts")
+        .update({
+          title: draftTitle,
+          draft_data: draftState,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", currentCloudDraftId)
+        .eq("user_id", userData.user.id);
+
+      if (error) {
+        setCloudMessage(error.message);
+      } else {
+        setCloudMessage("Saved draft updated in your account.");
+        await loadCloudDrafts();
+      }
+
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("drafts")
+      .insert({
+        user_id: userData.user.id,
+        title: draftTitle,
+        draft_data: draftState,
+      })
+      .select("id")
+      .single();
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      setCurrentCloudDraftId(data.id);
+      setCloudMessage("Draft saved to your account.");
+      await loadCloudDrafts();
+    }
+
+    setIsCloudLoading(false);
+  }
+
+  function loadCloudDraft(draft: CloudDraft) {
+    applyDraftState(draft.draft_data);
+    setCurrentCloudDraftId(draft.id);
+    setCloudMessage(`Loaded "${draft.title}".`);
+    setActiveTab("draft");
+  }
+
+  async function deleteCloudDraft(draftId: string) {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in before deleting drafts.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("drafts")
+      .delete()
+      .eq("id", draftId)
+      .eq("user_id", userData.user.id);
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      if (currentCloudDraftId === draftId) {
+        setCurrentCloudDraftId(null);
+      }
+
+      setCloudMessage("Saved draft deleted.");
+      await loadCloudDrafts();
+    }
+
+    setIsCloudLoading(false);
+  }
+
   function loadTemplate(templateId: string) {
     const template =
       draftTemplates.find((draftTemplate) => draftTemplate.id === templateId) ||
@@ -410,6 +588,8 @@ export default function Home() {
     setBulkDraftersText("");
     setBulkItemsText("");
     setImportMessage("");
+    setCloudMessage("");
+    setCurrentCloudDraftId(null);
     setActiveTab("setup");
   }
 
@@ -424,13 +604,7 @@ export default function Home() {
 
   function exportFullDraft() {
     const draftToExport: FullDraftExport = {
-      selectedTemplateId,
-      draftTitle,
-      drafters,
-      availableItems,
-      picks,
-      snakeDraft,
-      lotteryHasRun,
+      ...buildDraftState(),
       exportedAt: new Date().toISOString(),
       appVersion: "draft-anything-mvp-1",
     };
@@ -468,13 +642,16 @@ export default function Home() {
         throw new Error("Invalid draft file");
       }
 
-      setSelectedTemplateId(importedDraft.selectedTemplateId || "blank");
-      setDraftTitle(importedDraft.draftTitle);
-      setDrafters(importedDraft.drafters);
-      setAvailableItems(importedDraft.availableItems);
-      setPicks(importedDraft.picks);
-      setSnakeDraft(Boolean(importedDraft.snakeDraft));
-      setLotteryHasRun(Boolean(importedDraft.lotteryHasRun));
+      applyDraftState({
+        selectedTemplateId: importedDraft.selectedTemplateId || "blank",
+        draftTitle: importedDraft.draftTitle,
+        drafters: importedDraft.drafters,
+        availableItems: importedDraft.availableItems,
+        picks: importedDraft.picks,
+        snakeDraft: Boolean(importedDraft.snakeDraft),
+        lotteryHasRun: Boolean(importedDraft.lotteryHasRun),
+      });
+
       setSearch("");
       setNewDrafter("");
       setNewItemName("");
@@ -482,10 +659,13 @@ export default function Home() {
       setNewItemDescription("");
       setBulkDraftersText("");
       setBulkItemsText("");
+      setCurrentCloudDraftId(null);
       setImportMessage("Draft imported successfully.");
       setActiveTab("draft");
     } catch {
-      setImportMessage("Could not import that file. Make sure it is a Draft Anything JSON export.");
+      setImportMessage(
+        "Could not import that file. Make sure it is a Draft Anything JSON export."
+      );
     } finally {
       event.target.value = "";
     }
@@ -767,6 +947,19 @@ export default function Home() {
             <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
               Auto-saved
             </span>
+
+            {userEmail ? (
+              <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-1.5 text-xs font-bold text-cyan-200">
+                Signed in
+              </span>
+            ) : (
+              <Link
+                href="/login"
+                className="rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-bold text-white hover:bg-white/15"
+              >
+                Login
+              </Link>
+            )}
           </div>
 
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -799,8 +992,16 @@ export default function Home() {
               </button>
 
               <button
+                onClick={saveDraftToAccount}
+                disabled={isCloudLoading}
+                className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Save to Account
+              </button>
+
+              <button
                 onClick={exportFullDraft}
-                className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200"
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
               >
                 Export Full Draft
               </button>
@@ -817,6 +1018,12 @@ export default function Home() {
             </div>
           </div>
 
+          {cloudMessage && (
+            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
+              {cloudMessage}
+            </div>
+          )}
+
           {importMessage && (
             <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
               {importMessage}
@@ -824,16 +1031,97 @@ export default function Home() {
           )}
         </header>
 
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-2xl font-bold">Account Drafts</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                Save drafts to your account and load them later from any browser.
+              </p>
+            </div>
+
+            <button
+              onClick={loadCloudDrafts}
+              disabled={isCloudLoading || !userEmail}
+              className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Refresh Saved Drafts
+            </button>
+          </div>
+
+          {!userEmail && (
+            <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4 text-sm font-semibold text-yellow-100">
+              You are not signed in.{" "}
+              <Link href="/login" className="text-cyan-200 underline">
+                Login or sign up
+              </Link>{" "}
+              to save drafts to your account.
+            </div>
+          )}
+
+          {userEmail && cloudDrafts.length === 0 && (
+            <div className="mt-5 rounded-2xl border border-white/10 bg-slate-900 p-4 text-sm text-slate-400">
+              No saved account drafts yet. Click Save to Account to create one.
+            </div>
+          )}
+
+          {userEmail && cloudDrafts.length > 0 && (
+            <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              {cloudDrafts.map((draft) => (
+                <div
+                  key={draft.id}
+                  className={`rounded-2xl border p-4 ${
+                    draft.id === currentCloudDraftId
+                      ? "border-cyan-300 bg-cyan-300/10"
+                      : "border-white/10 bg-slate-900"
+                  }`}
+                >
+                  <h3 className="text-lg font-black">{draft.title}</h3>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Updated {new Date(draft.updated_at).toLocaleString()}
+                  </p>
+
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      onClick={() => loadCloudDraft(draft)}
+                      className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+                    >
+                      Load
+                    </button>
+
+                    <button
+                      onClick={() => deleteCloudDraft(draft.id)}
+                      disabled={isCloudLoading}
+                      className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
         <nav className="grid gap-3 rounded-3xl border border-white/10 bg-white/5 p-3 md:grid-cols-3">
-          <button onClick={() => setActiveTab("setup")} className={tabButtonClass("setup")}>
+          <button
+            onClick={() => setActiveTab("setup")}
+            className={tabButtonClass("setup")}
+          >
             1. Setup
           </button>
 
-          <button onClick={() => setActiveTab("draft")} className={tabButtonClass("draft")}>
+          <button
+            onClick={() => setActiveTab("draft")}
+            className={tabButtonClass("draft")}
+          >
             2. Draft Room
           </button>
 
-          <button onClick={() => setActiveTab("results")} className={tabButtonClass("results")}>
+          <button
+            onClick={() => setActiveTab("results")}
+            className={tabButtonClass("results")}
+          >
             3. Results
           </button>
         </nav>
@@ -899,7 +1187,9 @@ export default function Home() {
                   </div>
 
                   <div className="rounded-2xl bg-slate-900 p-4">
-                    <div className="text-2xl font-black">{availableItems.length}</div>
+                    <div className="text-2xl font-black">
+                      {availableItems.length}
+                    </div>
                     <div className="text-xs text-slate-400">Available</div>
                   </div>
 

@@ -308,7 +308,6 @@ export default function Home() {
     if (savedDraft) {
       try {
         const parsedDraft = JSON.parse(savedDraft) as SavedDraftState;
-
         applyDraftState(parsedDraft);
       } catch {
         localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -472,7 +471,7 @@ export default function Home() {
     setIsCloudLoading(false);
   }
 
-  async function saveDraftToAccount() {
+  async function createCloudDraft(titleToSave: string, successMessage: string) {
     setIsCloudLoading(true);
     setCloudMessage("");
 
@@ -484,35 +483,18 @@ export default function Home() {
       return;
     }
 
-    const draftState = buildDraftState();
+    const cleanTitle = titleToSave.trim() || "Untitled Draft";
 
-    if (currentCloudDraftId) {
-      const { error } = await supabase
-        .from("drafts")
-        .update({
-          title: draftTitle,
-          draft_data: draftState,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", currentCloudDraftId)
-        .eq("user_id", userData.user.id);
-
-      if (error) {
-        setCloudMessage(error.message);
-      } else {
-        setCloudMessage("Saved draft updated in your account.");
-        await loadCloudDrafts();
-      }
-
-      setIsCloudLoading(false);
-      return;
-    }
+    const draftState: SavedDraftState = {
+      ...buildDraftState(),
+      draftTitle: cleanTitle,
+    };
 
     const { data, error } = await supabase
       .from("drafts")
       .insert({
         user_id: userData.user.id,
-        title: draftTitle,
+        title: cleanTitle,
         draft_data: draftState,
       })
       .select("id")
@@ -521,12 +503,64 @@ export default function Home() {
     if (error) {
       setCloudMessage(error.message);
     } else {
+      setDraftTitle(cleanTitle);
       setCurrentCloudDraftId(data.id);
-      setCloudMessage("Draft saved to your account.");
+      setCloudMessage(successMessage);
       await loadCloudDrafts();
     }
 
     setIsCloudLoading(false);
+  }
+
+  async function saveNewDraftToAccount() {
+    await createCloudDraft(draftTitle, "Saved as a new account draft.");
+  }
+
+  async function updateCurrentCloudDraft() {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in before updating drafts.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    if (!currentCloudDraftId) {
+      setCloudMessage(
+        "No saved draft is currently loaded. Use Save New Draft first."
+      );
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const draftState = buildDraftState();
+
+    const { error } = await supabase
+      .from("drafts")
+      .update({
+        title: draftTitle,
+        draft_data: draftState,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", currentCloudDraftId)
+      .eq("user_id", userData.user.id);
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      setCloudMessage("Current saved draft updated.");
+      await loadCloudDrafts();
+    }
+
+    setIsCloudLoading(false);
+  }
+
+  async function duplicateCurrentDraft() {
+    const copyTitle = `${draftTitle} Copy`;
+    await createCloudDraft(copyTitle, "Duplicated draft saved to your account.");
   }
 
   function loadCloudDraft(draft: CloudDraft) {
@@ -988,15 +1022,31 @@ export default function Home() {
                 onClick={clearSavedDraft}
                 className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
               >
-                Clear Saved Draft
+                Clear Local Draft
               </button>
 
               <button
-                onClick={saveDraftToAccount}
+                onClick={saveNewDraftToAccount}
                 disabled={isCloudLoading}
                 className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Save to Account
+                Save New Draft
+              </button>
+
+              <button
+                onClick={updateCurrentCloudDraft}
+                disabled={isCloudLoading || !currentCloudDraftId}
+                className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Update Current
+              </button>
+
+              <button
+                onClick={duplicateCurrentDraft}
+                disabled={isCloudLoading}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Duplicate Draft
               </button>
 
               <button
@@ -1017,6 +1067,13 @@ export default function Home() {
               </label>
             </div>
           </div>
+
+          {currentCloudDraftId && (
+            <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-4 text-sm font-semibold text-green-100">
+              A saved account draft is currently loaded. Use Update Current to
+              overwrite it, or Save New Draft / Duplicate Draft to create another copy.
+            </div>
+          )}
 
           {cloudMessage && (
             <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
@@ -1061,7 +1118,7 @@ export default function Home() {
 
           {userEmail && cloudDrafts.length === 0 && (
             <div className="mt-5 rounded-2xl border border-white/10 bg-slate-900 p-4 text-sm text-slate-400">
-              No saved account drafts yet. Click Save to Account to create one.
+              No saved account drafts yet. Click Save New Draft to create one.
             </div>
           )}
 
@@ -1513,7 +1570,9 @@ export default function Home() {
                       </div>
                     </div>
 
-                    <p className="mt-4 text-sm text-slate-400">{item.description}</p>
+                    <p className="mt-4 text-sm text-slate-400">
+                      {item.description}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -1570,7 +1629,9 @@ export default function Home() {
                     </div>
 
                     <div className="mt-1 text-lg font-black">{pick.item.name}</div>
-                    <div className="text-sm text-cyan-300">{pick.item.category}</div>
+                    <div className="text-sm text-cyan-300">
+                      {pick.item.category}
+                    </div>
                   </div>
                 ))}
               </div>

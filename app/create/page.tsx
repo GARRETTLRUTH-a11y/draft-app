@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, useEffect, useMemo, useState } from "react";
 
 type AppTab = "setup" | "draft" | "results";
 
@@ -41,6 +41,11 @@ type SavedDraftState = {
   picks: Pick[];
   snakeDraft: boolean;
   lotteryHasRun: boolean;
+};
+
+type FullDraftExport = SavedDraftState & {
+  exportedAt: string;
+  appVersion: string;
 };
 
 const LOCAL_STORAGE_KEY = "draft-anything-current-draft";
@@ -257,6 +262,7 @@ const defaultTemplate = draftTemplates[0];
 export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("setup");
   const [hasLoadedSavedDraft, setHasLoadedSavedDraft] = useState(false);
+  const [importMessage, setImportMessage] = useState("");
 
   const [selectedTemplateId, setSelectedTemplateId] = useState(defaultTemplate.id);
   const [draftTitle, setDraftTitle] = useState(defaultTemplate.title);
@@ -403,6 +409,7 @@ export default function Home() {
     setNewItemDescription("");
     setBulkDraftersText("");
     setBulkItemsText("");
+    setImportMessage("");
     setActiveTab("setup");
   }
 
@@ -413,6 +420,75 @@ export default function Home() {
   function clearSavedDraft() {
     localStorage.removeItem(LOCAL_STORAGE_KEY);
     loadTemplate(defaultTemplate.id);
+  }
+
+  function exportFullDraft() {
+    const draftToExport: FullDraftExport = {
+      selectedTemplateId,
+      draftTitle,
+      drafters,
+      availableItems,
+      picks,
+      snakeDraft,
+      lotteryHasRun,
+      exportedAt: new Date().toISOString(),
+      appVersion: "draft-anything-mvp-1",
+    };
+
+    const jsonContent = JSON.stringify(draftToExport, null, 2);
+    const blob = new Blob([jsonContent], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+
+    const safeTitle =
+      draftTitle.trim().replaceAll(" ", "-").toLowerCase() || "draft-anything";
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}-full-draft.json`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+  }
+
+  async function importFullDraft(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) return;
+
+    try {
+      const fileText = await file.text();
+      const importedDraft = JSON.parse(fileText) as Partial<FullDraftExport>;
+
+      if (
+        !importedDraft.draftTitle ||
+        !Array.isArray(importedDraft.drafters) ||
+        !Array.isArray(importedDraft.availableItems) ||
+        !Array.isArray(importedDraft.picks)
+      ) {
+        throw new Error("Invalid draft file");
+      }
+
+      setSelectedTemplateId(importedDraft.selectedTemplateId || "blank");
+      setDraftTitle(importedDraft.draftTitle);
+      setDrafters(importedDraft.drafters);
+      setAvailableItems(importedDraft.availableItems);
+      setPicks(importedDraft.picks);
+      setSnakeDraft(Boolean(importedDraft.snakeDraft));
+      setLotteryHasRun(Boolean(importedDraft.lotteryHasRun));
+      setSearch("");
+      setNewDrafter("");
+      setNewItemName("");
+      setNewItemCategory("");
+      setNewItemDescription("");
+      setBulkDraftersText("");
+      setBulkItemsText("");
+      setImportMessage("Draft imported successfully.");
+      setActiveTab("draft");
+    } catch {
+      setImportMessage("Could not import that file. Make sure it is a Draft Anything JSON export.");
+    } finally {
+      event.target.value = "";
+    }
   }
 
   function addDrafter() {
@@ -721,8 +797,31 @@ export default function Home() {
               >
                 Clear Saved Draft
               </button>
+
+              <button
+                onClick={exportFullDraft}
+                className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200"
+              >
+                Export Full Draft
+              </button>
+
+              <label className="cursor-pointer rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15">
+                Import Full Draft
+                <input
+                  type="file"
+                  accept="application/json,.json"
+                  onChange={importFullDraft}
+                  className="hidden"
+                />
+              </label>
             </div>
           </div>
+
+          {importMessage && (
+            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
+              {importMessage}
+            </div>
+          )}
         </header>
 
         <nav className="grid gap-3 rounded-3xl border border-white/10 bg-white/5 p-3 md:grid-cols-3">
@@ -1199,13 +1298,22 @@ export default function Home() {
                 </p>
               </div>
 
-              <button
-                onClick={exportDraftResults}
-                disabled={picks.length === 0}
-                className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Export Results
-              </button>
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  onClick={exportDraftResults}
+                  disabled={picks.length === 0}
+                  className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Export Results CSV
+                </button>
+
+                <button
+                  onClick={exportFullDraft}
+                  className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200"
+                >
+                  Export Full Draft JSON
+                </button>
+              </div>
             </div>
 
             <div className="mt-6 grid gap-4 md:grid-cols-2 lg:grid-cols-3">

@@ -41,6 +41,7 @@ type RoomDraft = {
   draft_data: SavedDraftState;
   updated_at: string;
   is_public: boolean;
+  is_joinable: boolean;
   share_id: string;
 };
 
@@ -78,7 +79,7 @@ export default function RoomPage() {
 
     const { data, error } = await supabase
       .from("drafts")
-      .select("id, title, draft_data, updated_at, is_public, share_id")
+      .select("id, title, draft_data, updated_at, is_public, is_joinable, share_id")
       .eq("id", draftId)
       .maybeSingle();
 
@@ -132,6 +133,62 @@ export default function RoomPage() {
 
     return searchText.includes(search.toLowerCase());
   });
+
+  function getJoinLink() {
+    if (!draft) return "";
+
+    if (typeof window === "undefined") {
+      return `/join/${draft.id}`;
+    }
+
+    return `${window.location.origin}/join/${draft.id}`;
+  }
+
+  async function copyJoinLink() {
+    const url = getJoinLink();
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setMessage("Player join link copied to clipboard.");
+    } catch {
+      setMessage(`Copy this join link: ${url}`);
+    }
+  }
+
+  async function togglePlayerPicks(nextValue: boolean) {
+    if (!draft) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("drafts")
+      .update({
+        is_joinable: nextValue,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draft.id);
+
+    if (error) {
+      setMessage(error.message);
+      setIsSaving(false);
+      return;
+    }
+
+    setDraft({
+      ...draft,
+      is_joinable: nextValue,
+      updated_at: new Date().toISOString(),
+    });
+
+    setMessage(
+      nextValue
+        ? "Player self-picking is now enabled. Players will be able to join and claim drafter slots once the join page is added."
+        : "Player self-picking is now disabled."
+    );
+
+    setIsSaving(false);
+  }
 
   async function saveRoomDraft(nextDraftData: SavedDraftState) {
     if (!draft) return;
@@ -264,6 +321,16 @@ export default function RoomPage() {
               {draftStatus}
             </span>
 
+            {draft.is_joinable ? (
+              <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-4 py-1.5 text-xs font-bold text-purple-200">
+                Player Picks On
+              </span>
+            ) : (
+              <span className="rounded-full border border-slate-400/30 bg-slate-400/10 px-4 py-1.5 text-xs font-bold text-slate-200">
+                Player Picks Off
+              </span>
+            )}
+
             {userEmail && (
               <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
                 Signed in
@@ -294,6 +361,32 @@ export default function RoomPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
+              {draft.is_joinable ? (
+                <button
+                  onClick={() => togglePlayerPicks(false)}
+                  disabled={isSaving}
+                  className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Disable Player Picks
+                </button>
+              ) : (
+                <button
+                  onClick={() => togglePlayerPicks(true)}
+                  disabled={isSaving}
+                  className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Enable Player Picks
+                </button>
+              )}
+
+              <button
+                onClick={copyJoinLink}
+                disabled={!draft.is_joinable}
+                className="rounded-2xl bg-white px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Copy Player Join Link
+              </button>
+
               <Link
                 href="/rooms"
                 className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
@@ -319,6 +412,12 @@ export default function RoomPage() {
               )}
             </div>
           </div>
+
+          {draft.is_joinable && (
+            <div className="mt-5 rounded-2xl border border-purple-400/30 bg-purple-400/10 p-4 text-sm font-semibold text-purple-100">
+              Player self-picking is enabled. Join link: {getJoinLink()}
+            </div>
+          )}
 
           {message && (
             <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
@@ -401,7 +500,7 @@ export default function RoomPage() {
                       disabled={!currentDrafter || isSaving}
                       className="rounded-full bg-cyan-400 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      Draft
+                      Host Draft
                     </button>
                   </div>
 
@@ -427,7 +526,7 @@ export default function RoomPage() {
                 disabled={picks.length === 0 || isSaving}
                 className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                Undo
+                Host Undo
               </button>
             </div>
 

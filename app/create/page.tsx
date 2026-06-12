@@ -727,6 +727,11 @@ export default function Home() {
     setActiveTab("setup");
   }
 
+  function startNewBlankDraft() {
+    loadTemplate("blank");
+    setCloudMessage("Started a new blank draft. Click Save New Draft when ready.");
+  }
+
   function resetDraft() {
     loadTemplate(selectedTemplateId);
   }
@@ -1117,6 +1122,13 @@ export default function Home() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
+              <button
+                onClick={startNewBlankDraft}
+                className="rounded-2xl bg-purple-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-purple-300"
+              >
+                New Blank Draft
+              </button>
+
               <button
                 onClick={resetDraft}
                 className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"

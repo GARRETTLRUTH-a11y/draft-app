@@ -41,6 +41,13 @@ type SharedDraftRecord = {
   updated_at: string;
 };
 
+type SharedDraftRealtimeRecord = {
+  title: string;
+  draft_data: SavedDraftState;
+  updated_at: string;
+  is_public: boolean;
+};
+
 export default function SharedDraftPage() {
   const params = useParams();
   const rawShareId = params.shareId;
@@ -49,13 +56,17 @@ export default function SharedDraftPage() {
   const [draft, setDraft] = useState<SharedDraftRecord | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [liveMessage, setLiveMessage] = useState("Connecting to live updates...");
 
   useEffect(() => {
-    async function loadSharedDraft() {
-      if (!shareId) return;
+    if (!shareId) return;
 
+    let isMounted = true;
+
+    async function loadSharedDraft() {
       setIsLoading(true);
       setErrorMessage("");
+      setLiveMessage("Connecting to live updates...");
 
       const { data, error } = await supabase
         .from("drafts")
@@ -63,6 +74,8 @@ export default function SharedDraftPage() {
         .eq("share_id", shareId)
         .eq("is_public", true)
         .maybeSingle();
+
+      if (!isMounted) return;
 
       if (error) {
         setErrorMessage(error.message);
@@ -78,6 +91,55 @@ export default function SharedDraftPage() {
     }
 
     loadSharedDraft();
+
+    const channel = supabase
+      .channel(`public-shared-draft-${shareId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "drafts",
+          filter: `share_id=eq.${shareId}`,
+        },
+        (payload) => {
+          const updatedDraft = payload.new as SharedDraftRealtimeRecord;
+
+          if (!updatedDraft.is_public) {
+            setDraft(null);
+            setErrorMessage("This draft is no longer publicly shared.");
+            setLiveMessage("Sharing is off.");
+            return;
+          }
+
+          setDraft({
+            title: updatedDraft.title,
+            draft_data: updatedDraft.draft_data,
+            updated_at: updatedDraft.updated_at,
+          });
+
+          setErrorMessage("");
+          setLiveMessage("Live update received.");
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setLiveMessage("Live updates connected.");
+        }
+
+        if (status === "CHANNEL_ERROR") {
+          setLiveMessage("Live updates disconnected. Refresh if needed.");
+        }
+
+        if (status === "TIMED_OUT") {
+          setLiveMessage("Live updates timed out. Refresh if needed.");
+        }
+      });
+
+    return () => {
+      isMounted = false;
+      supabase.removeChannel(channel);
+    };
   }, [shareId]);
 
   const draftData = draft?.draft_data;
@@ -160,6 +222,10 @@ export default function SharedDraftPage() {
             <span className="rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-bold text-white">
               {draftStatus}
             </span>
+
+            <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
+              Live
+            </span>
           </div>
 
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -169,12 +235,16 @@ export default function SharedDraftPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-lg text-slate-300">
-                Public read-only draft board. View picks, drafters, and remaining
-                items.
+                Public read-only live draft board. Keep this page open and picks
+                should update automatically.
               </p>
 
               <p className="mt-3 text-sm text-slate-500">
                 Last updated {new Date(draft.updated_at).toLocaleString()}
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-green-200">
+                {liveMessage}
               </p>
             </div>
 

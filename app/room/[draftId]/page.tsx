@@ -45,24 +45,89 @@ type RoomDraft = {
   share_id: string;
 };
 
+type Participant = {
+  id: string;
+  user_id: string;
+  drafter_name: string;
+  role: "host" | "participant";
+};
+
 export default function RoomPage() {
   const params = useParams();
   const rawDraftId = params.draftId;
   const draftId = Array.isArray(rawDraftId) ? rawDraftId[0] : rawDraftId;
 
   const [draft, setDraft] = useState<RoomDraft | null>(null);
+  const [participants, setParticipants] = useState<Participant[]>([]);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [liveMessage, setLiveMessage] = useState("Connecting to live room...");
 
   useEffect(() => {
-    loadRoomDraft();
+    if (!draftId) return;
+
+    const roomDraftId = draftId;
+
+    loadRoomDraft(roomDraftId);
+
+    const draftChannel = supabase
+      .channel(`host-room-draft-${roomDraftId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "drafts",
+          filter: `id=eq.${roomDraftId}`,
+        },
+        (payload) => {
+          const updatedDraft = payload.new as RoomDraft;
+          setDraft(updatedDraft);
+          setLiveMessage("Live room updated.");
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          setLiveMessage("Live room connected.");
+        }
+
+        if (status === "CHANNEL_ERROR") {
+          setLiveMessage("Live room disconnected. Refresh if needed.");
+        }
+
+        if (status === "TIMED_OUT") {
+          setLiveMessage("Live room timed out. Refresh if needed.");
+        }
+      });
+
+    const participantsChannel = supabase
+      .channel(`host-room-participants-${roomDraftId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "draft_participants",
+          filter: `draft_id=eq.${roomDraftId}`,
+        },
+        () => {
+          loadParticipants(roomDraftId);
+          setLiveMessage("Participant list updated.");
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(draftChannel);
+      supabase.removeChannel(participantsChannel);
+    };
   }, [draftId]);
 
-  async function loadRoomDraft() {
-    if (!draftId) return;
+  async function loadRoomDraft(roomDraftId = draftId) {
+    if (!roomDraftId) return;
 
     setIsLoading(true);
     setMessage("");
@@ -72,6 +137,7 @@ export default function RoomPage() {
 
     if (!userData.user) {
       setDraft(null);
+      setParticipants([]);
       setMessage("Sign in to access this draft room.");
       setIsLoading(false);
       return;
@@ -80,7 +146,7 @@ export default function RoomPage() {
     const { data, error } = await supabase
       .from("drafts")
       .select("id, title, draft_data, updated_at, is_public, is_joinable, share_id")
-      .eq("id", draftId)
+      .eq("id", roomDraftId)
       .maybeSingle();
 
     if (error) {
@@ -91,9 +157,26 @@ export default function RoomPage() {
       setDraft(null);
     } else {
       setDraft(data as RoomDraft);
+      await loadParticipants(roomDraftId);
     }
 
     setIsLoading(false);
+  }
+
+  async function loadParticipants(roomDraftId = draftId) {
+    if (!roomDraftId) return;
+
+    const { data, error } = await supabase
+      .from("draft_participants")
+      .select("id, user_id, drafter_name, role")
+      .eq("draft_id", roomDraftId);
+
+    if (error) {
+      setMessage(error.message);
+      return;
+    }
+
+    setParticipants((data || []) as Participant[]);
   }
 
   const draftData = draft?.draft_data;
@@ -126,6 +209,16 @@ export default function RoomPage() {
     if (availableItems.length === 0) return "Draft Complete";
     return "Draft In Progress";
   }, [picks.length, availableItems.length]);
+
+  const participantByName = useMemo(() => {
+    const map = new Map<string, Participant>();
+
+    participants.forEach((participant) => {
+      map.set(participant.drafter_name.toLowerCase(), participant);
+    });
+
+    return map;
+  }, [participants]);
 
   const filteredItems = availableItems.filter((item) => {
     const searchText =
@@ -183,7 +276,7 @@ export default function RoomPage() {
 
     setMessage(
       nextValue
-        ? "Player self-picking is now enabled. Players will be able to join and claim drafter slots once the join page is added."
+        ? "Player self-picking is now enabled."
         : "Player self-picking is now disabled."
     );
 
@@ -331,6 +424,10 @@ export default function RoomPage() {
               </span>
             )}
 
+            <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
+              Live
+            </span>
+
             {userEmail && (
               <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
                 Signed in
@@ -351,12 +448,16 @@ export default function RoomPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-lg text-slate-300">
-                Dedicated host-controlled room. Make picks here and the saved
-                account draft updates in Supabase.
+                Dedicated host-controlled room. Player picks now update this page
+                live.
               </p>
 
               <p className="mt-3 text-sm text-slate-500">
                 Last updated {new Date(draft.updated_at).toLocaleString()}
+              </p>
+
+              <p className="mt-2 text-sm font-semibold text-green-200">
+                {liveMessage}
               </p>
             </div>
 
@@ -450,6 +551,52 @@ export default function RoomPage() {
           </div>
         </section>
 
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">Joined Players</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                This updates live when someone claims a drafter slot.
+              </p>
+            </div>
+
+            <button
+              onClick={() => loadParticipants()}
+              className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+            >
+              Refresh Players
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+            {drafters.map((drafter) => {
+              const participant = participantByName.get(
+                drafter.name.toLowerCase()
+              );
+
+              return (
+                <div
+                  key={drafter.id}
+                  className={`rounded-2xl border p-4 ${
+                    participant
+                      ? "border-green-400/30 bg-green-400/10"
+                      : "border-white/10 bg-slate-900"
+                  }`}
+                >
+                  <div className="text-lg font-black">{drafter.name}</div>
+                  <div
+                    className={`mt-1 text-sm ${
+                      participant ? "text-green-200" : "text-slate-500"
+                    }`}
+                  >
+                    {participant ? "Claimed by player" : "Not claimed yet"}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -517,7 +664,7 @@ export default function RoomPage() {
               <div>
                 <h2 className="text-2xl font-black">Draft Board</h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  Picks update the saved account draft.
+                  Host and player picks both update here live.
                 </p>
               </div>
 

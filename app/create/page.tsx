@@ -55,6 +55,8 @@ type CloudDraft = {
   title: string;
   draft_data: SavedDraftState;
   updated_at: string;
+  share_id: string;
+  is_public: boolean;
 };
 
 const LOCAL_STORAGE_KEY = "draft-anything-current-draft";
@@ -266,6 +268,14 @@ function cloneItems(items: DraftItem[]) {
   return items.map((item) => ({ ...item }));
 }
 
+function createShareId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID().replaceAll("-", "");
+  }
+
+  return `${Date.now()}${Math.random().toString(36).slice(2)}`;
+}
+
 const defaultTemplate = draftTemplates[0];
 
 export default function Home() {
@@ -368,6 +378,10 @@ export default function Home() {
     draftTemplates.find((template) => template.id === selectedTemplateId) ||
     defaultTemplate;
 
+  const currentCloudDraft = cloudDrafts.find(
+    (draft) => draft.id === currentCloudDraftId
+  );
+
   const draftStatus = useMemo(() => {
     if (picks.length === 0) {
       return {
@@ -444,6 +458,14 @@ export default function Home() {
     setLotteryHasRun(Boolean(draftState.lotteryHasRun));
   }
 
+  function getShareLink(shareId: string) {
+    if (typeof window === "undefined") {
+      return `/draft/${shareId}`;
+    }
+
+    return `${window.location.origin}/draft/${shareId}`;
+  }
+
   async function loadCloudDrafts() {
     setIsCloudLoading(true);
     setCloudMessage("");
@@ -458,7 +480,7 @@ export default function Home() {
 
     const { data, error } = await supabase
       .from("drafts")
-      .select("id, title, draft_data, updated_at")
+      .select("id, title, draft_data, updated_at, share_id, is_public")
       .eq("user_id", userData.user.id)
       .order("updated_at", { ascending: false });
 
@@ -496,6 +518,8 @@ export default function Home() {
         user_id: userData.user.id,
         title: cleanTitle,
         draft_data: draftState,
+        share_id: createShareId(),
+        is_public: false,
       })
       .select("id")
       .single();
@@ -600,6 +624,82 @@ export default function Home() {
     }
 
     setIsCloudLoading(false);
+  }
+
+  async function makeDraftPublic(draft: CloudDraft) {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in before sharing drafts.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const shareId = draft.share_id || createShareId();
+
+    const { error } = await supabase
+      .from("drafts")
+      .update({
+        share_id: shareId,
+        is_public: true,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draft.id)
+      .eq("user_id", userData.user.id);
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      setCloudMessage(`Public share link enabled: ${getShareLink(shareId)}`);
+      await loadCloudDrafts();
+    }
+
+    setIsCloudLoading(false);
+  }
+
+  async function turnOffSharing(draft: CloudDraft) {
+    setIsCloudLoading(true);
+    setCloudMessage("");
+
+    const { data: userData } = await supabase.auth.getUser();
+
+    if (!userData.user) {
+      setCloudMessage("Sign in before changing sharing.");
+      setIsCloudLoading(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("drafts")
+      .update({
+        is_public: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draft.id)
+      .eq("user_id", userData.user.id);
+
+    if (error) {
+      setCloudMessage(error.message);
+    } else {
+      setCloudMessage("Public sharing turned off for that draft.");
+      await loadCloudDrafts();
+    }
+
+    setIsCloudLoading(false);
+  }
+
+  async function copyShareLink(shareId: string) {
+    const url = getShareLink(shareId);
+
+    try {
+      await navigator.clipboard.writeText(url);
+      setCloudMessage("Share link copied to clipboard.");
+    } catch {
+      setCloudMessage(`Copy this link: ${url}`);
+    }
   }
 
   function loadTemplate(templateId: string) {
@@ -994,6 +1094,12 @@ export default function Home() {
                 Login
               </Link>
             )}
+
+            {currentCloudDraft?.is_public && (
+              <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-4 py-1.5 text-xs font-bold text-purple-200">
+                Public Link On
+              </span>
+            )}
           </div>
 
           <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
@@ -1071,7 +1177,8 @@ export default function Home() {
           {currentCloudDraftId && (
             <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-4 text-sm font-semibold text-green-100">
               A saved account draft is currently loaded. Use Update Current to
-              overwrite it, or Save New Draft / Duplicate Draft to create another copy.
+              overwrite it, or Save New Draft / Duplicate Draft to create another
+              copy.
             </div>
           )}
 
@@ -1093,7 +1200,8 @@ export default function Home() {
             <div>
               <h2 className="text-2xl font-bold">Account Drafts</h2>
               <p className="mt-2 text-sm text-slate-400">
-                Save drafts to your account and load them later from any browser.
+                Save drafts to your account, load them later, and make public
+                read-only share links.
               </p>
             </div>
 
@@ -1133,18 +1241,69 @@ export default function Home() {
                       : "border-white/10 bg-slate-900"
                   }`}
                 >
-                  <h3 className="text-lg font-black">{draft.title}</h3>
-                  <p className="mt-2 text-xs text-slate-400">
-                    Updated {new Date(draft.updated_at).toLocaleString()}
-                  </p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black">{draft.title}</h3>
+                      <p className="mt-2 text-xs text-slate-400">
+                        Updated {new Date(draft.updated_at).toLocaleString()}
+                      </p>
+                    </div>
 
-                  <div className="mt-4 flex gap-2">
+                    {draft.is_public && (
+                      <span className="rounded-full bg-purple-400/10 px-3 py-1 text-xs font-bold text-purple-200">
+                        Public
+                      </span>
+                    )}
+                  </div>
+
+                  {draft.is_public && (
+                    <div className="mt-4 rounded-xl border border-purple-400/20 bg-purple-400/10 p-3 text-xs text-purple-100">
+                      {getShareLink(draft.share_id)}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex flex-wrap gap-2">
                     <button
                       onClick={() => loadCloudDraft(draft)}
                       className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
                     >
                       Load
                     </button>
+
+                    {draft.is_public ? (
+                      <>
+                        <Link
+                          href={`/draft/${draft.share_id}`}
+                          target="_blank"
+                          className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-slate-200"
+                        >
+                          View Link
+                        </Link>
+
+                        <button
+                          onClick={() => copyShareLink(draft.share_id)}
+                          className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+                        >
+                          Copy Link
+                        </button>
+
+                        <button
+                          onClick={() => turnOffSharing(draft)}
+                          disabled={isCloudLoading}
+                          className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          Turn Off
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => makeDraftPublic(draft)}
+                        disabled={isCloudLoading}
+                        className="rounded-2xl bg-purple-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Make Public
+                      </button>
+                    )}
 
                     <button
                       onClick={() => deleteCloudDraft(draft.id)}

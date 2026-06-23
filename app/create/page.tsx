@@ -1,8 +1,16 @@
 "use client";
 
-import { type ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { supabase } from "@/lib/supabaseClient";
+import {
+  CFB_TEAMS,
+  CONFERENCE_ORDER,
+  CONFERENCE_TIERS,
+  TIER_ORDER,
+} from "@/lib/cfbTeams";
+import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
+import { CompactDraftBoard } from "@/components/CompactDraftBoard";
 
 type AppTab = "setup" | "draft" | "results";
 
@@ -17,22 +25,13 @@ type DraftItem = {
   name: string;
   category: string;
   description: string;
+  color?: string;
 };
 
 type Pick = {
   pickNumber: number;
-  round: number;
   drafter: string;
   item: DraftItem;
-};
-
-type DraftTemplate = {
-  id: string;
-  label: string;
-  title: string;
-  summary: string;
-  drafters: Drafter[];
-  items: DraftItem[];
 };
 
 type SavedDraftState = {
@@ -41,7 +40,6 @@ type SavedDraftState = {
   drafters: Drafter[];
   availableItems: DraftItem[];
   picks: Pick[];
-  snakeDraft: boolean;
   lotteryHasRun: boolean;
 };
 
@@ -61,203 +59,23 @@ type CloudDraft = {
 
 const LOCAL_STORAGE_KEY = "draft-anything-current-draft";
 
-const draftTemplates: DraftTemplate[] = [
-  {
-    id: "cfb",
-    label: "CFB Team Draft",
-    title: "College Football 26 Team Draft",
-    summary: "Low-tier college football teams for a dynasty rebuild draft.",
-    drafters: [
-      { id: 1, name: "Garrett", lotteryTickets: 30 },
-      { id: 2, name: "Chris", lotteryTickets: 24 },
-      { id: 3, name: "Tyler", lotteryTickets: 18 },
-      { id: 4, name: "John", lotteryTickets: 14 },
-      { id: 5, name: "Mike", lotteryTickets: 10 },
-      { id: 6, name: "Brandon", lotteryTickets: 6 },
-    ],
-    items: [
-      {
-        id: 1,
-        name: "UTSA",
-        category: "AAC",
-        description: "High-upside rebuild with strong recruiting potential.",
-      },
-      {
-        id: 2,
-        name: "Tulane",
-        category: "AAC",
-        description: "Fun program with uniforms, location, and strong ceiling.",
-      },
-      {
-        id: 3,
-        name: "Appalachian State",
-        category: "Sun Belt",
-        description: "Classic dynasty rebuild with real football tradition.",
-      },
-      {
-        id: 4,
-        name: "James Madison",
-        category: "Sun Belt",
-        description: "Newer FBS feel with a lot of momentum.",
-      },
-      {
-        id: 5,
-        name: "Coastal Carolina",
-        category: "Sun Belt",
-        description: "Unique brand, teal field, and good rebuild vibes.",
-      },
-      {
-        id: 6,
-        name: "Memphis",
-        category: "AAC",
-        description: "Strong city, good uniforms, and solid football base.",
-      },
-      {
-        id: 7,
-        name: "ECU",
-        category: "AAC",
-        description: "Underrated fanbase and fun long-term rebuild.",
-      },
-      {
-        id: 8,
-        name: "USF",
-        category: "AAC",
-        description: "Florida recruiting base with sleeping giant potential.",
-      },
-    ],
-  },
-  {
-    id: "food",
-    label: "Food Draft",
-    title: "Ultimate Food Draft",
-    summary: "Draft the best foods of all time.",
-    drafters: [
-      { id: 1, name: "Garrett", lotteryTickets: 10 },
-      { id: 2, name: "Chris", lotteryTickets: 10 },
-      { id: 3, name: "Tyler", lotteryTickets: 10 },
-      { id: 4, name: "John", lotteryTickets: 10 },
-    ],
-    items: [
-      {
-        id: 1,
-        name: "Pizza",
-        category: "Italian",
-        description: "The clear 1.01 candidate in almost any food draft.",
-      },
-      {
-        id: 2,
-        name: "Burger",
-        category: "American",
-        description: "High-floor classic with endless customization.",
-      },
-      {
-        id: 3,
-        name: "Tacos",
-        category: "Mexican",
-        description: "Elite versatility and tremendous value.",
-      },
-      {
-        id: 4,
-        name: "Wings",
-        category: "Game Day",
-        description: "Strong social food with major sauce upside.",
-      },
-      {
-        id: 5,
-        name: "Sushi",
-        category: "Japanese",
-        description: "Premium pick with high-end ceiling.",
-      },
-      {
-        id: 6,
-        name: "Steak",
-        category: "American",
-        description: "Luxury pick with serious first-round potential.",
-      },
-      {
-        id: 7,
-        name: "Mac and Cheese",
-        category: "Comfort Food",
-        description: "Safe comfort pick with crowd appeal.",
-      },
-      {
-        id: 8,
-        name: "Ice Cream",
-        category: "Dessert",
-        description: "Best dessert weapon on the board.",
-      },
-    ],
-  },
-  {
-    id: "movies",
-    label: "Movie Draft",
-    title: "All-Time Movie Draft",
-    summary: "Draft the best movies for your personal movie roster.",
-    drafters: [
-      { id: 1, name: "Garrett", lotteryTickets: 10 },
-      { id: 2, name: "Chris", lotteryTickets: 10 },
-      { id: 3, name: "Tyler", lotteryTickets: 10 },
-      { id: 4, name: "John", lotteryTickets: 10 },
-    ],
-    items: [
-      {
-        id: 1,
-        name: "The Lord of the Rings",
-        category: "Fantasy",
-        description: "Elite franchise pick with massive replay value.",
-      },
-      {
-        id: 2,
-        name: "The Dark Knight",
-        category: "Superhero",
-        description: "Prestige superhero film with top-tier villain value.",
-      },
-      {
-        id: 3,
-        name: "Forrest Gump",
-        category: "Drama",
-        description: "Classic emotional pick with broad appeal.",
-      },
-      {
-        id: 4,
-        name: "Jurassic Park",
-        category: "Adventure",
-        description: "Iconic blockbuster with elite nostalgia.",
-      },
-      {
-        id: 5,
-        name: "Gladiator",
-        category: "Action",
-        description: "Strong masculine epic with championship energy.",
-      },
-      {
-        id: 6,
-        name: "Toy Story",
-        category: "Animated",
-        description: "Franchise-launching animated classic.",
-      },
-      {
-        id: 7,
-        name: "Top Gun: Maverick",
-        category: "Action",
-        description: "Modern blockbuster with massive rewatchability.",
-      },
-      {
-        id: 8,
-        name: "Remember the Titans",
-        category: "Sports",
-        description: "Strong locker-room movie with sports draft value.",
-      },
-    ],
-  },
-  {
-    id: "blank",
-    label: "Blank Custom Draft",
-    title: "My Custom Draft",
-    summary: "Start from scratch and add your own drafters and items.",
-    drafters: [],
-    items: [],
-  },
+const CFB_ITEMS: DraftItem[] = CFB_TEAMS.map((team, index) => ({
+  id: index + 1,
+  name: team.name,
+  category: team.conference,
+  description: `${team.conference} program.`,
+  color: team.color,
+}));
+
+const DEFAULT_TITLE = "College Football Team Draft";
+
+const DEFAULT_DRAFTERS: Drafter[] = [
+  { id: 1, name: "Garrett", lotteryTickets: 30 },
+  { id: 2, name: "Chris", lotteryTickets: 24 },
+  { id: 3, name: "Tyler", lotteryTickets: 18 },
+  { id: 4, name: "John", lotteryTickets: 14 },
+  { id: 5, name: "Mike", lotteryTickets: 10 },
+  { id: 6, name: "Brandon", lotteryTickets: 6 },
 ];
 
 function cloneDrafters(drafters: Drafter[]) {
@@ -276,12 +94,9 @@ function createShareId() {
   return `${Date.now()}${Math.random().toString(36).slice(2)}`;
 }
 
-const defaultTemplate = draftTemplates[0];
-
 export default function Home() {
   const [activeTab, setActiveTab] = useState<AppTab>("setup");
   const [hasLoadedSavedDraft, setHasLoadedSavedDraft] = useState(false);
-  const [importMessage, setImportMessage] = useState("");
 
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [cloudDrafts, setCloudDrafts] = useState<CloudDraft[]>([]);
@@ -291,26 +106,23 @@ export default function Home() {
   const [cloudMessage, setCloudMessage] = useState("");
   const [isCloudLoading, setIsCloudLoading] = useState(false);
 
-  const [selectedTemplateId, setSelectedTemplateId] = useState(defaultTemplate.id);
-  const [draftTitle, setDraftTitle] = useState(defaultTemplate.title);
+  const selectedTemplateId = "cfb";
+  const [draftTitle, setDraftTitle] = useState(DEFAULT_TITLE);
   const [drafters, setDrafters] = useState<Drafter[]>(
-    cloneDrafters(defaultTemplate.drafters)
+    cloneDrafters(DEFAULT_DRAFTERS)
   );
   const [availableItems, setAvailableItems] = useState<DraftItem[]>(
-    cloneItems(defaultTemplate.items)
+    cloneItems(CFB_ITEMS)
   );
   const [picks, setPicks] = useState<Pick[]>([]);
   const [search, setSearch] = useState("");
-  const [snakeDraft, setSnakeDraft] = useState(false);
   const [lotteryHasRun, setLotteryHasRun] = useState(false);
+  const [cfbEligibleIds, setCfbEligibleIds] = useState<Set<number>>(
+    new Set(CFB_ITEMS.map((item) => item.id))
+  );
 
   const [newDrafter, setNewDrafter] = useState("");
-  const [newItemName, setNewItemName] = useState("");
-  const [newItemCategory, setNewItemCategory] = useState("");
-  const [newItemDescription, setNewItemDescription] = useState("");
-
   const [bulkDraftersText, setBulkDraftersText] = useState("");
-  const [bulkItemsText, setBulkItemsText] = useState("");
 
   useEffect(() => {
     const savedDraft = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -370,13 +182,49 @@ export default function Home() {
     drafters,
     availableItems,
     picks,
-    snakeDraft,
     lotteryHasRun,
   ]);
 
-  const activeTemplate =
-    draftTemplates.find((template) => template.id === selectedTemplateId) ||
-    defaultTemplate;
+  function applyCfbEligibility(nextEligibleIds: Set<number>) {
+    setCfbEligibleIds(nextEligibleIds);
+    setAvailableItems(
+      CFB_ITEMS.filter((item) => nextEligibleIds.has(item.id))
+    );
+  }
+
+  function toggleCfbTeam(id: number) {
+    if (picks.length > 0) return;
+
+    const next = new Set(cfbEligibleIds);
+
+    if (next.has(id)) {
+      next.delete(id);
+    } else {
+      next.add(id);
+    }
+
+    applyCfbEligibility(next);
+  }
+
+  function setConferenceEligibility(conference: string, eligible: boolean) {
+    if (picks.length > 0) return;
+
+    const conferenceIds = CFB_ITEMS.filter(
+      (item) => item.category === conference
+    ).map((item) => item.id);
+
+    const next = new Set(cfbEligibleIds);
+
+    conferenceIds.forEach((id) => {
+      if (eligible) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+    });
+
+    applyCfbEligibility(next);
+  }
 
   const currentCloudDraft = cloudDrafts.find(
     (draft) => draft.id === currentCloudDraftId
@@ -410,29 +258,66 @@ export default function Home() {
 
   const currentPickNumber = picks.length + 1;
 
-  const currentRound =
-    drafters.length > 0 ? Math.floor(picks.length / drafters.length) + 1 : 1;
-
   const currentDrafter = useMemo(() => {
-    if (drafters.length === 0) return undefined;
+    if (picks.length >= drafters.length) return undefined;
 
-    const pickIndex = picks.length;
-    const roundIndex = Math.floor(pickIndex / drafters.length);
-    const pickInRound = pickIndex % drafters.length;
+    return drafters[picks.length];
+  }, [drafters, picks.length]);
 
-    if (snakeDraft && roundIndex % 2 === 1) {
-      return drafters[drafters.length - 1 - pickInRound];
-    }
+  const { pickByItemId, groups: itemGroups } = useMemo(
+    () =>
+      groupItemsByConference(
+        availableItems,
+        picks,
+        selectedTemplateId === "cfb" ? CONFERENCE_ORDER : undefined
+      ),
+    [availableItems, picks, selectedTemplateId]
+  );
 
-    return drafters[pickInRound];
-  }, [drafters, picks.length, snakeDraft]);
+  const searchedGroups = useMemo(() => {
+    const searchText = search.toLowerCase();
 
-  const filteredItems = availableItems.filter((item) => {
-    const searchText =
-      `${item.name} ${item.category} ${item.description}`.toLowerCase();
+    return itemGroups
+      .map((group) => ({
+        category: group.category,
+        items: group.items.filter((item) =>
+          `${item.name} ${item.category} ${item.description}`
+            .toLowerCase()
+            .includes(searchText)
+        ),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [itemGroups, search]);
 
-    return searchText.includes(search.toLowerCase());
-  });
+  const tiers = useMemo(
+    () =>
+      buildTiers(
+        searchedGroups,
+        selectedTemplateId === "cfb" ? CONFERENCE_TIERS : undefined,
+        TIER_ORDER
+      ),
+    [searchedGroups, selectedTemplateId]
+  );
+
+  const { pickByItemId: pickedById, groups: pickedGroups } = useMemo(
+    () => groupItemsByConference([], picks, CONFERENCE_ORDER),
+    [picks]
+  );
+
+  const pickedTiers = useMemo(
+    () => buildTiers(pickedGroups, CONFERENCE_TIERS, TIER_ORDER),
+    [pickedGroups]
+  );
+
+  const allTeamsTiers = useMemo(
+    () =>
+      buildTiers(
+        groupItemsByConference(CFB_ITEMS, [], CONFERENCE_ORDER).groups,
+        CONFERENCE_TIERS,
+        TIER_ORDER
+      ),
+    []
+  );
 
   function buildDraftState(): SavedDraftState {
     return {
@@ -441,20 +326,20 @@ export default function Home() {
       drafters,
       availableItems,
       picks,
-      snakeDraft,
       lotteryHasRun,
     };
   }
 
   function applyDraftState(draftState: SavedDraftState) {
-    setSelectedTemplateId(draftState.selectedTemplateId || defaultTemplate.id);
-    setDraftTitle(draftState.draftTitle || defaultTemplate.title);
-    setDrafters(draftState.drafters || cloneDrafters(defaultTemplate.drafters));
-    setAvailableItems(
-      draftState.availableItems || cloneItems(defaultTemplate.items)
-    );
+    setDraftTitle(draftState.draftTitle || DEFAULT_TITLE);
+    setDrafters(draftState.drafters || cloneDrafters(DEFAULT_DRAFTERS));
+    const restoredItems =
+      draftState.availableItems || cloneItems(CFB_ITEMS);
+
+    setAvailableItems(restoredItems);
+    setCfbEligibleIds(new Set(restoredItems.map((item) => item.id)));
+
     setPicks(draftState.picks || []);
-    setSnakeDraft(Boolean(draftState.snakeDraft));
     setLotteryHasRun(Boolean(draftState.lotteryHasRun));
   }
 
@@ -582,11 +467,6 @@ export default function Home() {
     setIsCloudLoading(false);
   }
 
-  async function duplicateCurrentDraft() {
-    const copyTitle = `${draftTitle} Copy`;
-    await createCloudDraft(copyTitle, "Duplicated draft saved to your account.");
-  }
-
   function loadCloudDraft(draft: CloudDraft) {
     applyDraftState(draft.draft_data);
     setCurrentCloudDraftId(draft.id);
@@ -702,43 +582,19 @@ export default function Home() {
     }
   }
 
-  function loadTemplate(templateId: string) {
-    const template =
-      draftTemplates.find((draftTemplate) => draftTemplate.id === templateId) ||
-      defaultTemplate;
-
-    setSelectedTemplateId(template.id);
-    setDraftTitle(template.title);
-    setDrafters(cloneDrafters(template.drafters));
-    setAvailableItems(cloneItems(template.items));
+  function resetDraft() {
+    setDraftTitle(DEFAULT_TITLE);
+    setDrafters(cloneDrafters(DEFAULT_DRAFTERS));
+    setAvailableItems(cloneItems(CFB_ITEMS));
+    setCfbEligibleIds(new Set(CFB_ITEMS.map((item) => item.id)));
     setPicks([]);
     setSearch("");
-    setSnakeDraft(false);
     setLotteryHasRun(false);
     setNewDrafter("");
-    setNewItemName("");
-    setNewItemCategory("");
-    setNewItemDescription("");
     setBulkDraftersText("");
-    setBulkItemsText("");
-    setImportMessage("");
     setCloudMessage("");
     setCurrentCloudDraftId(null);
     setActiveTab("setup");
-  }
-
-  function startNewBlankDraft() {
-    loadTemplate("blank");
-    setCloudMessage("Started a new blank draft. Click Save New Draft when ready.");
-  }
-
-  function resetDraft() {
-    loadTemplate(selectedTemplateId);
-  }
-
-  function clearSavedDraft() {
-    localStorage.removeItem(LOCAL_STORAGE_KEY);
-    loadTemplate(defaultTemplate.id);
   }
 
   function exportFullDraft() {
@@ -761,53 +617,6 @@ export default function Home() {
     link.click();
 
     URL.revokeObjectURL(url);
-  }
-
-  async function importFullDraft(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    try {
-      const fileText = await file.text();
-      const importedDraft = JSON.parse(fileText) as Partial<FullDraftExport>;
-
-      if (
-        !importedDraft.draftTitle ||
-        !Array.isArray(importedDraft.drafters) ||
-        !Array.isArray(importedDraft.availableItems) ||
-        !Array.isArray(importedDraft.picks)
-      ) {
-        throw new Error("Invalid draft file");
-      }
-
-      applyDraftState({
-        selectedTemplateId: importedDraft.selectedTemplateId || "blank",
-        draftTitle: importedDraft.draftTitle,
-        drafters: importedDraft.drafters,
-        availableItems: importedDraft.availableItems,
-        picks: importedDraft.picks,
-        snakeDraft: Boolean(importedDraft.snakeDraft),
-        lotteryHasRun: Boolean(importedDraft.lotteryHasRun),
-      });
-
-      setSearch("");
-      setNewDrafter("");
-      setNewItemName("");
-      setNewItemCategory("");
-      setNewItemDescription("");
-      setBulkDraftersText("");
-      setBulkItemsText("");
-      setCurrentCloudDraftId(null);
-      setImportMessage("Draft imported successfully.");
-      setActiveTab("draft");
-    } catch {
-      setImportMessage(
-        "Could not import that file. Make sure it is a Draft Anything JSON export."
-      );
-    } finally {
-      event.target.value = "";
-    }
   }
 
   function addDrafter() {
@@ -943,72 +752,13 @@ export default function Home() {
     setLotteryHasRun(true);
   }
 
-  function addItem() {
-    const cleanedName = newItemName.trim();
-
-    if (!cleanedName) return;
-
-    const newItem: DraftItem = {
-      id: Date.now(),
-      name: cleanedName,
-      category: newItemCategory.trim() || "Custom",
-      description: newItemDescription.trim() || "Custom draft item.",
-    };
-
-    setAvailableItems([...availableItems, newItem]);
-    setNewItemName("");
-    setNewItemCategory("");
-    setNewItemDescription("");
-  }
-
-  function bulkAddItems() {
-    const lines = bulkItemsText
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-
-    if (lines.length === 0) return;
-
-    const newItems: DraftItem[] = lines
-      .map((line, index) => {
-        const parts = line.split(",");
-        const name = parts[0]?.trim();
-        const category = parts[1]?.trim() || "Custom";
-        const description =
-          parts.slice(2).join(",").trim() || "Custom draft item.";
-
-        if (!name) return null;
-
-        return {
-          id: Date.now() + index,
-          name,
-          category,
-          description,
-        };
-      })
-      .filter((item): item is DraftItem => item !== null);
-
-    if (newItems.length === 0) return;
-
-    setAvailableItems([...availableItems, ...newItems]);
-    setBulkItemsText("");
-  }
-
-  function deleteAvailableItem(id: number) {
-    setAvailableItems(availableItems.filter((item) => item.id !== id));
-  }
-
-  function clearAllAvailableItems() {
-    setAvailableItems([]);
-    setSearch("");
-  }
-
   function draftItem(item: DraftItem) {
     if (!currentDrafter) return;
+    if (!availableItems.some((availableItem) => availableItem.id === item.id))
+      return;
 
     const newPick: Pick = {
       pickNumber: currentPickNumber,
-      round: currentRound,
       drafter: currentDrafter.name,
       item,
     };
@@ -1031,13 +781,12 @@ export default function Home() {
   function exportDraftResults() {
     if (picks.length === 0) return;
 
-    const csvHeader = "Pick,Round,Drafter,Item,Category,Description\n";
+    const csvHeader = "Pick,Drafter,Item,Category,Description\n";
 
     const csvRows = picks
       .map((pick) => {
         return [
           pick.pickNumber,
-          pick.round,
           pick.drafter,
           pick.item.name,
           pick.item.category,
@@ -1116,31 +865,17 @@ export default function Home() {
               />
 
               <p className="mt-4 max-w-3xl text-lg text-slate-300">
-                Create a custom draft room, set lottery odds, choose a template,
-                bulk-add drafters or items, and draft anything your group wants.
+                Set lottery odds, choose which teams are eligible, and run a
+                live college football team draft with your group.
               </p>
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
               <button
-                onClick={startNewBlankDraft}
-                className="rounded-2xl bg-purple-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-purple-300"
-              >
-                New Blank Draft
-              </button>
-
-              <button
                 onClick={resetDraft}
                 className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
               >
-                Reset Current Template
-              </button>
-
-              <button
-                onClick={clearSavedDraft}
-                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
-              >
-                Clear Local Draft
+                Reset Draft
               </button>
 
               <button
@@ -1160,49 +895,24 @@ export default function Home() {
               </button>
 
               <button
-                onClick={duplicateCurrentDraft}
-                disabled={isCloudLoading}
-                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Duplicate Draft
-              </button>
-
-              <button
                 onClick={exportFullDraft}
                 className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
               >
                 Export Full Draft
               </button>
-
-              <label className="cursor-pointer rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15">
-                Import Full Draft
-                <input
-                  type="file"
-                  accept="application/json,.json"
-                  onChange={importFullDraft}
-                  className="hidden"
-                />
-              </label>
             </div>
           </div>
 
           {currentCloudDraftId && (
             <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-4 text-sm font-semibold text-green-100">
               A saved account draft is currently loaded. Use Update Current to
-              overwrite it, or Save New Draft / Duplicate Draft to create another
-              copy.
+              overwrite it, or Save New Draft to create another copy.
             </div>
           )}
 
           {cloudMessage && (
             <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
               {cloudMessage}
-            </div>
-          )}
-
-          {importMessage && (
-            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
-              {importMessage}
             </div>
           )}
         </header>
@@ -1212,8 +922,9 @@ export default function Home() {
             <div>
               <h2 className="text-2xl font-bold">Account Drafts</h2>
               <p className="mt-2 text-sm text-slate-400">
-                Save drafts to your account, load them later, and make public
-                read-only share links.
+                Save drafts to your account, then open the live Room to let
+                players log in, claim a name, and make their own picks. The
+                public link below is read-only for spectators.
               </p>
             </div>
 
@@ -1282,6 +993,13 @@ export default function Home() {
                       Load
                     </button>
 
+                    <Link
+                      href={`/room/${draft.id}`}
+                      className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300"
+                    >
+                      Open Room
+                    </Link>
+
                     {draft.is_public ? (
                       <>
                         <Link
@@ -1289,14 +1007,14 @@ export default function Home() {
                           target="_blank"
                           className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-slate-200"
                         >
-                          View Link
+                          Spectator Link
                         </Link>
 
                         <button
                           onClick={() => copyShareLink(draft.share_id)}
                           className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
                         >
-                          Copy Link
+                          Copy Spectator Link
                         </button>
 
                         <button
@@ -1355,58 +1073,10 @@ export default function Home() {
         </nav>
 
         {activeTab === "setup" && (
-          <section className="grid gap-6 lg:grid-cols-[0.9fr_1fr_1fr]">
-            <div className="flex flex-col gap-6">
+          <section className="grid gap-6 lg:grid-cols-2">
+            <div>
               <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-                <h2 className="text-2xl font-bold">Templates</h2>
-                <p className="mt-2 text-sm text-slate-400">
-                  Current template: {activeTemplate.summary}
-                </p>
-
-                <div className="mt-5 grid gap-3">
-                  {draftTemplates.map((template) => (
-                    <button
-                      key={template.id}
-                      onClick={() => loadTemplate(template.id)}
-                      className={`rounded-2xl border p-4 text-left transition ${
-                        selectedTemplateId === template.id
-                          ? "border-cyan-300 bg-cyan-300/10"
-                          : "border-white/10 bg-slate-900 hover:border-cyan-300"
-                      }`}
-                    >
-                      <div className="font-black">{template.label}</div>
-                      <div className="mt-2 text-xs text-slate-400">
-                        {template.summary}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-                <h2 className="text-2xl font-bold">Lottery + Format</h2>
-
-                <div className="mt-5 rounded-2xl border border-white/10 bg-slate-900 p-4">
-                  <div className="text-sm text-slate-400">Draft Format</div>
-
-                  <button
-                    onClick={() => setSnakeDraft(!snakeDraft)}
-                    disabled={picks.length > 0}
-                    className={`mt-3 w-full rounded-2xl px-4 py-3 font-bold transition ${
-                      snakeDraft
-                        ? "bg-cyan-400 text-slate-950"
-                        : "bg-white/10 text-white hover:bg-white/15"
-                    } ${picks.length > 0 ? "cursor-not-allowed opacity-60" : ""}`}
-                  >
-                    {snakeDraft ? "Snake Draft: On" : "Snake Draft: Off"}
-                  </button>
-
-                  {picks.length > 0 && (
-                    <p className="mt-3 text-xs text-yellow-200">
-                      Draft format is locked after the first pick.
-                    </p>
-                  )}
-                </div>
+                <h2 className="text-2xl font-bold">Lottery</h2>
 
                 <div className="mt-5 grid grid-cols-3 gap-3">
                   <div className="rounded-2xl bg-slate-900 p-4">
@@ -1530,157 +1200,156 @@ export default function Home() {
                 </button>
               </div>
 
-              <div className="mt-5 space-y-3">
-                {drafters.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/15 p-5 text-slate-500">
+              <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
+                {drafters.length === 0 ? (
+                  <div className="p-5 text-slate-500">
                     No drafters yet. Add people to start a custom draft.
                   </div>
-                )}
-
-                {drafters.map((drafter, index) => {
-                  const odds =
-                    totalTickets > 0
-                      ? ((drafter.lotteryTickets / totalTickets) * 100).toFixed(1)
-                      : "0.0";
-
-                  return (
-                    <div
-                      key={drafter.id}
-                      className={`rounded-2xl border p-4 ${
-                        drafter.id === currentDrafter?.id
-                          ? "border-cyan-300 bg-cyan-300/10"
-                          : "border-white/10 bg-slate-900"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <div className="text-sm text-slate-400">
-                            Draft Slot {index + 1}
-                          </div>
-                          <div className="text-lg font-bold">{drafter.name}</div>
-                          <div className="mt-1 text-xs text-cyan-300">
-                            Lottery odds: {odds}%
-                          </div>
-                        </div>
-
-                        <button
-                          onClick={() => removeDrafter(drafter.id)}
-                          disabled={picks.length > 0}
-                          className="rounded-xl bg-white/10 px-3 py-2 text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Remove
-                        </button>
-                      </div>
-
-                      <div className="mt-4">
-                        <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                          Lottery Tickets
-                        </label>
-                        <input
-                          type="number"
-                          min={1}
-                          value={drafter.lotteryTickets}
-                          onChange={(event) =>
-                            updateLotteryTickets(
-                              drafter.id,
-                              Number(event.target.value)
-                            )
-                          }
-                          disabled={picks.length > 0}
-                          className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                        />
-                      </div>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-3 border-b border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-slate-400">
+                      <span className="w-6 flex-shrink-0">#</span>
+                      <span className="min-w-0 flex-1">Name</span>
+                      <span className="w-12 flex-shrink-0 text-right">Odds</span>
+                      <span className="w-16 flex-shrink-0 text-right">Tickets</span>
+                      <span className="w-6 flex-shrink-0" />
                     </div>
-                  );
-                })}
+
+                    {drafters.map((drafter, index) => {
+                      const odds =
+                        totalTickets > 0
+                          ? (
+                              (drafter.lotteryTickets / totalTickets) *
+                              100
+                            ).toFixed(1)
+                          : "0.0";
+
+                      const isOnClock = drafter.id === currentDrafter?.id;
+
+                      return (
+                        <div
+                          key={drafter.id}
+                          className={`flex items-center gap-3 border-b border-white/5 px-3 py-2 text-sm last:border-b-0 ${
+                            isOnClock
+                              ? "bg-cyan-300/10 text-white"
+                              : "bg-slate-900 text-white"
+                          }`}
+                        >
+                          <span className="w-6 flex-shrink-0 text-xs text-slate-500">
+                            {index + 1}
+                          </span>
+
+                          <span className="min-w-0 flex-1 truncate font-bold">
+                            {drafter.name}
+                          </span>
+
+                          <span className="w-12 flex-shrink-0 text-right text-xs text-cyan-300">
+                            {odds}%
+                          </span>
+
+                          <input
+                            type="number"
+                            min={1}
+                            value={drafter.lotteryTickets}
+                            onChange={(event) =>
+                              updateLotteryTickets(
+                                drafter.id,
+                                Number(event.target.value)
+                              )
+                            }
+                            disabled={picks.length > 0}
+                            className="w-16 flex-shrink-0 rounded-lg border border-white/10 bg-slate-950 px-2 py-1 text-right text-xs text-white outline-none focus:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          />
+
+                          <button
+                            onClick={() => removeDrafter(drafter.id)}
+                            disabled={picks.length > 0}
+                            title="Remove drafter"
+                            className="w-6 flex-shrink-0 rounded-lg bg-white/10 py-1 text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
               </div>
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-2xl font-bold">Draft Items</h2>
-                  <p className="mt-2 text-sm text-slate-400">
-                    Add items one-by-one or bulk paste a list.
-                  </p>
-                </div>
+          </section>
+        )}
 
-                <button
-                  onClick={clearAllAvailableItems}
-                  disabled={availableItems.length === 0}
-                  className="rounded-2xl bg-white/10 px-4 py-2 text-xs font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Clear Items
-                </button>
-              </div>
-
-              <div className="mt-6 rounded-3xl border border-white/10 bg-slate-900 p-5">
-                <h3 className="text-lg font-bold">Add Custom Item</h3>
-
-                <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <input
-                    value={newItemName}
-                    onChange={(event) => setNewItemName(event.target.value)}
-                    placeholder="Item name, ex: Pizza"
-                    className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
-                  />
-
-                  <input
-                    value={newItemCategory}
-                    onChange={(event) => setNewItemCategory(event.target.value)}
-                    placeholder="Category, ex: Food"
-                    className="rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
-                  />
-                </div>
-
-                <textarea
-                  value={newItemDescription}
-                  onChange={(event) => setNewItemDescription(event.target.value)}
-                  placeholder="Description..."
-                  className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
-                />
-
-                <button
-                  onClick={addItem}
-                  className="mt-3 rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
-                >
-                  Add Item
-                </button>
-              </div>
-
-              <div className="mt-6 rounded-3xl border border-white/10 bg-slate-900 p-5">
-                <h3 className="text-lg font-bold">Bulk Add Items</h3>
-                <p className="mt-2 text-xs text-slate-400">
-                  One per line. Format: Name, Category, Description
+        {activeTab === "setup" && (
+          <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+              <div>
+                <h2 className="text-2xl font-bold">CFB Team Pool</h2>
+                <p className="mt-2 text-sm text-slate-400">
+                  Disable any teams or whole conferences you don&apos;t want
+                  eligible for this draft. Only enabled teams will be available
+                  to draft.
                 </p>
-
-                <textarea
-                  value={bulkItemsText}
-                  onChange={(event) => setBulkItemsText(event.target.value)}
-                  placeholder={`UTSA, AAC, High-upside rebuild\nTulane, AAC, Great uniforms and location\nECU, AAC, Underrated fanbase`}
-                  className="mt-4 min-h-36 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
-                />
-
-                <button
-                  onClick={bulkAddItems}
-                  className="mt-3 rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
-                >
-                  Bulk Add Items
-                </button>
               </div>
 
-              <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900 p-4 text-sm text-slate-300">
-                Available items:{" "}
+              <div className="rounded-2xl border border-white/10 bg-slate-900 px-4 py-3 text-sm text-slate-300">
                 <span className="font-bold text-cyan-300">
-                  {availableItems.length}
-                </span>
+                  {cfbEligibleIds.size}
+                </span>{" "}
+                / {CFB_ITEMS.length} teams eligible
               </div>
+            </div>
+
+            {picks.length > 0 && (
+              <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4 text-sm font-semibold text-yellow-100">
+                Team eligibility is locked after the first pick. Undo all picks
+                or reset the draft to make changes.
+              </div>
+            )}
+
+            <div className="mt-5">
+              <CompactDraftBoard
+                tiers={allTeamsTiers}
+                getStatus={(item) =>
+                  cfbEligibleIds.has(item.id)
+                    ? { variant: "available" }
+                    : { variant: "disabled", badge: "Excluded" }
+                }
+                onSelect={(item) => toggleCfbTeam(item.id)}
+                isClickable={() => picks.length === 0}
+                groupActions={(category) => (
+                  <>
+                    <button
+                      onClick={() => setConferenceEligibility(category, true)}
+                      disabled={picks.length > 0}
+                      className="rounded-lg bg-white/10 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Enable All
+                    </button>
+
+                    <button
+                      onClick={() => setConferenceEligibility(category, false)}
+                      disabled={picks.length > 0}
+                      className="rounded-lg bg-white/10 px-2 py-1 text-[10px] font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Disable All
+                    </button>
+                  </>
+                )}
+                legend={[
+                  { label: "Eligible", swatchClassName: "bg-white/10" },
+                  {
+                    label: "Excluded",
+                    swatchClassName: "bg-slate-800/60",
+                  },
+                ]}
+              />
             </div>
           </section>
         )}
 
         {activeTab === "draft" && (
-          <section className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
+          <section className="flex flex-col gap-6">
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
               <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
                 <div>
@@ -1691,7 +1360,7 @@ export default function Home() {
                     {currentDrafter?.name || "Add drafters first"}
                   </h2>
                   <p className="mt-2 text-slate-400">
-                    Pick {currentPickNumber} · Round {currentRound}
+                    Pick {currentPickNumber} of {drafters.length}
                   </p>
                 </div>
 
@@ -1703,49 +1372,23 @@ export default function Home() {
                 />
               </div>
 
-              <div className="mt-6 grid gap-4 md:grid-cols-2">
-                {filteredItems.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/15 p-5 text-slate-500 md:col-span-2">
-                    No available items. Add items in Setup or choose a template.
-                  </div>
-                )}
-
-                {filteredItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-2xl border border-white/10 bg-slate-900 p-5"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <h3 className="text-xl font-black">{item.name}</h3>
-                        <p className="mt-1 text-sm font-semibold text-cyan-300">
-                          {item.category}
-                        </p>
-                      </div>
-
-                      <div className="flex flex-col gap-2">
-                        <button
-                          onClick={() => draftItem(item)}
-                          disabled={!currentDrafter}
-                          className="rounded-full bg-cyan-400 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          Draft
-                        </button>
-
-                        <button
-                          onClick={() => deleteAvailableItem(item.id)}
-                          className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white transition hover:bg-white/15"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-
-                    <p className="mt-4 text-sm text-slate-400">
-                      {item.description}
-                    </p>
-                  </div>
-                ))}
+              <div className="mt-6">
+                <CompactDraftBoard
+                  tiers={tiers}
+                  getStatus={(item) => {
+                    const pick = pickByItemId.get(item.id);
+                    return pick
+                      ? { variant: "taken", badge: pick.drafter }
+                      : { variant: "available" };
+                  }}
+                  onSelect={draftItem}
+                  isClickable={() => Boolean(currentDrafter)}
+                  emptyMessage="No items. Add items in Setup or choose a template."
+                  legend={[
+                    { label: "Drafted", swatchClassName: "bg-green-400/20" },
+                    { label: "Available", swatchClassName: "bg-white/10" },
+                  ]}
+                />
               </div>
 
               {availableItems.length === 0 && picks.length > 0 && (
@@ -1760,7 +1403,7 @@ export default function Home() {
                 <div>
                   <h2 className="text-2xl font-bold">Draft Board</h2>
                   <p className="mt-2 text-sm text-slate-400">
-                    Every selection appears here.
+                    Every selection, organized by conference.
                   </p>
                 </div>
 
@@ -1783,28 +1426,18 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="mt-6 space-y-3">
-                {picks.length === 0 && (
-                  <div className="rounded-2xl border border-dashed border-white/15 p-5 text-slate-500">
-                    No picks yet.
-                  </div>
-                )}
-
-                {picks.map((pick) => (
-                  <div
-                    key={pick.pickNumber}
-                    className="rounded-2xl border border-white/10 bg-slate-900 p-4"
-                  >
-                    <div className="text-sm text-slate-400">
-                      Pick {pick.pickNumber} · Round {pick.round} · {pick.drafter}
-                    </div>
-
-                    <div className="mt-1 text-lg font-black">{pick.item.name}</div>
-                    <div className="text-sm text-cyan-300">
-                      {pick.item.category}
-                    </div>
-                  </div>
-                ))}
+              <div className="mt-6">
+                <CompactDraftBoard
+                  tiers={pickedTiers}
+                  getStatus={(item) => {
+                    const pick = pickedById.get(item.id);
+                    return pick
+                      ? { variant: "taken", badge: pick.drafter }
+                      : { variant: "available" };
+                  }}
+                  strikethroughOnTaken={false}
+                  emptyMessage="No picks yet."
+                />
               </div>
             </div>
           </section>
@@ -1851,7 +1484,7 @@ export default function Home() {
                   className="rounded-2xl border border-white/10 bg-slate-900 p-5"
                 >
                   <div className="text-sm text-slate-400">
-                    Pick {pick.pickNumber} · Round {pick.round}
+                    Pick {pick.pickNumber}
                   </div>
                   <div className="mt-1 text-sm font-bold text-cyan-300">
                     {pick.drafter}

@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
+import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
+import { CompactDraftBoard } from "@/components/CompactDraftBoard";
 
 type Drafter = {
   id: number;
@@ -16,11 +19,11 @@ type DraftItem = {
   name: string;
   category: string;
   description: string;
+  color?: string;
 };
 
 type Pick = {
   pickNumber: number;
-  round: number;
   drafter: string;
   item: DraftItem;
 };
@@ -31,7 +34,6 @@ type SavedDraftState = {
   drafters: Drafter[];
   availableItems: DraftItem[];
   picks: Pick[];
-  snakeDraft: boolean;
   lotteryHasRun: boolean;
 };
 
@@ -173,7 +175,6 @@ export default function JoinDraftPage() {
   const drafters = draftData?.drafters ?? [];
   const picks = draftData?.picks ?? [];
   const availableItems = draftData?.availableItems ?? [];
-  const snakeDraft = Boolean(draftData?.snakeDraft);
 
   const myParticipant = useMemo(() => {
     if (!currentUserId) return undefined;
@@ -191,22 +192,11 @@ export default function JoinDraftPage() {
 
   const currentPickNumber = picks.length + 1;
 
-  const currentRound =
-    drafters.length > 0 ? Math.floor(picks.length / drafters.length) + 1 : 1;
-
   const currentDrafter = useMemo(() => {
-    if (drafters.length === 0) return undefined;
+    if (picks.length >= drafters.length) return undefined;
 
-    const pickIndex = picks.length;
-    const roundIndex = Math.floor(pickIndex / drafters.length);
-    const pickInRound = pickIndex % drafters.length;
-
-    if (snakeDraft && roundIndex % 2 === 1) {
-      return drafters[drafters.length - 1 - pickInRound];
-    }
-
-    return drafters[pickInRound];
-  }, [drafters, picks.length, snakeDraft]);
+    return drafters[picks.length];
+  }, [drafters, picks.length]);
 
   const draftStatus = useMemo(() => {
     if (picks.length === 0) return "Draft Not Started";
@@ -220,12 +210,60 @@ export default function JoinDraftPage() {
     myParticipant?.drafter_name === currentDrafter?.name &&
     availableItems.length > 0;
 
-  const filteredItems = availableItems.filter((item) => {
-    const searchText =
-      `${item.name} ${item.category} ${item.description}`.toLowerCase();
+  const { pickByItemId, groups: itemGroups } = useMemo(
+    () =>
+      groupItemsByConference(
+        availableItems,
+        picks,
+        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_ORDER : undefined
+      ),
+    [availableItems, picks, draftData?.selectedTemplateId]
+  );
 
-    return searchText.includes(search.toLowerCase());
-  });
+  const searchedGroups = useMemo(() => {
+    const searchText = search.toLowerCase();
+
+    return itemGroups
+      .map((group) => ({
+        category: group.category,
+        items: group.items.filter((item) =>
+          `${item.name} ${item.category} ${item.description}`
+            .toLowerCase()
+            .includes(searchText)
+        ),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [itemGroups, search]);
+
+  const tiers = useMemo(
+    () =>
+      buildTiers(
+        searchedGroups,
+        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_TIERS : undefined,
+        TIER_ORDER
+      ),
+    [searchedGroups, draftData?.selectedTemplateId]
+  );
+
+  const { pickByItemId: pickedById, groups: pickedGroups } = useMemo(
+    () =>
+      groupItemsByConference(
+        [],
+        picks,
+        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_ORDER : undefined
+      ),
+    [picks, draftData?.selectedTemplateId]
+  );
+
+  const pickedTiers = useMemo(
+    () =>
+      buildTiers(
+        pickedGroups,
+        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_TIERS : undefined,
+        TIER_ORDER
+      ),
+    [pickedGroups, draftData?.selectedTemplateId]
+  );
 
   async function claimDrafter(drafterName: string) {
     if (!draft || !currentUserId) return;
@@ -279,12 +317,16 @@ export default function JoinDraftPage() {
       return;
     }
 
+    if (!availableItems.some((availableItem) => availableItem.id === item.id)) {
+      setMessage("That team has already been drafted.");
+      return;
+    }
+
     setIsSaving(true);
     setMessage("");
 
     const newPick: Pick = {
       pickNumber: currentPickNumber,
-      round: currentRound,
       drafter: currentDrafter.name,
       item,
     };
@@ -504,13 +546,13 @@ export default function JoinDraftPage() {
 
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="text-3xl font-black">
-              {draftData.snakeDraft ? "Yes" : "No"}
+              {Math.max(drafters.length - picks.length, 0)}
             </div>
-            <div className="mt-1 text-sm text-slate-400">Snake Draft</div>
+            <div className="mt-1 text-sm text-slate-400">Drafters Remaining</div>
           </div>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+        <section className="flex flex-col gap-6">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <h2 className="text-2xl font-black">Your Drafter Slot</h2>
 
@@ -603,7 +645,7 @@ export default function JoinDraftPage() {
                 </h2>
 
                 <p className="mt-2 text-slate-400">
-                  Pick {currentPickNumber} · Round {currentRound}
+                  Pick {currentPickNumber} of {drafters.length}
                 </p>
               </div>
 
@@ -615,40 +657,23 @@ export default function JoinDraftPage() {
               />
             </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-2">
-              {filteredItems.length === 0 && (
-                <div className="rounded-2xl border border-dashed border-white/15 p-5 text-slate-500 md:col-span-2">
-                  No available items.
-                </div>
-              )}
-
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="rounded-2xl border border-white/10 bg-slate-900 p-5"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 className="text-xl font-black">{item.name}</h3>
-                      <p className="mt-1 text-sm font-semibold text-cyan-300">
-                        {item.category}
-                      </p>
-                    </div>
-
-                    <button
-                      onClick={() => makePick(item)}
-                      disabled={!canPick || isSaving}
-                      className="rounded-full bg-cyan-400 px-3 py-1 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Draft
-                    </button>
-                  </div>
-
-                  <p className="mt-4 text-sm text-slate-400">
-                    {item.description}
-                  </p>
-                </div>
-              ))}
+            <div className="mt-6">
+              <CompactDraftBoard
+                tiers={tiers}
+                getStatus={(item) => {
+                  const pick = pickByItemId.get(item.id);
+                  return pick
+                    ? { variant: "taken", badge: pick.drafter }
+                    : { variant: "available" };
+                }}
+                onSelect={makePick}
+                isClickable={() => canPick && !isSaving}
+                emptyMessage="No available items."
+                legend={[
+                  { label: "Drafted", swatchClassName: "bg-green-400/20" },
+                  { label: "Available", swatchClassName: "bg-white/10" },
+                ]}
+              />
             </div>
           </div>
         </section>
@@ -656,29 +681,18 @@ export default function JoinDraftPage() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
           <h2 className="text-2xl font-black">Draft Board</h2>
 
-          <div className="mt-6 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {picks.length === 0 && (
-              <div className="rounded-2xl border border-dashed border-white/15 p-5 text-slate-500">
-                No picks yet.
-              </div>
-            )}
-
-            {picks.map((pick) => (
-              <div
-                key={pick.pickNumber}
-                className="rounded-2xl border border-white/10 bg-slate-900 p-4"
-              >
-                <div className="text-sm text-slate-400">
-                  Pick {pick.pickNumber} · Round {pick.round} · {pick.drafter}
-                </div>
-
-                <div className="mt-1 text-lg font-black">{pick.item.name}</div>
-
-                <div className="text-sm text-cyan-300">
-                  {pick.item.category}
-                </div>
-              </div>
-            ))}
+          <div className="mt-6">
+            <CompactDraftBoard
+              tiers={pickedTiers}
+              getStatus={(item) => {
+                const pick = pickedById.get(item.id);
+                return pick
+                  ? { variant: "taken", badge: pick.drafter }
+                  : { variant: "available" };
+              }}
+              strikethroughOnTaken={false}
+              emptyMessage="No picks yet."
+            />
           </div>
         </section>
       </section>

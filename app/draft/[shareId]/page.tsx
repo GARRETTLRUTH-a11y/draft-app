@@ -20,7 +20,6 @@ type DraftItem = {
 
 type Pick = {
   pickNumber: number;
-  round: number;
   drafter: string;
   item: DraftItem;
 };
@@ -31,7 +30,6 @@ type SavedDraftState = {
   drafters: Drafter[];
   availableItems: DraftItem[];
   picks: Pick[];
-  snakeDraft: boolean;
   lotteryHasRun: boolean;
 };
 
@@ -275,9 +273,9 @@ export default function SharedDraftPage() {
 
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="text-3xl font-black">
-              {draft.draft_data.snakeDraft ? "Yes" : "No"}
+              {Math.max(drafters.length - picks.length, 0)}
             </div>
-            <div className="mt-1 text-sm text-slate-400">Snake Draft</div>
+            <div className="mt-1 text-sm text-slate-400">Drafters Remaining</div>
           </div>
         </section>
 
@@ -318,7 +316,7 @@ export default function SharedDraftPage() {
                           className="rounded-xl bg-white/5 p-3"
                         >
                           <div className="text-xs text-slate-500">
-                            Pick {pick.pickNumber} · Round {pick.round}
+                            Pick {pick.pickNumber}
                           </div>
                           <div className="mt-1 font-bold">{pick.item.name}</div>
                           <div className="text-xs text-cyan-300">
@@ -349,7 +347,7 @@ export default function SharedDraftPage() {
                   className="rounded-2xl border border-white/10 bg-slate-900 p-5"
                 >
                   <div className="text-sm text-slate-400">
-                    Pick {pick.pickNumber} · Round {pick.round} · {pick.drafter}
+                    Pick {pick.pickNumber} · {pick.drafter}
                   </div>
 
                   <div className="mt-2 text-2xl font-black">

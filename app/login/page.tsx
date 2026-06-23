@@ -1,10 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 export default function LoginPage() {
+  return (
+    <Suspense>
+      <LoginPageContent />
+    </Suspense>
+  );
+}
+
+function LoginPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const redirectTarget = searchParams.get("redirect") || "/create";
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
@@ -35,13 +48,22 @@ export default function LoginPage() {
     setIsLoading(true);
     setMessage("");
 
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
+      options: {
+        emailRedirectTo:
+          typeof window !== "undefined"
+            ? `${window.location.origin}${redirectTarget}`
+            : undefined,
+      },
     });
 
     if (error) {
       setMessage(error.message);
+    } else if (data.session) {
+      router.push(redirectTarget);
+      return;
     } else {
       setMessage(
         "Account created. Check your email if Supabase requires confirmation."
@@ -60,12 +82,12 @@ export default function LoginPage() {
       password,
     });
 
-    if (error) {
-      setMessage(error.message);
-    } else {
-      setMessage("Signed in successfully.");
+    if (!error) {
+      router.push(redirectTarget);
+      return;
     }
 
+    setMessage(error.message);
     setIsLoading(false);
   }
 
@@ -90,7 +112,7 @@ export default function LoginPage() {
         <div className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl">
           <div className="mb-6">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-              Draft Anything
+              CFB Draft Tool
             </p>
 
             <h1 className="mt-4 text-4xl font-black">Login / Signup</h1>
@@ -110,10 +132,12 @@ export default function LoginPage() {
 
               <div className="mt-6 flex flex-col gap-3 sm:flex-row">
                 <Link
-                  href="/create"
+                  href={redirectTarget}
                   className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-cyan-300"
                 >
-                  Go to Draft Builder
+                  {searchParams.get("redirect")
+                    ? "Continue to Draft"
+                    : "Go to Draft Builder"}
                 </Link>
 
                 <button

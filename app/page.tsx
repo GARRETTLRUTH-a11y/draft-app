@@ -7,10 +7,10 @@ export default function Home() {
         <header className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 px-6 py-5">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-              Draft Anything
+              CFB Draft Tool
             </p>
             <p className="mt-1 text-sm text-slate-400">
-              Custom drafts for sports, food, movies, leagues, and anything else.
+              Live college football team drafts for your group.
             </p>
           </div>
 
@@ -25,18 +25,18 @@ export default function Home() {
         <div className="grid flex-1 items-center gap-10 py-16 lg:grid-cols-[1.1fr_0.9fr]">
           <section>
             <div className="inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200">
-              Build a draft room for anything
+              Every FBS team, drafted live
             </div>
 
             <h1 className="mt-6 text-5xl font-black tracking-tight md:text-7xl">
-              Draft teams, foods, movies, players, or anything your group can
-              argue about.
+              Run a live college football team draft with your group.
             </h1>
 
             <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-300">
-              Create a custom draft, add drafters, set weighted lottery odds,
-              bulk-add draftable items, run the lottery, make picks, undo
-              mistakes, and export the final results.
+              Set lottery odds, choose which teams are eligible across every
+              conference, then invite players to log in, claim a name, and
+              make their own picks on a live, conference-organized draft
+              board.
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
@@ -63,22 +63,24 @@ export default function Home() {
               </p>
 
               <h2 className="mt-4 text-3xl font-black">
-                College Football 26 Team Draft
+                College Football Team Draft
               </h2>
 
               <div className="mt-6 space-y-3">
                 {[
-                  ["1.01", "Garrett", "UTSA"],
-                  ["1.02", "Chris", "Tulane"],
-                  ["1.03", "Tyler", "James Madison"],
-                  ["1.04", "John", "ECU"],
+                  ["1", "Garrett", "UTSA"],
+                  ["2", "Chris", "Tulane"],
+                  ["3", "Tyler", "James Madison"],
+                  ["4", "John", "ECU"],
                 ].map(([pick, drafter, item]) => (
                   <div
                     key={pick}
                     className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950 p-4"
                   >
                     <div>
-                      <div className="text-xs text-slate-500">{pick}</div>
+                      <div className="text-xs text-slate-500">
+                        Pick {pick}
+                      </div>
                       <div className="font-bold">{drafter}</div>
                     </div>
 
@@ -95,10 +97,22 @@ export default function Home() {
 
         <section id="features" className="grid gap-4 pb-10 md:grid-cols-4">
           {[
-            ["Templates", "Start with CFB, food, movies, or blank drafts."],
-            ["Weighted Lottery", "Give users custom odds for draft order."],
-            ["Bulk Add", "Paste drafters and draft items in seconds."],
-            ["Export Results", "Download the final draft board as a CSV."],
+            [
+              "Full FBS Coverage",
+              "Every FBS team across all conferences, including the Pac-12.",
+            ],
+            [
+              "Team Eligibility",
+              "Exclude any team or whole conference before the draft starts.",
+            ],
+            [
+              "Live Player Picks",
+              "Invite players to log in, claim a name, and pick on their turn.",
+            ],
+            [
+              "Conference-Organized Board",
+              "A condensed, color-coded board grouped by conference.",
+            ],
           ].map(([title, text]) => (
             <div
               key={title}

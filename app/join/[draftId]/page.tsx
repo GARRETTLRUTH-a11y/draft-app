@@ -368,7 +368,7 @@ export default function JoinDraftPage() {
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
         <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-            Draft Anything
+            CFB Draft Tool
           </p>
           <h1 className="mt-4 text-4xl font-black">Loading join room...</h1>
         </section>
@@ -381,7 +381,7 @@ export default function JoinDraftPage() {
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
         <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-            Draft Anything
+            CFB Draft Tool
           </p>
 
           <h1 className="mt-4 text-4xl font-black">Sign In to Join</h1>
@@ -397,7 +397,7 @@ export default function JoinDraftPage() {
           )}
 
           <Link
-            href="/login"
+            href={`/login?redirect=/join/${draftId}`}
             className="mt-6 inline-flex rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
           >
             Login
@@ -412,7 +412,7 @@ export default function JoinDraftPage() {
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
         <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-            Draft Anything
+            CFB Draft Tool
           </p>
 
           <h1 className="mt-4 text-4xl font-black">Join Room Unavailable</h1>
@@ -437,7 +437,7 @@ export default function JoinDraftPage() {
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
         <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-            Draft Anything
+            CFB Draft Tool
           </p>
 
           <h1 className="mt-4 text-4xl font-black">Player Picks Are Off</h1>
@@ -463,7 +463,7 @@ export default function JoinDraftPage() {
         <header className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-              Draft Anything
+              CFB Draft Tool
             </p>
 
             <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-4 py-1.5 text-xs font-bold text-purple-200">
@@ -549,6 +549,61 @@ export default function JoinDraftPage() {
               {Math.max(drafters.length - picks.length, 0)}
             </div>
             <div className="mt-1 text-sm text-slate-400">Drafters Remaining</div>
+          </div>
+        </section>
+
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+          <h2 className="text-2xl font-black">Draft Order</h2>
+          <p className="mt-2 text-sm text-slate-400">
+            The full pick order for this draft.
+          </p>
+
+          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
+            {drafters.map((drafter, index) => {
+              const pick = picks[index];
+              const isOnClock = drafter.id === currentDrafter?.id;
+              const isMe = myParticipant?.drafter_name === drafter.name;
+
+              return (
+                <div
+                  key={drafter.id}
+                  className={`flex items-center gap-3 border-b border-white/5 px-3 py-2 text-sm last:border-b-0 ${
+                    isOnClock
+                      ? "bg-cyan-300/10"
+                      : pick
+                        ? "bg-green-400/10"
+                        : "bg-slate-900"
+                  }`}
+                >
+                  <span className="w-6 flex-shrink-0 text-xs text-slate-500">
+                    {index + 1}
+                  </span>
+
+                  <span className="min-w-0 flex-1 truncate font-bold">
+                    {drafter.name}
+                    {isMe && (
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        (you)
+                      </span>
+                    )}
+                  </span>
+
+                  {pick ? (
+                    <span className="flex-shrink-0 rounded-full border border-green-400/30 bg-green-400/10 px-2 py-0.5 text-[10px] font-bold text-green-200">
+                      {pick.item.name}
+                    </span>
+                  ) : isOnClock ? (
+                    <span className="flex-shrink-0 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200">
+                      On the Clock
+                    </span>
+                  ) : (
+                    <span className="flex-shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                      Waiting
+                    </span>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 

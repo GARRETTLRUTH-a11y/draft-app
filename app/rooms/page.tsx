@@ -67,7 +67,7 @@ export default function RoomsPage() {
       <section className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-8">
         <header className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl">
           <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-            Draft Anything
+            CFB Draft Tool
           </p>
 
           <div className="mt-4 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">

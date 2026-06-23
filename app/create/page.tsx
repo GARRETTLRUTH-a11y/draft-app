@@ -823,7 +823,7 @@ export default function Home() {
         <header className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl">
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-              Draft Anything
+              CFB Draft Tool
             </p>
 
             <span

@@ -193,3 +193,19 @@ export const CFB_TEAMS: CfbTeam[] = [
   { name: "Notre Dame", conference: "FBS Independents", color: "#0C2340" },
   { name: "UConn", conference: "FBS Independents", color: "#000E2F" },
 ];
+
+export type CfbDraftItem = {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  color?: string;
+};
+
+export const CFB_ITEMS: CfbDraftItem[] = CFB_TEAMS.map((team, index) => ({
+  id: index + 1,
+  name: team.name,
+  category: team.conference,
+  description: `${team.conference} program.`,
+  color: team.color,
+}));

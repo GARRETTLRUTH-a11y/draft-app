@@ -39,6 +39,7 @@ type SavedDraftState = {
 
 type RoomDraft = {
   id: string;
+  user_id: string;
   title: string;
   draft_data: SavedDraftState;
   updated_at: string;
@@ -54,6 +55,14 @@ type Participant = {
   role: "host" | "participant";
 };
 
+function createShareId() {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID().replaceAll("-", "");
+  }
+
+  return `${Date.now()}${Math.random().toString(36).slice(2)}`;
+}
+
 export default function RoomPage() {
   const params = useParams();
   const rawDraftId = params.draftId;
@@ -61,6 +70,7 @@ export default function RoomPage() {
 
   const [draft, setDraft] = useState<RoomDraft | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -76,7 +86,7 @@ export default function RoomPage() {
     loadRoomDraft(roomDraftId);
 
     const draftChannel = supabase
-      .channel(`host-room-draft-${roomDraftId}`)
+      .channel(`room-draft-${roomDraftId}`)
       .on(
         "postgres_changes",
         {
@@ -106,7 +116,7 @@ export default function RoomPage() {
       });
 
     const participantsChannel = supabase
-      .channel(`host-room-participants-${roomDraftId}`)
+      .channel(`room-participants-${roomDraftId}`)
       .on(
         "postgres_changes",
         {
@@ -136,18 +146,20 @@ export default function RoomPage() {
 
     const { data: userData } = await supabase.auth.getUser();
     setUserEmail(userData.user?.email ?? null);
+    setCurrentUserId(userData.user?.id ?? null);
 
     if (!userData.user) {
       setDraft(null);
       setParticipants([]);
-      setMessage("Sign in to access this draft room.");
       setIsLoading(false);
       return;
     }
 
     const { data, error } = await supabase
       .from("drafts")
-      .select("id, title, draft_data, updated_at, is_public, is_joinable, share_id")
+      .select(
+        "id, user_id, title, draft_data, updated_at, is_public, is_joinable, share_id"
+      )
       .eq("id", roomDraftId)
       .maybeSingle();
 
@@ -155,7 +167,7 @@ export default function RoomPage() {
       setMessage(error.message);
       setDraft(null);
     } else if (!data) {
-      setMessage("Draft room not found, or you do not have access.");
+      setMessage("This draft was not found, or you do not have access.");
       setDraft(null);
     } else {
       setDraft(data as RoomDraft);
@@ -181,6 +193,8 @@ export default function RoomPage() {
     setParticipants((data || []) as Participant[]);
   }
 
+  const isOwner = Boolean(draft && currentUserId && draft.user_id === currentUserId);
+
   const draftData = draft?.draft_data;
   const drafters = draftData?.drafters ?? [];
   const picks = draftData?.picks ?? [];
@@ -194,11 +208,15 @@ export default function RoomPage() {
     return drafters[picks.length];
   }, [drafters, picks.length]);
 
+  const isDraftComplete =
+    drafters.length > 0 &&
+    (picks.length >= drafters.length || availableItems.length === 0);
+
   const draftStatus = useMemo(() => {
     if (picks.length === 0) return "Draft Not Started";
-    if (availableItems.length === 0) return "Draft Complete";
+    if (isDraftComplete) return "Draft Complete";
     return "Draft In Progress";
-  }, [picks.length, availableItems.length]);
+  }, [picks.length, isDraftComplete]);
 
   const participantByName = useMemo(() => {
     const map = new Map<string, Participant>();
@@ -209,6 +227,62 @@ export default function RoomPage() {
 
     return map;
   }, [participants]);
+
+  const myParticipant = useMemo(() => {
+    if (!currentUserId) return undefined;
+
+    return participants.find(
+      (participant) => participant.user_id === currentUserId
+    );
+  }, [participants, currentUserId]);
+
+  const claimedNames = useMemo(() => {
+    return new Set(
+      participants.map((participant) => participant.drafter_name.toLowerCase())
+    );
+  }, [participants]);
+
+  const canPick =
+    Boolean(myParticipant) &&
+    Boolean(currentDrafter) &&
+    myParticipant?.drafter_name === currentDrafter?.name &&
+    availableItems.length > 0;
+
+  function exportResultsCsv() {
+    if (picks.length === 0) return;
+
+    const csvHeader = "Pick,Drafter,Item,Category,Description\n";
+
+    const csvRows = picks
+      .map((pick) =>
+        [
+          pick.pickNumber,
+          pick.drafter,
+          pick.item.name,
+          pick.item.category,
+          pick.item.description,
+        ]
+          .map((value) => `"${String(value).replaceAll('"', '""')}"`)
+          .join(",")
+      )
+      .join("\n");
+
+    const csvContent = csvHeader + csvRows;
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+
+    const safeTitle = (draftData?.draftTitle || draft?.title || "draft")
+      .trim()
+      .replaceAll(" ", "-")
+      .toLowerCase();
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${safeTitle}-results.csv`;
+    link.click();
+
+    URL.revokeObjectURL(url);
+  }
 
   const { pickByItemId, groups: itemGroups } = useMemo(
     () =>
@@ -265,24 +339,24 @@ export default function RoomPage() {
     [pickedGroups, draftData?.selectedTemplateId]
   );
 
-  function getJoinLink() {
+  function getRoomLink() {
     if (!draft) return "";
 
     if (typeof window === "undefined") {
-      return `/join/${draft.id}`;
+      return `/room/${draft.id}`;
     }
 
-    return `${window.location.origin}/join/${draft.id}`;
+    return `${window.location.origin}/room/${draft.id}`;
   }
 
-  async function copyJoinLink() {
-    const url = getJoinLink();
+  async function copyRoomLink() {
+    const url = getRoomLink();
 
     try {
       await navigator.clipboard.writeText(url);
-      setMessage("Player join link copied to clipboard.");
+      setMessage("Draft link copied to clipboard.");
     } catch {
-      setMessage(`Copy this join link: ${url}`);
+      setMessage(`Copy this link: ${url}`);
     }
   }
 
@@ -321,6 +395,45 @@ export default function RoomPage() {
     setIsSaving(false);
   }
 
+  async function toggleIsPublic(nextValue: boolean) {
+    if (!draft) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const shareId = draft.share_id || createShareId();
+
+    const { error } = await supabase
+      .from("drafts")
+      .update({
+        is_public: nextValue,
+        share_id: shareId,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", draft.id);
+
+    if (error) {
+      setMessage(error.message);
+      setIsSaving(false);
+      return;
+    }
+
+    setDraft({
+      ...draft,
+      is_public: nextValue,
+      share_id: shareId,
+      updated_at: new Date().toISOString(),
+    });
+
+    setMessage(
+      nextValue
+        ? "Public spectator link is now on."
+        : "Public spectator link is now off."
+    );
+
+    setIsSaving(false);
+  }
+
   async function saveRoomDraft(nextDraftData: SavedDraftState) {
     if (!draft) return;
 
@@ -349,14 +462,21 @@ export default function RoomPage() {
       updated_at: new Date().toISOString(),
     });
 
-    setMessage("Room updated.");
     setIsSaving(false);
   }
 
   async function makePick(item: DraftItem) {
     if (!draftData || !currentDrafter) return;
-    if (!availableItems.some((availableItem) => availableItem.id === item.id))
+
+    if (!isOwner && !canPick) {
+      setMessage("It is not your turn yet.");
       return;
+    }
+
+    if (!availableItems.some((availableItem) => availableItem.id === item.id)) {
+      setMessage("That team has already been drafted.");
+      return;
+    }
 
     const newPick: Pick = {
       pickNumber: currentPickNumber,
@@ -373,6 +493,7 @@ export default function RoomPage() {
     };
 
     await saveRoomDraft(nextDraftData);
+    setMessage(`Drafted ${item.name}.`);
   }
 
   async function undoLastPick() {
@@ -389,6 +510,50 @@ export default function RoomPage() {
     await saveRoomDraft(nextDraftData);
   }
 
+  async function claimDrafter(drafterName: string) {
+    if (!draft || !currentUserId) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase.from("draft_participants").insert({
+      draft_id: draft.id,
+      user_id: currentUserId,
+      drafter_name: drafterName,
+      role: "participant",
+    });
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage(`You claimed ${drafterName}.`);
+      await loadParticipants(draft.id);
+    }
+
+    setIsSaving(false);
+  }
+
+  async function leaveSlot() {
+    if (!myParticipant || !draft) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("draft_participants")
+      .delete()
+      .eq("id", myParticipant.id);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage("You left your drafter slot.");
+      await loadParticipants(draft.id);
+    }
+
+    setIsSaving(false);
+  }
+
   if (isLoading) {
     return (
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -397,6 +562,46 @@ export default function RoomPage() {
             CFB Draft Tool
           </p>
           <h1 className="mt-4 text-4xl font-black">Loading draft room...</h1>
+        </section>
+      </main>
+    );
+  }
+
+  if (!userEmail) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
+        <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
+            CFB Draft Tool
+          </p>
+
+          <h1 className="mt-4 text-4xl font-black">Sign In to Continue</h1>
+
+          <p className="mt-4 text-slate-300">
+            Sign in to view or join this draft room.
+          </p>
+
+          {message && (
+            <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4 text-sm font-semibold text-yellow-100">
+              {message}
+            </div>
+          )}
+
+          <div className="mt-6 flex flex-wrap gap-3">
+            <Link
+              href={`/login?redirect=/room/${draftId}`}
+              className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
+            >
+              Login
+            </Link>
+
+            <Link
+              href="/"
+              className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
+            >
+              Home
+            </Link>
+          </div>
         </section>
       </main>
     );
@@ -416,21 +621,37 @@ export default function RoomPage() {
             {message || "This room could not be loaded."}
           </p>
 
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href="/login"
-              className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
-            >
-              Login
-            </Link>
+          <Link
+            href="/rooms"
+            className="mt-6 inline-flex rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
+          >
+            Back to Rooms
+          </Link>
+        </section>
+      </main>
+    );
+  }
 
-            <Link
-              href="/rooms"
-              className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
-            >
-              Rooms
-            </Link>
-          </div>
+  if (!isOwner && !draft.is_joinable) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
+        <section className="mx-auto max-w-5xl rounded-3xl border border-white/10 bg-white/5 p-8">
+          <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
+            CFB Draft Tool
+          </p>
+
+          <h1 className="mt-4 text-4xl font-black">Player Picks Are Off</h1>
+
+          <p className="mt-4 text-slate-300">
+            The host has not enabled player self-picking for this draft yet.
+          </p>
+
+          <Link
+            href="/"
+            className="mt-6 inline-flex rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
+          >
+            Back to Home
+          </Link>
         </section>
       </main>
     );
@@ -446,7 +667,7 @@ export default function RoomPage() {
             </p>
 
             <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-1.5 text-xs font-bold text-cyan-200">
-              Host Room
+              {isOwner ? "Host Room" : "Player Room"}
             </span>
 
             <span className="rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-bold text-white">
@@ -467,11 +688,9 @@ export default function RoomPage() {
               Live
             </span>
 
-            {userEmail && (
-              <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
-                Signed in
-              </span>
-            )}
+            <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
+              Signed in
+            </span>
 
             {isSaving && (
               <span className="rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-1.5 text-xs font-bold text-yellow-200">
@@ -487,8 +706,9 @@ export default function RoomPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-lg text-slate-300">
-                Dedicated host-controlled room. Player picks now update this page
-                live.
+                {isOwner
+                  ? "Dedicated host-controlled room. Player picks update this page live."
+                  : "Claim your drafter slot. When it is your turn, you can make your own pick."}
               </p>
 
               <p className="mt-3 text-sm text-slate-500">
@@ -501,45 +721,73 @@ export default function RoomPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-              {draft.is_joinable ? (
-                <button
-                  onClick={() => togglePlayerPicks(false)}
-                  disabled={isSaving}
-                  className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  Disable Player Picks
-                </button>
+              {isOwner ? (
+                <>
+                  {draft.is_joinable ? (
+                    <button
+                      onClick={() => togglePlayerPicks(false)}
+                      disabled={isSaving}
+                      className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Disable Player Picks
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => togglePlayerPicks(true)}
+                      disabled={isSaving}
+                      className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Enable Player Picks
+                    </button>
+                  )}
+
+                  <button
+                    onClick={copyRoomLink}
+                    className="rounded-2xl bg-white px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-slate-200"
+                  >
+                    Copy Draft Link
+                  </button>
+
+                  {draft.is_public ? (
+                    <button
+                      onClick={() => toggleIsPublic(false)}
+                      disabled={isSaving}
+                      className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Turn Off Public View
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => toggleIsPublic(true)}
+                      disabled={isSaving}
+                      className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      Make Public
+                    </button>
+                  )}
+
+                  <Link
+                    href="/rooms"
+                    className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
+                  >
+                    All Rooms
+                  </Link>
+
+                  <Link
+                    href="/create"
+                    className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-cyan-300"
+                  >
+                    Builder
+                  </Link>
+                </>
               ) : (
                 <button
-                  onClick={() => togglePlayerPicks(true)}
-                  disabled={isSaving}
-                  className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  onClick={() => loadRoomDraft()}
+                  className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
                 >
-                  Enable Player Picks
+                  Refresh
                 </button>
               )}
-
-              <button
-                onClick={copyJoinLink}
-                disabled={!draft.is_joinable}
-                className="rounded-2xl bg-white px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Copy Player Join Link
-              </button>
-
-              <Link
-                href="/rooms"
-                className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
-              >
-                All Rooms
-              </Link>
-
-              <Link
-                href="/create"
-                className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-cyan-300"
-              >
-                Builder
-              </Link>
 
               {draft.is_public && (
                 <Link
@@ -547,15 +795,15 @@ export default function RoomPage() {
                   target="_blank"
                   className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300"
                 >
-                  Public View
+                  {isOwner ? "Public View" : "Watch Board"}
                 </Link>
               )}
             </div>
           </div>
 
-          {draft.is_joinable && (
+          {isOwner && draft.is_joinable && (
             <div className="mt-5 rounded-2xl border border-purple-400/30 bg-purple-400/10 p-4 text-sm font-semibold text-purple-100">
-              Player self-picking is enabled. Join link: {getJoinLink()}
+              Player self-picking is enabled. Draft link: {getRoomLink()}
             </div>
           )}
 
@@ -590,13 +838,61 @@ export default function RoomPage() {
           </div>
         </section>
 
+        {isDraftComplete && (
+          <section className="rounded-3xl border border-green-400/30 bg-green-400/10 p-6">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.25em] text-green-300">
+                  Draft Complete
+                </p>
+                <h2 className="mt-2 text-3xl font-black">Final Results</h2>
+              </div>
+
+              <button
+                onClick={exportResultsCsv}
+                className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200"
+              >
+                Export Results CSV
+              </button>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {drafters.map((drafter) => {
+                const pick = picks.find((p) => p.drafter === drafter.name);
+
+                return (
+                  <div
+                    key={drafter.id}
+                    className="flex items-center gap-3 rounded-2xl border border-white/10 bg-slate-900 p-4"
+                  >
+                    {pick?.item.color && (
+                      <span
+                        className="h-3 w-3 flex-shrink-0 rounded-full"
+                        style={{ backgroundColor: pick.item.color }}
+                      />
+                    )}
+
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm text-slate-400">
+                        {drafter.name}
+                      </div>
+                      <div className="truncate text-lg font-black">
+                        {pick?.item.name ?? "—"}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
               <h2 className="text-2xl font-black">Draft Order &amp; Players</h2>
               <p className="mt-2 text-sm text-slate-400">
-                Updates live as players claim slots and make picks. The order
-                below reflects the current lottery / randomize result.
+                Updates live as players claim slots and make picks.
               </p>
             </div>
 
@@ -615,6 +911,8 @@ export default function RoomPage() {
               );
               const pick = picks.find((p) => p.drafter === drafter.name);
               const isOnClock = drafter.id === currentDrafter?.id;
+              const isMe =
+                !isOwner && myParticipant?.drafter_name === drafter.name;
 
               return (
                 <div
@@ -633,6 +931,11 @@ export default function RoomPage() {
 
                   <span className="min-w-0 flex-1 truncate font-bold">
                     {drafter.name}
+                    {isMe && (
+                      <span className="ml-1 text-xs font-normal text-slate-400">
+                        (you)
+                      </span>
+                    )}
                   </span>
 
                   {pick ? (
@@ -669,15 +972,103 @@ export default function RoomPage() {
         </section>
 
         <section className="flex flex-col gap-6">
+          {!isOwner && (
+            <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
+              <h2 className="text-2xl font-black">Your Drafter Slot</h2>
+
+              {myParticipant ? (
+                <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-5">
+                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-green-200">
+                    Claimed
+                  </p>
+
+                  <h3 className="mt-2 text-3xl font-black">
+                    {myParticipant.drafter_name}
+                  </h3>
+
+                  <button
+                    onClick={leaveSlot}
+                    disabled={isSaving || picks.length > 0}
+                    className="mt-5 rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Leave Slot
+                  </button>
+
+                  {picks.length > 0 && (
+                    <p className="mt-3 text-xs text-yellow-200">
+                      Slots lock once picks have started.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="mt-5 space-y-3">
+                  <p className="text-sm text-slate-400">
+                    Pick the drafter name that belongs to you.
+                  </p>
+
+                  {drafters.map((drafter) => {
+                    const isClaimed = claimedNames.has(
+                      drafter.name.toLowerCase()
+                    );
+
+                    return (
+                      <button
+                        key={drafter.id}
+                        onClick={() => claimDrafter(drafter.name)}
+                        disabled={isClaimed || isSaving}
+                        className={`w-full rounded-2xl border p-4 text-left transition ${
+                          isClaimed
+                            ? "cursor-not-allowed border-white/10 bg-slate-900 text-slate-500"
+                            : "border-cyan-300 bg-cyan-300/10 text-white hover:bg-cyan-300/20"
+                        }`}
+                      >
+                        <div className="font-black">{drafter.name}</div>
+                        <div className="mt-1 text-xs">
+                          {isClaimed ? "Already claimed" : "Available to claim"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                <p className="text-sm font-semibold text-slate-300">
+                  Current turn:
+                </p>
+
+                <p className="mt-1 text-2xl font-black">
+                  {currentDrafter?.name || "No current drafter"}
+                </p>
+
+                {canPick ? (
+                  <p className="mt-2 text-sm font-semibold text-green-200">
+                    It is your turn. Pick below.
+                  </p>
+                ) : (
+                  <p className="mt-2 text-sm text-slate-400">
+                    {myParticipant
+                      ? "Wait for your turn."
+                      : "Claim a drafter slot first."}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.25em] text-cyan-300">
-                  Current Pick
+                  {isOwner ? "Current Pick" : "Make a Pick"}
                 </p>
 
                 <h2 className="mt-2 text-4xl font-black">
-                  {currentDrafter?.name || "No drafter available"}
+                  {isOwner
+                    ? currentDrafter?.name || "No drafter available"
+                    : canPick
+                      ? "You are on the clock"
+                      : "Waiting"}
                 </h2>
 
                 <p className="mt-2 text-slate-400">
@@ -703,7 +1094,9 @@ export default function RoomPage() {
                     : { variant: "available" };
                 }}
                 onSelect={makePick}
-                isClickable={() => Boolean(currentDrafter) && !isSaving}
+                isClickable={() =>
+                  (isOwner ? Boolean(currentDrafter) : canPick) && !isSaving
+                }
                 emptyMessage="No available items."
                 legend={[
                   { label: "Drafted", swatchClassName: "bg-green-400/20" },
@@ -718,17 +1111,19 @@ export default function RoomPage() {
               <div>
                 <h2 className="text-2xl font-black">Draft Board</h2>
                 <p className="mt-2 text-sm text-slate-400">
-                  Host and player picks both update here live.
+                  Every selection, organized by conference.
                 </p>
               </div>
 
-              <button
-                onClick={undoLastPick}
-                disabled={picks.length === 0 || isSaving}
-                className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Host Undo
-              </button>
+              {isOwner && (
+                <button
+                  onClick={undoLastPick}
+                  disabled={picks.length === 0 || isSaving}
+                  className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Host Undo
+                </button>
+              )}
             </div>
 
             <div className="mt-6">

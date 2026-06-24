@@ -46,13 +46,6 @@ export default function Home() {
               >
                 Start a Draft
               </Link>
-
-              <a
-                href="#features"
-                className="rounded-2xl bg-white/10 px-6 py-4 text-center font-black text-white transition hover:bg-white/15"
-              >
-                View Features
-              </a>
             </div>
           </section>
 
@@ -95,7 +88,7 @@ export default function Home() {
           </section>
         </div>
 
-        <section id="features" className="grid gap-4 pb-10 md:grid-cols-4">
+        <section className="grid gap-4 pb-10 md:grid-cols-4">
           {[
             [
               "Full FBS Coverage",

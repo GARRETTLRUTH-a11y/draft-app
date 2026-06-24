@@ -593,9 +593,10 @@ export default function RoomPage() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
             <div>
-              <h2 className="text-2xl font-black">Joined Players</h2>
+              <h2 className="text-2xl font-black">Draft Order &amp; Players</h2>
               <p className="mt-2 text-sm text-slate-400">
-                This updates live when someone claims a drafter slot.
+                Updates live as players claim slots and make picks. The order
+                below reflects the current lottery / randomize result.
               </p>
             </div>
 
@@ -607,29 +608,60 @@ export default function RoomPage() {
             </button>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-            {drafters.map((drafter) => {
+          <div className="mt-5 grid gap-2 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {drafters.map((drafter, index) => {
               const participant = participantByName.get(
                 drafter.name.toLowerCase()
               );
+              const pick = picks.find((p) => p.drafter === drafter.name);
+              const isOnClock = drafter.id === currentDrafter?.id;
 
               return (
                 <div
                   key={drafter.id}
-                  className={`rounded-2xl border p-4 ${
-                    participant
-                      ? "border-green-400/30 bg-green-400/10"
-                      : "border-white/10 bg-slate-900"
+                  className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 text-sm ${
+                    isOnClock
+                      ? "border-cyan-300/30 bg-cyan-300/10"
+                      : participant
+                        ? "border-green-400/20 bg-green-400/5"
+                        : "border-white/10 bg-slate-900"
                   }`}
                 >
-                  <div className="text-lg font-black">{drafter.name}</div>
-                  <div
-                    className={`mt-1 text-sm ${
-                      participant ? "text-green-200" : "text-slate-500"
-                    }`}
-                  >
-                    {participant ? "Claimed by player" : "Not claimed yet"}
-                  </div>
+                  <span className="w-5 flex-shrink-0 text-xs text-slate-500">
+                    {index + 1}
+                  </span>
+
+                  <span className="min-w-0 flex-1 truncate font-bold">
+                    {drafter.name}
+                  </span>
+
+                  {pick ? (
+                    <span className="flex flex-shrink-0 items-center gap-1.5 truncate text-[10px] font-bold text-white">
+                      {pick.item.color && (
+                        <span
+                          className="h-2 w-2 flex-shrink-0 rounded-full"
+                          style={{ backgroundColor: pick.item.color }}
+                        />
+                      )}
+                      <span className="truncate">{pick.item.name}</span>
+                    </span>
+                  ) : (
+                    <span
+                      className={`flex-shrink-0 truncate text-[10px] font-bold ${
+                        isOnClock
+                          ? "text-cyan-200"
+                          : participant
+                            ? "text-green-300"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {isOnClock
+                        ? "On the Clock"
+                        : participant
+                          ? "Claimed"
+                          : "Open"}
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -709,6 +741,7 @@ export default function RoomPage() {
                     : { variant: "available" };
                 }}
                 strikethroughOnTaken={false}
+                takenStyle="plain"
                 emptyMessage="No picks yet."
               />
             </div>

@@ -17,6 +17,7 @@ type CompactDraftBoardProps<T extends DraftItemLike> = {
   emptyMessage?: string;
   legend?: { label: string; swatchClassName: string }[];
   strikethroughOnTaken?: boolean;
+  takenStyle?: "highlight" | "plain";
 };
 
 const VARIANT_ROW_CLASSES: Record<ItemStatus["variant"], string> = {
@@ -36,6 +37,9 @@ const VARIANT_BADGE_CLASSES: Record<string, string> = {
   disabled: "border-slate-400/30 bg-slate-400/10 text-slate-400",
 };
 
+const PLAIN_TAKEN_BADGE_CLASSES =
+  "border-white/10 bg-white/5 text-slate-300";
+
 export function CompactDraftBoard<T extends DraftItemLike>({
   tiers,
   getStatus,
@@ -45,6 +49,7 @@ export function CompactDraftBoard<T extends DraftItemLike>({
   emptyMessage = "No items.",
   legend,
   strikethroughOnTaken = true,
+  takenStyle = "highlight",
 }: CompactDraftBoardProps<T>) {
   const hasAnyItems = tiers.some((tier) =>
     tier.groups.some((group) => group.items.length > 0)
@@ -97,6 +102,8 @@ export function CompactDraftBoard<T extends DraftItemLike>({
                   <div className="flex flex-col">
                     {group.items.map((item) => {
                       const status = getStatus(item);
+                      const isPlainTaken =
+                        status.variant === "taken" && takenStyle === "plain";
                       const clickable =
                         Boolean(onSelect) &&
                         status.variant !== "taken" &&
@@ -116,11 +123,13 @@ export function CompactDraftBoard<T extends DraftItemLike>({
                                 : item.description
                           }
                           className={`flex items-center gap-1.5 border-b border-white/5 px-2 py-1 text-left text-xs transition last:border-b-0 ${
-                            VARIANT_ROW_CLASSES[status.variant]
+                            isPlainTaken
+                              ? VARIANT_ROW_CLASSES.available
+                              : VARIANT_ROW_CLASSES[status.variant]
                           } ${
                             clickable
                               ? "cursor-pointer hover:bg-white/10"
-                              : status.variant === "available"
+                              : status.variant === "available" || isPlainTaken
                                 ? "cursor-default text-slate-500"
                                 : "cursor-default"
                           }`}
@@ -129,21 +138,23 @@ export function CompactDraftBoard<T extends DraftItemLike>({
                             <span
                               className="h-2 w-2 flex-shrink-0 rounded-full"
                               style={{
-                                backgroundColor:
-                                  VARIANT_DOT_COLOR[status.variant] ??
-                                  item.color,
+                                backgroundColor: isPlainTaken
+                                  ? item.color
+                                  : VARIANT_DOT_COLOR[status.variant] ??
+                                    item.color,
                               }}
                             />
                           )}
 
                           <span
                             className={`truncate font-semibold ${
-                              status.variant === "disabled" ||
-                              (status.variant === "taken" &&
-                                strikethroughOnTaken)
+                              !isPlainTaken &&
+                              (status.variant === "disabled" ||
+                                (status.variant === "taken" &&
+                                  strikethroughOnTaken))
                                 ? "line-through"
                                 : ""
-                            }`}
+                            } ${isPlainTaken ? "text-white" : ""}`}
                           >
                             {item.name}
                           </span>
@@ -151,7 +162,9 @@ export function CompactDraftBoard<T extends DraftItemLike>({
                           {status.badge && status.variant !== "available" && (
                             <span
                               className={`ml-auto flex-shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-bold ${
-                                VARIANT_BADGE_CLASSES[status.variant]
+                                isPlainTaken
+                                  ? PLAIN_TAKEN_BADGE_CLASSES
+                                  : VARIANT_BADGE_CLASSES[status.variant]
                               }`}
                             >
                               {status.variant === "disabled" ? "✕ " : ""}

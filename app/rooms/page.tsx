@@ -8,8 +8,6 @@ type CloudDraft = {
   id: string;
   title: string;
   updated_at: string;
-  is_public: boolean;
-  share_id: string;
 };
 
 export default function RoomsPage() {
@@ -35,7 +33,7 @@ export default function RoomsPage() {
 
       const { data, error } = await supabase
         .from("drafts")
-        .select("id, title, updated_at, is_public, share_id")
+        .select("id, title, updated_at")
         .eq("user_id", userData.user.id)
         .order("updated_at", { ascending: false });
 
@@ -157,19 +155,11 @@ export default function RoomsPage() {
                 key={draft.id}
                 className="rounded-3xl border border-white/10 bg-white/5 p-6"
               >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="text-xl font-black">{draft.title}</h2>
-                    <p className="mt-2 text-xs text-slate-400">
-                      Updated {new Date(draft.updated_at).toLocaleString()}
-                    </p>
-                  </div>
-
-                  {draft.is_public && (
-                    <span className="rounded-full bg-purple-400/10 px-3 py-1 text-xs font-bold text-purple-200">
-                      Public
-                    </span>
-                  )}
+                <div>
+                  <h2 className="text-xl font-black">{draft.title}</h2>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Updated {new Date(draft.updated_at).toLocaleString()}
+                  </p>
                 </div>
 
                 <div className="mt-5 flex flex-wrap gap-2">
@@ -177,25 +167,8 @@ export default function RoomsPage() {
                     href={`/room/${draft.id}`}
                     className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
                   >
-                    Open Room
+                    Enter Live Draft
                   </Link>
-
-                  <Link
-                    href="/create"
-                    className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
-                  >
-                    Builder
-                  </Link>
-
-                  {draft.is_public && (
-                    <Link
-                      href={`/draft/${draft.share_id}`}
-                      target="_blank"
-                      className="rounded-2xl bg-white px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-slate-200"
-                    >
-                      Public View
-                    </Link>
-                  )}
                 </div>
               </div>
             ))}

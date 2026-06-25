@@ -37,8 +37,6 @@ export type CloudDraftRow = {
   title: string;
   draft_data: SavedDraftState;
   updated_at: string;
-  share_id: string;
-  is_public: boolean;
   is_joinable: boolean;
 };
 
@@ -68,7 +66,7 @@ export function useDraftSetup(draftId: string | undefined) {
 
     const { data, error } = await supabase
       .from("drafts")
-      .select("id, title, draft_data, updated_at, share_id, is_public, is_joinable")
+      .select("id, title, draft_data, updated_at, is_joinable")
       .eq("id", draftId)
       .eq("user_id", userData.user.id)
       .maybeSingle();

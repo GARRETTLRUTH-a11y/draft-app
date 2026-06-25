@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
+import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
 import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
 
@@ -43,9 +43,7 @@ type RoomDraft = {
   title: string;
   draft_data: SavedDraftState;
   updated_at: string;
-  is_public: boolean;
   is_joinable: boolean;
-  share_id: string;
 };
 
 type Participant = {
@@ -54,14 +52,6 @@ type Participant = {
   drafter_name: string;
   role: "host" | "participant";
 };
-
-function createShareId() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID) {
-    return crypto.randomUUID().replaceAll("-", "");
-  }
-
-  return `${Date.now()}${Math.random().toString(36).slice(2)}`;
-}
 
 export default function RoomPage() {
   const params = useParams();
@@ -157,9 +147,7 @@ export default function RoomPage() {
 
     const { data, error } = await supabase
       .from("drafts")
-      .select(
-        "id, user_id, title, draft_data, updated_at, is_public, is_joinable, share_id"
-      )
+      .select("id, user_id, title, draft_data, updated_at, is_joinable")
       .eq("id", roomDraftId)
       .maybeSingle();
 
@@ -284,20 +272,26 @@ export default function RoomPage() {
     URL.revokeObjectURL(url);
   }
 
-  const { pickByItemId, groups: itemGroups } = useMemo(
-    () =>
-      groupItemsByConference(
-        availableItems,
-        picks,
-        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_ORDER : undefined
-      ),
-    [availableItems, picks, draftData?.selectedTemplateId]
+  const availableItemIds = useMemo(
+    () => new Set(availableItems.map((item) => item.id)),
+    [availableItems]
+  );
+
+  const pickByItemId = useMemo(() => {
+    const map = new Map<number, Pick>();
+    picks.forEach((pick) => map.set(pick.item.id, pick));
+    return map;
+  }, [picks]);
+
+  const fullItemGroups = useMemo(
+    () => groupItemsByConference(CFB_ITEMS, [], CONFERENCE_ORDER).groups,
+    []
   );
 
   const searchedGroups = useMemo(() => {
     const searchText = search.toLowerCase();
 
-    return itemGroups
+    return fullItemGroups
       .map((group) => ({
         category: group.category,
         items: group.items.filter((item) =>
@@ -307,36 +301,21 @@ export default function RoomPage() {
         ),
       }))
       .filter((group) => group.items.length > 0);
-  }, [itemGroups, search]);
+  }, [fullItemGroups, search]);
 
   const tiers = useMemo(
-    () =>
-      buildTiers(
-        searchedGroups,
-        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_TIERS : undefined,
-        TIER_ORDER
-      ),
-    [searchedGroups, draftData?.selectedTemplateId]
+    () => buildTiers(searchedGroups, CONFERENCE_TIERS, TIER_ORDER),
+    [searchedGroups]
   );
 
   const { pickByItemId: pickedById, groups: pickedGroups } = useMemo(
-    () =>
-      groupItemsByConference(
-        [],
-        picks,
-        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_ORDER : undefined
-      ),
-    [picks, draftData?.selectedTemplateId]
+    () => groupItemsByConference([], picks, CONFERENCE_ORDER),
+    [picks]
   );
 
   const pickedTiers = useMemo(
-    () =>
-      buildTiers(
-        pickedGroups,
-        draftData?.selectedTemplateId === "cfb" ? CONFERENCE_TIERS : undefined,
-        TIER_ORDER
-      ),
-    [pickedGroups, draftData?.selectedTemplateId]
+    () => buildTiers(pickedGroups, CONFERENCE_TIERS, TIER_ORDER),
+    [pickedGroups]
   );
 
   function getRoomLink() {
@@ -358,80 +337,6 @@ export default function RoomPage() {
     } catch {
       setMessage(`Copy this link: ${url}`);
     }
-  }
-
-  async function togglePlayerPicks(nextValue: boolean) {
-    if (!draft) return;
-
-    setIsSaving(true);
-    setMessage("");
-
-    const { error } = await supabase
-      .from("drafts")
-      .update({
-        is_joinable: nextValue,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", draft.id);
-
-    if (error) {
-      setMessage(error.message);
-      setIsSaving(false);
-      return;
-    }
-
-    setDraft({
-      ...draft,
-      is_joinable: nextValue,
-      updated_at: new Date().toISOString(),
-    });
-
-    setMessage(
-      nextValue
-        ? "Player self-picking is now enabled."
-        : "Player self-picking is now disabled."
-    );
-
-    setIsSaving(false);
-  }
-
-  async function toggleIsPublic(nextValue: boolean) {
-    if (!draft) return;
-
-    setIsSaving(true);
-    setMessage("");
-
-    const shareId = draft.share_id || createShareId();
-
-    const { error } = await supabase
-      .from("drafts")
-      .update({
-        is_public: nextValue,
-        share_id: shareId,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", draft.id);
-
-    if (error) {
-      setMessage(error.message);
-      setIsSaving(false);
-      return;
-    }
-
-    setDraft({
-      ...draft,
-      is_public: nextValue,
-      share_id: shareId,
-      updated_at: new Date().toISOString(),
-    });
-
-    setMessage(
-      nextValue
-        ? "Public spectator link is now on."
-        : "Public spectator link is now off."
-    );
-
-    setIsSaving(false);
   }
 
   async function saveRoomDraft(nextDraftData: SavedDraftState) {
@@ -512,6 +417,14 @@ export default function RoomPage() {
 
   async function claimDrafter(drafterName: string) {
     if (!draft || !currentUserId) return;
+
+    const confirmed = window.confirm(
+      "Are you sure this is the draft slot you want to pick?"
+    );
+
+    if (!confirmed) {
+      return;
+    }
 
     setIsSaving(true);
     setMessage("");
@@ -723,48 +636,12 @@ export default function RoomPage() {
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
               {isOwner ? (
                 <>
-                  {draft.is_joinable ? (
-                    <button
-                      onClick={() => togglePlayerPicks(false)}
-                      disabled={isSaving}
-                      className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Disable Player Picks
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => togglePlayerPicks(true)}
-                      disabled={isSaving}
-                      className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Enable Player Picks
-                    </button>
-                  )}
-
                   <button
                     onClick={copyRoomLink}
                     className="rounded-2xl bg-white px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-slate-200"
                   >
                     Copy Draft Link
                   </button>
-
-                  {draft.is_public ? (
-                    <button
-                      onClick={() => toggleIsPublic(false)}
-                      disabled={isSaving}
-                      className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Turn Off Public View
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => toggleIsPublic(true)}
-                      disabled={isSaving}
-                      className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      Make Public
-                    </button>
-                  )}
 
                   <Link
                     href="/rooms"
@@ -774,10 +651,10 @@ export default function RoomPage() {
                   </Link>
 
                   <Link
-                    href="/create"
+                    href="/"
                     className="rounded-2xl bg-cyan-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-cyan-300"
                   >
-                    Builder
+                    Home
                   </Link>
                 </>
               ) : (
@@ -787,16 +664,6 @@ export default function RoomPage() {
                 >
                   Refresh
                 </button>
-              )}
-
-              {draft.is_public && (
-                <Link
-                  href={`/draft/${draft.share_id}`}
-                  target="_blank"
-                  className="rounded-2xl bg-purple-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-purple-300"
-                >
-                  {isOwner ? "Public View" : "Watch Board"}
-                </Link>
               )}
             </div>
           </div>
@@ -972,65 +839,37 @@ export default function RoomPage() {
         </section>
 
         <section className="flex flex-col gap-6">
-          {!isOwner && (
+          {!isOwner && !myParticipant && (
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
               <h2 className="text-2xl font-black">Your Drafter Slot</h2>
 
-              {myParticipant ? (
-                <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-5">
-                  <p className="text-sm font-semibold uppercase tracking-[0.2em] text-green-200">
-                    Claimed
-                  </p>
+              <div className="mt-5 space-y-3">
+                <p className="text-sm text-slate-400">
+                  Pick the drafter name that belongs to you.
+                </p>
 
-                  <h3 className="mt-2 text-3xl font-black">
-                    {myParticipant.drafter_name}
-                  </h3>
+                {drafters.map((drafter) => {
+                  const isClaimed = claimedNames.has(drafter.name.toLowerCase());
 
-                  <button
-                    onClick={leaveSlot}
-                    disabled={isSaving || picks.length > 0}
-                    className="mt-5 rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    Leave Slot
-                  </button>
-
-                  {picks.length > 0 && (
-                    <p className="mt-3 text-xs text-yellow-200">
-                      Slots lock once picks have started.
-                    </p>
-                  )}
-                </div>
-              ) : (
-                <div className="mt-5 space-y-3">
-                  <p className="text-sm text-slate-400">
-                    Pick the drafter name that belongs to you.
-                  </p>
-
-                  {drafters.map((drafter) => {
-                    const isClaimed = claimedNames.has(
-                      drafter.name.toLowerCase()
-                    );
-
-                    return (
-                      <button
-                        key={drafter.id}
-                        onClick={() => claimDrafter(drafter.name)}
-                        disabled={isClaimed || isSaving}
-                        className={`w-full rounded-2xl border p-4 text-left transition ${
-                          isClaimed
-                            ? "cursor-not-allowed border-white/10 bg-slate-900 text-slate-500"
-                            : "border-cyan-300 bg-cyan-300/10 text-white hover:bg-cyan-300/20"
-                        }`}
-                      >
-                        <div className="font-black">{drafter.name}</div>
-                        <div className="mt-1 text-xs">
-                          {isClaimed ? "Already claimed" : "Available to claim"}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+                  return (
+                    <button
+                      key={drafter.id}
+                      onClick={() => claimDrafter(drafter.name)}
+                      disabled={isClaimed || isSaving}
+                      className={`w-full rounded-2xl border p-4 text-left transition ${
+                        isClaimed
+                          ? "cursor-not-allowed border-white/10 bg-slate-900 text-slate-500"
+                          : "border-cyan-300 bg-cyan-300/10 text-white hover:bg-cyan-300/20"
+                      }`}
+                    >
+                      <div className="font-black">{drafter.name}</div>
+                      <div className="mt-1 text-xs">
+                        {isClaimed ? "Already claimed" : "Available to claim"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
 
               <div className="mt-6 rounded-2xl border border-white/10 bg-slate-900 p-4">
                 <p className="text-sm font-semibold text-slate-300">
@@ -1047,9 +886,7 @@ export default function RoomPage() {
                   </p>
                 ) : (
                   <p className="mt-2 text-sm text-slate-400">
-                    {myParticipant
-                      ? "Wait for your turn."
-                      : "Claim a drafter slot first."}
+                    Claim a drafter slot first.
                   </p>
                 )}
               </div>
@@ -1089,18 +926,21 @@ export default function RoomPage() {
                 tiers={tiers}
                 getStatus={(item) => {
                   const pick = pickByItemId.get(item.id);
-                  return pick
-                    ? { variant: "taken", badge: pick.drafter }
-                    : { variant: "available" };
+                  if (pick) return { variant: "taken", badge: pick.drafter };
+                  if (availableItemIds.has(item.id)) return { variant: "available" };
+                  return { variant: "disabled", badge: "Excluded" };
                 }}
                 onSelect={makePick}
-                isClickable={() =>
-                  (isOwner ? Boolean(currentDrafter) : canPick) && !isSaving
+                isClickable={(item) =>
+                  (isOwner ? Boolean(currentDrafter) : canPick) &&
+                  !isSaving &&
+                  availableItemIds.has(item.id)
                 }
                 emptyMessage="No available items."
                 legend={[
                   { label: "Drafted", swatchClassName: "bg-green-400/20" },
                   { label: "Available", swatchClassName: "bg-white/10" },
+                  { label: "Excluded", swatchClassName: "bg-slate-800/60" },
                 ]}
               />
             </div>

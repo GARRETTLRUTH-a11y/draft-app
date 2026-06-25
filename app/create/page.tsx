@@ -5,18 +5,9 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { CFB_ITEMS } from "@/lib/cfbTeams";
-import type { Drafter, SavedDraftState } from "@/lib/useDraftSetup";
+import type { SavedDraftState } from "@/lib/useDraftSetup";
 
 const DEFAULT_TITLE = "College Football Team Draft";
-
-const DEFAULT_DRAFTERS: Drafter[] = [
-  { id: 1, name: "Garrett", lotteryTickets: 30 },
-  { id: 2, name: "Chris", lotteryTickets: 24 },
-  { id: 3, name: "Tyler", lotteryTickets: 18 },
-  { id: 4, name: "John", lotteryTickets: 14 },
-  { id: 5, name: "Mike", lotteryTickets: 10 },
-  { id: 6, name: "Brandon", lotteryTickets: 6 },
-];
 
 type CloudDraft = {
   id: string;
@@ -103,7 +94,7 @@ export default function CreateGatheringPage() {
     const draftData: SavedDraftState = {
       selectedTemplateId: "cfb",
       draftTitle: DEFAULT_TITLE,
-      drafters: DEFAULT_DRAFTERS.map((drafter) => ({ ...drafter })),
+      drafters: [],
       availableItems: CFB_ITEMS.map((item) => ({ ...item })),
       picks: [],
       lotteryHasRun: false,
@@ -117,7 +108,7 @@ export default function CreateGatheringPage() {
         draft_data: draftData,
         share_id: createShareId(),
         is_public: false,
-        is_joinable: false,
+        is_joinable: true,
       })
       .select("id")
       .single();
@@ -264,7 +255,7 @@ export default function CreateGatheringPage() {
                     href={`/room/${draft.id}`}
                     className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300"
                   >
-                    Open Room
+                    Enter Live Draft
                   </Link>
                 </div>
               </div>

@@ -58,10 +58,7 @@ export default function DraftersStepPage() {
     const newDrafters: Drafter[] = [];
 
     lines.forEach((line, index) => {
-      const parts = line.split(",");
-      const name = parts[0]?.trim();
-      const ticketValue = Number(parts[1]?.trim());
-      const lotteryTickets = Math.max(1, ticketValue || 10);
+      const name = line.trim();
 
       if (!name) return;
       if (existingNames.has(name.toLowerCase())) return;
@@ -69,7 +66,7 @@ export default function DraftersStepPage() {
       newDrafters.push({
         id: Date.now() + index,
         name,
-        lotteryTickets,
+        lotteryTickets: 10,
       });
 
       existingNames.add(name.toLowerCase());
@@ -199,14 +196,15 @@ export default function DraftersStepPage() {
           <div className="mt-5 rounded-3xl border border-white/10 bg-slate-900 p-5">
             <h3 className="text-lg font-bold">Bulk Add Drafters</h3>
             <p className="mt-2 text-xs text-slate-400">
-              One per line. Format: Name, Tickets
+              One name per line. You&apos;ll set lottery tickets in the next
+              step.
             </p>
 
             <textarea
               value={bulkDraftersText}
               onChange={(event) => setBulkDraftersText(event.target.value)}
               disabled={picksStarted}
-              placeholder={`Garrett, 30\nChris, 24\nTyler, 18\nJohn, 14`}
+              placeholder={`Garrett\nChris\nTyler\nJohn`}
               className="mt-4 min-h-32 w-full rounded-2xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
             />
 

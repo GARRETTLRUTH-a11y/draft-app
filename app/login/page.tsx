@@ -91,6 +91,29 @@ function LoginPageContent() {
     setIsLoading(false);
   }
 
+  async function signInWithDiscord() {
+    setIsLoading(true);
+    setMessage("");
+
+    const redirectTo =
+      typeof window !== "undefined"
+        ? `${window.location.origin}${redirectTarget}`
+        : undefined;
+
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "discord",
+      options: {
+        redirectTo,
+        scopes: "identify email",
+      },
+    });
+
+    if (error) {
+      setMessage(error.message);
+      setIsLoading(false);
+    }
+  }
+
   async function signOut() {
     setIsLoading(true);
     setMessage("");
@@ -151,6 +174,20 @@ function LoginPageContent() {
             </div>
           ) : (
             <div className="space-y-4">
+              <button
+                onClick={signInWithDiscord}
+                disabled={isLoading}
+                className="w-full rounded-2xl border border-[#5865F2] bg-[#5865F2] px-5 py-3 font-bold text-white transition hover:bg-[#4752c4] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Continue with Discord
+              </button>
+
+              <div className="flex items-center gap-3 text-sm text-slate-400">
+                <div className="h-px flex-1 bg-white/10" />
+                <span>or use email</span>
+                <div className="h-px flex-1 bg-white/10" />
+              </div>
+
               <input
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}

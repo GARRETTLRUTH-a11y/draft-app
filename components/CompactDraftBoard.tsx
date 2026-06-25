@@ -82,10 +82,8 @@ export function CompactDraftBoard<T extends DraftItemLike>({
             </div>
 
             <div
-              className="grid divide-x divide-white/10 bg-slate-900"
-              style={{
-                gridTemplateColumns: `repeat(${visibleGroups.length}, minmax(0, 1fr))`,
-              }}
+              className="grid grid-cols-1 divide-y divide-white/10 bg-slate-900 sm:divide-x sm:divide-y-0 sm:[grid-template-columns:repeat(var(--cols),minmax(0,1fr))]"
+              style={{ "--cols": visibleGroups.length } as React.CSSProperties}
             >
               {visibleGroups.map((group) => (
                 <div key={group.category} className="flex flex-col">

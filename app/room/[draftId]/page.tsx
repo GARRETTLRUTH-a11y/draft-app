@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
@@ -55,6 +55,7 @@ type Participant = {
 
 export default function RoomPage() {
   const params = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const rawDraftId = params.draftId;
   const draftId = Array.isArray(rawDraftId) ? rawDraftId[0] : rawDraftId;
@@ -128,6 +129,12 @@ export default function RoomPage() {
       supabase.removeChannel(participantsChannel);
     };
   }, [draftId]);
+
+  useEffect(() => {
+    if (!isLoading && !userEmail && draftId) {
+      router.replace(`/login?redirect=/room/${draftId}`);
+    }
+  }, [isLoading, userEmail, draftId, router]);
 
   async function loadRoomDraft(roomDraftId = draftId) {
     if (!roomDraftId) return;
@@ -487,33 +494,7 @@ export default function RoomPage() {
             CFB Draft Tool
           </p>
 
-          <h1 className="mt-4 text-4xl font-black">Sign In to Continue</h1>
-
-          <p className="mt-4 text-slate-300">
-            Sign in to view or join this draft room.
-          </p>
-
-          {message && (
-            <div className="mt-5 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 p-4 text-sm font-semibold text-yellow-100">
-              {message}
-            </div>
-          )}
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            <Link
-              href={`/login?redirect=/room/${draftId}`}
-              className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
-            >
-              Login
-            </Link>
-
-            <Link
-              href="/"
-              className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
-            >
-              Home
-            </Link>
-          </div>
+          <h1 className="mt-4 text-4xl font-black">Redirecting to login...</h1>
         </section>
       </main>
     );

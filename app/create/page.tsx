@@ -51,6 +51,11 @@ export default function CreateGatheringPage() {
     };
   }, []);
 
+  async function signOut() {
+    await supabase.auth.signOut();
+    router.push("/login");
+  }
+
   async function loadDrafts() {
     setIsLoading(true);
     setMessage("");
@@ -175,8 +180,15 @@ export default function CreateGatheringPage() {
           </div>
 
           {userEmail && (
-            <div className="mt-5 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
-              Signed in as {userEmail}
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm font-semibold text-cyan-100">
+              <span>Signed in as {userEmail}</span>
+
+              <button
+                onClick={signOut}
+                className="rounded-xl bg-white/10 px-4 py-2 font-bold text-white transition hover:bg-white/15"
+              >
+                Sign Out
+              </button>
             </div>
           )}
 

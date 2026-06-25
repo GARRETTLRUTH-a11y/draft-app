@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 export default function Home() {
@@ -5,13 +6,22 @@ export default function Home() {
     <main className="min-h-screen bg-slate-950 text-white">
       <section className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-8">
         <header className="flex items-center justify-between rounded-3xl border border-white/10 bg-white/5 px-6 py-5">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
-              CFB Draft Tool
-            </p>
-            <p className="mt-1 text-sm text-slate-400">
-              Live college football team drafts for your group.
-            </p>
+          <div className="flex items-center gap-4">
+            <Image
+              src="/logo-icon.png"
+              alt="CFB Draft"
+              width={48}
+              height={48}
+              className="rounded-xl"
+            />
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-[0.3em] text-cyan-300">
+                CFB Draft Tool
+              </p>
+              <p className="mt-1 text-sm text-slate-400">
+                Live college football team drafts for your group.
+              </p>
+            </div>
           </div>
 
           <Link

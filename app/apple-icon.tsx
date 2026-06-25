@@ -1,33 +1,16 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { ImageResponse } from "next/og";
 
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 
-export default function AppleIcon() {
+export default async function AppleIcon() {
+  const logo = await readFile(join(process.cwd(), "public/logo-icon.png"));
+  const logoSrc = `data:image/png;base64,${logo.toString("base64")}`;
+
   return new ImageResponse(
-    (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#020617",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 70,
-            fontWeight: 900,
-            color: "#22d3ee",
-            letterSpacing: -2,
-          }}
-        >
-          CFB
-        </div>
-      </div>
-    ),
+    <img src={logoSrc} width={size.width} height={size.height} />,
     { ...size }
   );
 }

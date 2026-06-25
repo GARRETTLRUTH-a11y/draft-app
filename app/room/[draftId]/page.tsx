@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
@@ -55,6 +55,7 @@ type Participant = {
 
 export default function RoomPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const rawDraftId = params.draftId;
   const draftId = Array.isArray(rawDraftId) ? rawDraftId[0] : rawDraftId;
 
@@ -182,6 +183,8 @@ export default function RoomPage() {
   }
 
   const isOwner = Boolean(draft && currentUserId && draft.user_id === currentUserId);
+  const playAsParticipant = isOwner && searchParams.get("play") === "1";
+  const viewAsPlayer = !isOwner || playAsParticipant;
 
   const draftData = draft?.draft_data;
   const drafters = draftData?.drafters ?? [];
@@ -369,7 +372,7 @@ export default function RoomPage() {
   async function makePick(item: DraftItem) {
     if (!draftData || !currentDrafter) return;
 
-    if (!isOwner && !canPick) {
+    if (viewAsPlayer && !canPick) {
       setMessage("It is not your turn yet.");
       return;
     }
@@ -576,7 +579,7 @@ export default function RoomPage() {
             </p>
 
             <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-1.5 text-xs font-bold text-cyan-200">
-              {isOwner ? "Host Room" : "Player Room"}
+              {!viewAsPlayer ? "Host Room" : playAsParticipant ? "Player Room (Host)" : "Player Room"}
             </span>
 
             <span className="rounded-full border border-white/10 bg-white/10 px-4 py-1.5 text-xs font-bold text-white">
@@ -615,7 +618,7 @@ export default function RoomPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-lg text-slate-300">
-                {isOwner
+                {!viewAsPlayer
                   ? "Dedicated host-controlled room. Player picks update this page live."
                   : "Claim your drafter slot. When it is your turn, you can make your own pick."}
               </p>
@@ -630,8 +633,17 @@ export default function RoomPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row lg:flex-col">
-              {isOwner ? (
+              {!viewAsPlayer ? (
                 <>
+                  <button
+                    onClick={() =>
+                      window.open(`${getRoomLink()}?play=1`, "_blank")
+                    }
+                    className="rounded-2xl bg-green-400 px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-green-300"
+                  >
+                    Enter Live Draft
+                  </button>
+
                   <button
                     onClick={copyRoomLink}
                     className="rounded-2xl bg-white px-5 py-3 text-center font-bold text-slate-950 transition hover:bg-slate-200"
@@ -664,7 +676,7 @@ export default function RoomPage() {
             </div>
           </div>
 
-          {isOwner && draft.is_joinable && (
+          {!viewAsPlayer && draft.is_joinable && (
             <div className="mt-5 rounded-2xl border border-purple-400/30 bg-purple-400/10 p-4 text-sm font-semibold text-purple-100">
               Player self-picking is enabled. Draft link: {getRoomLink()}
             </div>
@@ -775,7 +787,7 @@ export default function RoomPage() {
               const pick = picks.find((p) => p.drafter === drafter.name);
               const isOnClock = drafter.id === currentDrafter?.id;
               const isMe =
-                !isOwner && myParticipant?.drafter_name === drafter.name;
+                viewAsPlayer && myParticipant?.drafter_name === drafter.name;
 
               return (
                 <div
@@ -835,7 +847,7 @@ export default function RoomPage() {
         </section>
 
         <section className="flex flex-col gap-6">
-          {!isOwner && !myParticipant && (
+          {viewAsPlayer && !myParticipant && (
             <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
               <h2 className="text-2xl font-black">Your Drafter Slot</h2>
 
@@ -893,11 +905,11 @@ export default function RoomPage() {
             <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
               <div>
                 <p className="text-sm font-semibold uppercase tracking-[0.25em] text-cyan-300">
-                  {isOwner ? "Current Pick" : "Make a Pick"}
+                  {!viewAsPlayer ? "Current Pick" : "Make a Pick"}
                 </p>
 
                 <h2 className="mt-2 text-4xl font-black">
-                  {isOwner
+                  {!viewAsPlayer
                     ? currentDrafter?.name || "No drafter available"
                     : canPick
                       ? "You are on the clock"
@@ -928,7 +940,7 @@ export default function RoomPage() {
                 }}
                 onSelect={makePick}
                 isClickable={(item) =>
-                  (isOwner ? Boolean(currentDrafter) : canPick) &&
+                  (!viewAsPlayer ? Boolean(currentDrafter) : canPick) &&
                   !isSaving &&
                   availableItemIds.has(item.id)
                 }
@@ -951,7 +963,7 @@ export default function RoomPage() {
                 </p>
               </div>
 
-              {isOwner && (
+              {!viewAsPlayer && (
                 <button
                   onClick={undoLastPick}
                   disabled={picks.length === 0 || isSaving}

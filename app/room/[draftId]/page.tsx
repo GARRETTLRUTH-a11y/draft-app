@@ -321,11 +321,7 @@ export default function RoomPage() {
   function getRoomLink() {
     if (!draft) return "";
 
-    if (typeof window === "undefined") {
-      return `/room/${draft.id}`;
-    }
-
-    return `${window.location.origin}/room/${draft.id}`;
+    return `https://cfb-draft.vercel.app/room/${draft.id}`;
   }
 
   async function copyRoomLink() {

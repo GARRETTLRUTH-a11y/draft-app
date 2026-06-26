@@ -1,5 +1,69 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
+import { CompactDraftBoard } from "@/components/CompactDraftBoard";
+import type { ItemTier } from "@/lib/draftBoard";
+
+type ExampleTeam = {
+  id: number;
+  name: string;
+  category: string;
+  description: string;
+  color: string;
+  drafter?: string;
+};
+
+const EXAMPLE_TIERS: ItemTier<ExampleTeam>[] = [
+  {
+    tier: "Power Conferences",
+    groups: [
+      {
+        category: "SEC",
+        items: [
+          { id: 1, name: "Alabama", category: "SEC", description: "", color: "#9E1B32", drafter: "Garrett" },
+          { id: 2, name: "Georgia", category: "SEC", description: "", color: "#BA0C2F" },
+          { id: 3, name: "LSU", category: "SEC", description: "", color: "#461D7C" },
+        ],
+      },
+      {
+        category: "Big Ten",
+        items: [
+          { id: 4, name: "Ohio State", category: "Big Ten", description: "", color: "#BB0000", drafter: "Chris" },
+          { id: 5, name: "Michigan", category: "Big Ten", description: "", color: "#00274C" },
+          { id: 6, name: "Oregon", category: "Big Ten", description: "", color: "#154733" },
+        ],
+      },
+      {
+        category: "Big 12",
+        items: [
+          { id: 7, name: "Texas Tech", category: "Big 12", description: "", color: "#CC0000", drafter: "Tyler" },
+          { id: 8, name: "Kansas State", category: "Big 12", description: "", color: "#512888" },
+          { id: 9, name: "BYU", category: "Big 12", description: "", color: "#002E5D" },
+        ],
+      },
+    ],
+  },
+  {
+    tier: "Group of Five",
+    groups: [
+      {
+        category: "American",
+        items: [
+          { id: 10, name: "Tulane", category: "American", description: "", color: "#006747" },
+          { id: 11, name: "Memphis", category: "American", description: "", color: "#003087", drafter: "John" },
+        ],
+      },
+      {
+        category: "Sun Belt",
+        items: [
+          { id: 12, name: "James Madison", category: "Sun Belt", description: "", color: "#450084" },
+          { id: 13, name: "Coastal Carolina", category: "Sun Belt", description: "", color: "#006A65" },
+        ],
+      },
+    ],
+  },
+];
 
 export default function Home() {
   return (
@@ -62,37 +126,26 @@ export default function Home() {
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl">
             <div className="rounded-3xl border border-cyan-400/20 bg-slate-900 p-6">
               <p className="text-sm font-bold uppercase tracking-[0.25em] text-cyan-300">
-                Example Draft
+                Example Draft Board
               </p>
 
               <h2 className="mt-4 text-3xl font-black">
                 College Football Team Draft
               </h2>
 
-              <div className="mt-6 space-y-3">
-                {[
-                  ["1", "Garrett", "UTSA"],
-                  ["2", "Chris", "Tulane"],
-                  ["3", "Tyler", "James Madison"],
-                  ["4", "John", "ECU"],
-                ].map(([pick, drafter, item]) => (
-                  <div
-                    key={pick}
-                    className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950 p-4"
-                  >
-                    <div>
-                      <div className="text-xs text-slate-500">
-                        Pick {pick}
-                      </div>
-                      <div className="font-bold">{drafter}</div>
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-lg font-black">{item}</div>
-                      <div className="text-xs text-cyan-300">Drafted</div>
-                    </div>
-                  </div>
-                ))}
+              <div className="mt-6">
+                <CompactDraftBoard
+                  tiers={EXAMPLE_TIERS}
+                  getStatus={(item) =>
+                    item.drafter
+                      ? { variant: "taken", badge: item.drafter }
+                      : { variant: "available" }
+                  }
+                  legend={[
+                    { label: "Drafted", swatchClassName: "bg-green-400/20" },
+                    { label: "Available", swatchClassName: "bg-white/10" },
+                  ]}
+                />
               </div>
             </div>
           </section>

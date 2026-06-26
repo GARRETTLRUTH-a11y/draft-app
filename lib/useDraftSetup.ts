@@ -7,6 +7,15 @@ export type Drafter = {
   id: number;
   name: string;
   lotteryTickets: number;
+  groupId?: string;
+};
+
+export type DraftGroupMode = "lottery" | "manual";
+
+export type DraftGroup = {
+  id: string;
+  name: string;
+  mode: DraftGroupMode;
 };
 
 export type DraftItem = {
@@ -30,6 +39,7 @@ export type SavedDraftState = {
   availableItems: DraftItem[];
   picks: Pick[];
   lotteryHasRun: boolean;
+  groups?: DraftGroup[];
 };
 
 export type CloudDraftRow = {

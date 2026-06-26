@@ -3,7 +3,49 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useDraftSetup, type Drafter } from "@/lib/useDraftSetup";
+import {
+  getGroups,
+  groupMembers,
+  rebuildOrderedDrafters,
+} from "@/lib/draftGroups";
 import { WizardSteps } from "@/components/WizardSteps";
+
+function weightedShuffle(members: Drafter[]): Drafter[] {
+  const remaining = [...members];
+  const newOrder: Drafter[] = [];
+
+  while (remaining.length > 0) {
+    const ticketTotal = remaining.reduce(
+      (total, drafter) => total + drafter.lotteryTickets,
+      0
+    );
+
+    let randomNumber = Math.random() * ticketTotal;
+
+    for (let i = 0; i < remaining.length; i++) {
+      randomNumber -= remaining[i].lotteryTickets;
+
+      if (randomNumber <= 0) {
+        const selected = remaining.splice(i, 1)[0];
+        newOrder.push(selected);
+        break;
+      }
+    }
+  }
+
+  return newOrder;
+}
+
+function equalShuffle(members: Drafter[]): Drafter[] {
+  const shuffled = [...members];
+
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const randomIndex = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[i]];
+  }
+
+  return shuffled;
+}
 
 export default function LotteryStepPage() {
   const router = useRouter();
@@ -14,48 +56,50 @@ export default function LotteryStepPage() {
   const { draft, isLoading, isSaving, message, save } = useDraftSetup(draftId);
 
   const drafters = draft?.draft_data.drafters ?? [];
+  const groups = getGroups(draft?.draft_data.groups);
   const lotteryHasRun = draft?.draft_data.lotteryHasRun ?? false;
   const picksStarted = (draft?.draft_data.picks.length ?? 0) > 0;
+  const multipleGroups = groups.length > 1;
 
-  async function runWeightedLottery() {
-    if (picksStarted || drafters.length <= 1) return;
+  async function runGroupLottery(
+    groupId: string,
+    shuffle: (members: Drafter[]) => Drafter[]
+  ) {
+    if (picksStarted) return;
 
-    const remaining = [...drafters];
-    const newOrder: Drafter[] = [];
+    const members = groupMembers(drafters, groups, groupId);
+    if (members.length <= 1) return;
 
-    while (remaining.length > 0) {
-      const ticketTotal = remaining.reduce(
-        (total, drafter) => total + drafter.lotteryTickets,
-        0
-      );
+    const shuffled = shuffle(members);
+    const others = drafters.filter(
+      (drafter) => !members.some((member) => member.id === drafter.id)
+    );
 
-      let randomNumber = Math.random() * ticketTotal;
-
-      for (let i = 0; i < remaining.length; i++) {
-        randomNumber -= remaining[i].lotteryTickets;
-
-        if (randomNumber <= 0) {
-          const selected = remaining.splice(i, 1)[0];
-          newOrder.push(selected);
-          break;
-        }
-      }
-    }
-
-    await save({ drafters: newOrder, lotteryHasRun: true });
+    const next = rebuildOrderedDrafters([...others, ...shuffled], groups);
+    await save({ drafters: next, lotteryHasRun: true });
   }
 
-  async function randomizeEqualOdds() {
-    if (picksStarted || drafters.length <= 1) return;
+  async function runAllLotteries() {
+    if (picksStarted) return;
 
-    const shuffled = [...drafters];
+    let nextDrafters = drafters;
 
-    for (let i = shuffled.length - 1; i > 0; i--) {
-      const randomIndex = Math.floor(Math.random() * (i + 1));
-      [shuffled[i], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[i]];
+    for (const group of groups) {
+      if (group.mode !== "lottery") continue;
+
+      const members = groupMembers(nextDrafters, groups, group.id);
+      if (members.length <= 1) continue;
+
+      const shuffled = weightedShuffle(members);
+      const others = nextDrafters.filter(
+        (drafter) => !members.some((member) => member.id === drafter.id)
+      );
+
+      nextDrafters = [...others, ...shuffled];
     }
 
-    await save({ drafters: shuffled, lotteryHasRun: true });
+    nextDrafters = rebuildOrderedDrafters(nextDrafters, groups);
+    await save({ drafters: nextDrafters, lotteryHasRun: true });
   }
 
   if (isLoading) {
@@ -85,6 +129,9 @@ export default function LotteryStepPage() {
     );
   }
 
+  const hasMultipleLotteryGroups =
+    groups.filter((group) => group.mode === "lottery").length > 1;
+
   return (
     <main className="min-h-screen bg-slate-950 text-white">
       <section className="mx-auto flex max-w-5xl flex-col gap-6 px-6 py-8">
@@ -110,8 +157,9 @@ export default function LotteryStepPage() {
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
           <h2 className="text-2xl font-bold">Run the Lottery</h2>
           <p className="mt-2 text-sm text-slate-400">
-            Run a weighted lottery using each drafter&apos;s tickets, or just
-            randomize with equal odds. This sets the pick order.
+            Run each lottery-mode group&apos;s randomization independently.
+            Manual-order groups keep the order you set on the Odds step. The
+            final pick order is each group, in order, back to back.
           </p>
 
           {picksStarted && (
@@ -120,53 +168,99 @@ export default function LotteryStepPage() {
             </div>
           )}
 
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          {hasMultipleLotteryGroups && !picksStarted && (
             <button
-              onClick={runWeightedLottery}
-              disabled={picksStarted || drafters.length <= 1}
-              className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={runAllLotteries}
+              className="mt-5 rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
             >
-              Run Weighted Lottery
+              Run All Group Lotteries
             </button>
-
-            <button
-              onClick={randomizeEqualOdds}
-              disabled={picksStarted || drafters.length <= 1}
-              className="rounded-2xl bg-white px-5 py-3 font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              Randomize Equal Odds
-            </button>
-          </div>
-
-          {drafters.length <= 1 && (
-            <p className="mt-3 text-xs text-slate-500">
-              Add at least two drafters to run the lottery.
-            </p>
           )}
 
           {lotteryHasRun && (
             <div className="mt-5 rounded-2xl border border-green-400/30 bg-green-400/10 p-4 text-sm font-semibold text-green-200">
-              Lottery complete. Draft order below.
+              Order set. See each group below.
             </div>
           )}
 
-          <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
+          <div className="mt-5 flex flex-col gap-5">
             {drafters.length === 0 ? (
-              <div className="p-5 text-slate-500">No drafters yet.</div>
+              <div className="rounded-2xl border border-white/10 bg-slate-900 p-5 text-slate-500">
+                No drafters yet.
+              </div>
             ) : (
-              drafters.map((drafter, index) => (
-                <div
-                  key={drafter.id}
-                  className="flex items-center gap-3 border-b border-white/5 bg-slate-900 px-3 py-2 text-sm last:border-b-0"
-                >
-                  <span className="w-6 flex-shrink-0 text-xs text-slate-500">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate font-bold">
-                    {drafter.name}
-                  </span>
-                </div>
-              ))
+              groups.map((group) => {
+                const members = groupMembers(drafters, groups, group.id);
+                const startIndex = groups
+                  .slice(0, groups.indexOf(group))
+                  .reduce(
+                    (total, g) => total + groupMembers(drafters, groups, g.id).length,
+                    0
+                  );
+
+                return (
+                  <div
+                    key={group.id}
+                    className="overflow-hidden rounded-2xl border border-white/10"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-white/5 px-4 py-3">
+                      <p className="text-sm font-black">
+                        {group.name}
+                        {multipleGroups && (
+                          <span className="ml-2 text-xs font-semibold text-slate-400">
+                            {group.mode === "manual" ? "Manual order" : "Lottery"}
+                          </span>
+                        )}
+                      </p>
+
+                      {group.mode === "lottery" && !picksStarted && (
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => runGroupLottery(group.id, weightedShuffle)}
+                            disabled={members.length <= 1}
+                            className="rounded-xl bg-cyan-400 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Run Weighted Lottery
+                          </button>
+                          <button
+                            onClick={() => runGroupLottery(group.id, equalShuffle)}
+                            disabled={members.length <= 1}
+                            className="rounded-xl bg-white px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Randomize Equal Odds
+                          </button>
+                        </div>
+                      )}
+
+                      {group.mode === "manual" && (
+                        <span className="text-xs font-semibold text-cyan-300">
+                          Set manually on Odds step
+                        </span>
+                      )}
+                    </div>
+
+                    {members.length === 0 ? (
+                      <div className="bg-slate-900 p-4 text-sm text-slate-500">
+                        No drafters in this group.
+                      </div>
+                    ) : (
+                      members.map((drafter, index) => (
+                        <div
+                          key={drafter.id}
+                          className="flex items-center gap-3 border-b border-white/5 bg-slate-900 px-3 py-2 text-sm last:border-b-0"
+                        >
+                          <span className="w-8 flex-shrink-0 text-xs text-slate-500">
+                            {startIndex + index + 1}
+                          </span>
+                          <span className="min-w-0 flex-1 truncate font-bold">
+                            {drafter.name}
+                          </span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </section>

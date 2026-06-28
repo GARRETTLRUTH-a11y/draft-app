@@ -15,6 +15,7 @@ type CompactDraftBoardProps<T extends DraftItemLike> = {
   onSelect?: (item: T) => void;
   isClickable?: (item: T) => boolean;
   groupActions?: (category: string) => ReactNode;
+  tierActions?: (tier: string) => ReactNode;
   emptyMessage?: string;
   legend?: { label: string; swatchClassName: string }[];
   strikethroughOnTaken?: boolean;
@@ -47,6 +48,7 @@ export function CompactDraftBoard<T extends DraftItemLike>({
   onSelect,
   isClickable,
   groupActions,
+  tierActions,
   emptyMessage = "No items.",
   legend,
   strikethroughOnTaken = true,
@@ -78,8 +80,14 @@ export function CompactDraftBoard<T extends DraftItemLike>({
             key={tier.tier}
             className="overflow-hidden rounded-2xl border border-white/10"
           >
-            <div className="bg-slate-950 px-4 py-1.5 text-center text-xs font-black uppercase tracking-[0.25em] text-amber-300">
-              {tier.tier}
+            <div className="flex items-center justify-center gap-2 bg-slate-950 px-4 py-1.5 text-xs font-black uppercase tracking-[0.25em] text-amber-300">
+              <span>{tier.tier}</span>
+
+              {tierActions && (
+                <div className="flex gap-1 normal-case tracking-normal">
+                  {tierActions(tier.tier)}
+                </div>
+              )}
             </div>
 
             <div

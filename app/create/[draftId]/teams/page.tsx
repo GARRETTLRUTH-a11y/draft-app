@@ -99,6 +99,26 @@ export default function TeamsStepPage() {
     applyEligibility(next);
   }
 
+  function setTierEligibility(tier: string, eligible: boolean) {
+    if (picksStarted) return;
+
+    const tierIds = CFB_ITEMS.filter(
+      (item) => (CONFERENCE_TIERS[item.category] || "Other") === tier
+    ).map((item) => item.id);
+
+    const next = new Set(eligibleIds);
+
+    tierIds.forEach((id) => {
+      if (eligible) {
+        next.add(id);
+      } else {
+        next.delete(id);
+      }
+    });
+
+    applyEligibility(next);
+  }
+
   if (isLoading) {
     return (
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -202,6 +222,25 @@ export default function TeamsStepPage() {
               }
               onSelect={(item) => toggleTeam(item.id)}
               isClickable={() => !picksStarted}
+              tierActions={(tier) => (
+                <>
+                  <button
+                    onClick={() => setTierEligibility(tier, true)}
+                    disabled={picksStarted}
+                    className="rounded-lg bg-white/10 px-2 py-0.5 text-[9px] font-bold text-amber-200 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Enable All
+                  </button>
+
+                  <button
+                    onClick={() => setTierEligibility(tier, false)}
+                    disabled={picksStarted}
+                    className="rounded-lg bg-white/10 px-2 py-0.5 text-[9px] font-bold text-amber-200 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Disable All
+                  </button>
+                </>
+              )}
               groupActions={(category) => (
                 <>
                   <button

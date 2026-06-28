@@ -23,7 +23,7 @@ export function PrestigeStars({ value, className = "" }: PrestigeStarsProps) {
       <span className="relative inline-flex tracking-tighter">
         <span className="text-slate-600">★★★★★</span>
         <span
-          className="absolute inset-0 overflow-hidden whitespace-nowrap text-white"
+          className="absolute inset-0 overflow-hidden whitespace-nowrap text-amber-400"
           style={{ width: `${fillPercent}%` }}
         >
           ★★★★★

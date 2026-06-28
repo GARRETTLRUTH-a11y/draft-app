@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useDraftSetup } from "@/lib/useDraftSetup";
 import { WizardSteps } from "@/components/WizardSteps";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
 import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
+import { StarRatingSelector } from "@/components/StarRatingSelector";
 
 export default function TeamsStepPage() {
   const router = useRouter();
@@ -16,6 +17,8 @@ export default function TeamsStepPage() {
   const draftId = Array.isArray(rawDraftId) ? rawDraftId[0] : rawDraftId;
 
   const { draft, isLoading, isSaving, message, save } = useDraftSetup(draftId);
+
+  const [minPrestige, setMinPrestige] = useState(0);
 
   const eligibleIds = useMemo(
     () => new Set((draft?.draft_data.availableItems ?? []).map((item) => item.id)),
@@ -49,6 +52,20 @@ export default function TeamsStepPage() {
     } else {
       next.add(id);
     }
+
+    applyEligibility(next);
+  }
+
+  function applyPrestigeFilter() {
+    if (picksStarted) return;
+
+    const next = new Set(eligibleIds);
+
+    CFB_ITEMS.forEach((item) => {
+      if (item.prestige != null && item.prestige < minPrestige) {
+        next.delete(item.id);
+      }
+    });
 
     applyEligibility(next);
   }
@@ -146,6 +163,38 @@ export default function TeamsStepPage() {
               locked.
             </div>
           )}
+
+          <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-white/10 bg-slate-900 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-bold text-white">
+                Exclude by Prestige
+              </p>
+              <p className="mt-1 text-xs text-slate-400">
+                Pick a minimum prestige, then exclude every rated team below
+                it. Unrated (TBD) teams are never excluded by this filter.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <StarRatingSelector
+                value={minPrestige}
+                onChange={setMinPrestige}
+                disabled={picksStarted}
+              />
+
+              <span className="w-10 flex-shrink-0 text-sm font-bold text-cyan-300">
+                {minPrestige.toFixed(1)}★
+              </span>
+
+              <button
+                onClick={applyPrestigeFilter}
+                disabled={picksStarted}
+                className="flex-shrink-0 rounded-xl bg-cyan-400 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Exclude Below {minPrestige.toFixed(1)}★
+              </button>
+            </div>
+          </div>
 
           <div className="mt-5">
             <CompactDraftBoard

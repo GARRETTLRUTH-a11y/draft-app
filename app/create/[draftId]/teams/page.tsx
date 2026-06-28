@@ -8,7 +8,7 @@ import { WizardSteps } from "@/components/WizardSteps";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
 import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
-import { RatingPills } from "@/components/RatingPills";
+import { RatingSlider } from "@/components/RatingSlider";
 
 export default function TeamsStepPage() {
   const router = useRouter();
@@ -56,18 +56,27 @@ export default function TeamsStepPage() {
     applyEligibility(next);
   }
 
-  function applyPrestigeFilter() {
+  function applyPrestigeFilter(threshold: number) {
     if (picksStarted) return;
 
     const next = new Set(eligibleIds);
 
     CFB_ITEMS.forEach((item) => {
-      if (item.prestige != null && item.prestige > maxPrestige) {
+      if (item.prestige == null) return;
+
+      if (item.prestige > threshold) {
         next.delete(item.id);
+      } else {
+        next.add(item.id);
       }
     });
 
     applyEligibility(next);
+  }
+
+  function handlePrestigeChange(value: number) {
+    setMaxPrestige(value);
+    applyPrestigeFilter(value);
   }
 
   function setConferenceEligibility(conference: string, eligible: boolean) {
@@ -170,26 +179,17 @@ export default function TeamsStepPage() {
                 Exclude by Prestige
               </p>
               <p className="mt-1 text-xs text-slate-400">
-                Pick a maximum prestige, then exclude every rated team above
-                it. Unrated (TBD) teams are never excluded by this filter.
+                Drag to a maximum prestige. Rated teams above it are excluded
+                automatically as you move the slider; teams at or below it
+                become eligible again. Unrated (TBD) teams are never affected.
               </p>
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-              <RatingPills
-                value={maxPrestige}
-                onChange={setMaxPrestige}
-                disabled={picksStarted}
-              />
-
-              <button
-                onClick={applyPrestigeFilter}
-                disabled={picksStarted}
-                className="flex-shrink-0 rounded-xl bg-cyan-400 px-3 py-1.5 text-xs font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Exclude Above {maxPrestige.toFixed(1)}★
-              </button>
-            </div>
+            <RatingSlider
+              value={maxPrestige}
+              onChange={handlePrestigeChange}
+              disabled={picksStarted}
+            />
           </div>
 
           <div className="mt-5">

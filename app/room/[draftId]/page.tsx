@@ -40,7 +40,32 @@ type SavedDraftState = {
   lotteryHasRun: boolean;
   pickTimeLimitSeconds?: number | null;
   pickDeadline?: string | null;
+  isPaused?: boolean;
+  overnightPauseStart?: string | null;
+  overnightPauseEnd?: string | null;
 };
+
+function isWithinOvernightWindow(
+  start: string | null | undefined,
+  end: string | null | undefined,
+  now: Date
+) {
+  if (!start || !end) return false;
+
+  const [startHour, startMinute] = start.split(":").map(Number);
+  const [endHour, endMinute] = end.split(":").map(Number);
+  const startMinutes = startHour * 60 + startMinute;
+  const endMinutes = endHour * 60 + endMinute;
+  const nowMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (startMinutes === endMinutes) return false;
+
+  if (startMinutes < endMinutes) {
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  }
+
+  return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+}
 
 function formatDuration(totalSeconds: number) {
   const hours = Math.floor(totalSeconds / 3600);
@@ -100,7 +125,10 @@ export default function RoomPage() {
   const [now, setNow] = useState(() => Date.now());
   const [timeLimitHoursInput, setTimeLimitHoursInput] = useState(0);
   const [timeLimitMinutesInput, setTimeLimitMinutesInput] = useState(5);
+  const [overnightStartInput, setOvernightStartInput] = useState("23:00");
+  const [overnightEndInput, setOvernightEndInput] = useState("08:00");
   const skipInFlightRef = useRef(false);
+  const wasPausedRef = useRef(false);
 
   useEffect(() => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
@@ -256,6 +284,14 @@ export default function RoomPage() {
     pickDeadlineMs != null ? Math.ceil((pickDeadlineMs - now) / 1000) : null;
   const isTimeExpired = remainingSeconds != null && remainingSeconds <= 0;
 
+  const isManuallyPaused = Boolean(draftData?.isPaused);
+  const isOvernightPausedNow = isWithinOvernightWindow(
+    draftData?.overnightPauseStart,
+    draftData?.overnightPauseEnd,
+    new Date(now)
+  );
+  const isPausedNow = isManuallyPaused || isOvernightPausedNow;
+
   const draftStatus = useMemo(() => {
     if (picks.length === 0) return "Draft Not Started";
     if (isDraftComplete) return "Draft Complete";
@@ -295,6 +331,7 @@ export default function RoomPage() {
   useEffect(() => {
     if (viewAsPlayer) return;
     if (!draftData || !currentDrafter || isDraftComplete) return;
+    if (isPausedNow) return;
     if (!isTimeExpired) return;
     if (skipInFlightRef.current) return;
 
@@ -303,7 +340,19 @@ export default function RoomPage() {
       skipInFlightRef.current = false;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isTimeExpired, viewAsPlayer, draftData, currentDrafter, isDraftComplete]);
+  }, [isTimeExpired, viewAsPlayer, draftData, currentDrafter, isDraftComplete, isPausedNow]);
+
+  useEffect(() => {
+    if (viewAsPlayer) return;
+    if (!draftData || !currentDrafter || isDraftComplete) return;
+
+    if (wasPausedRef.current && !isPausedNow) {
+      refreshCurrentDeadline();
+    }
+
+    wasPausedRef.current = isPausedNow;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPausedNow, viewAsPlayer, draftData, currentDrafter, isDraftComplete]);
 
   function exportResultsCsv() {
     if (picks.length === 0) return;
@@ -440,6 +489,52 @@ export default function RoomPage() {
     return new Date(Date.now() + limitSeconds * 1000).toISOString();
   }
 
+  async function refreshCurrentDeadline() {
+    if (!draftData) return;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      pickDeadline: deadlineForIndex(draftData.pickTimeLimitSeconds, picks.length),
+    };
+
+    await saveRoomDraft(nextDraftData);
+
+    if (draftData.pickTimeLimitSeconds) {
+      setMessage("Draft resumed. Pick timer reset for the current drafter.");
+    }
+  }
+
+  async function togglePause() {
+    if (!draftData) return;
+
+    const nextPaused = !draftData.isPaused;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      isPaused: nextPaused,
+    };
+
+    await saveRoomDraft(nextDraftData);
+    setMessage(nextPaused ? "Draft paused." : "Draft resumed.");
+  }
+
+  async function setOvernightPause(start: string | null, end: string | null) {
+    if (!draftData) return;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      overnightPauseStart: start,
+      overnightPauseEnd: end,
+    };
+
+    await saveRoomDraft(nextDraftData);
+    setMessage(
+      start && end
+        ? `Overnight pause set: ${start} to ${end} (your local time, daily).`
+        : "Overnight pause removed."
+    );
+  }
+
   async function makePick(item: DraftItem) {
     if (!draftData || !currentDrafter) return;
 
@@ -448,9 +543,21 @@ export default function RoomPage() {
       return;
     }
 
+    if (viewAsPlayer && isPausedNow) {
+      setMessage("The draft is paused.");
+      return;
+    }
+
     if (!availableItems.some((availableItem) => availableItem.id === item.id)) {
       setMessage("That team has already been drafted.");
       return;
+    }
+
+    if (!viewAsPlayer) {
+      const confirmed = window.confirm(
+        `Draft ${item.name} for ${currentDrafter.name}?`
+      );
+      if (!confirmed) return;
     }
 
     const newPick: Pick = {
@@ -476,6 +583,11 @@ export default function RoomPage() {
     if (!draftData || picks.length === 0) return;
 
     const lastPick = picks[picks.length - 1];
+
+    const confirmed = window.confirm(
+      `Undo ${lastPick.drafter}'s pick of ${lastPick.item.name}?`
+    );
+    if (!confirmed) return;
 
     const nextDraftData: SavedDraftState = {
       ...draftData,
@@ -693,6 +805,12 @@ export default function RoomPage() {
               </span>
             )}
 
+            {isPausedNow && (
+              <span className="rounded-full border border-yellow-400/30 bg-yellow-400/10 px-4 py-1.5 text-xs font-bold text-yellow-200">
+                ⏸ {isManuallyPaused ? "Paused" : "Paused (Overnight)"}
+              </span>
+            )}
+
             <span className="rounded-full border border-green-400/30 bg-green-400/10 px-4 py-1.5 text-xs font-bold text-green-200">
               Live
             </span>
@@ -856,6 +974,89 @@ export default function RoomPage() {
                   ? `Current limit: ${formatDuration(pickTimeLimitSeconds)} per pick`
                   : "No time limit set"}
               </span>
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <h3 className="text-lg font-black">Pause Draft</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Pausing stops players from picking and stops the pick timer
+                from expiring anyone. As host, you can still make picks while
+                paused if you need to.
+              </p>
+
+              <button
+                onClick={togglePause}
+                disabled={isSaving}
+                className={`mt-4 rounded-2xl px-5 py-3 font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                  isManuallyPaused
+                    ? "bg-green-400 text-slate-950 hover:bg-green-300"
+                    : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
+                }`}
+              >
+                {isManuallyPaused ? "Resume Draft" : "Pause Draft"}
+              </button>
+
+              {isOvernightPausedNow && !isManuallyPaused && (
+                <p className="mt-3 text-sm font-semibold text-yellow-200">
+                  Currently paused by the overnight schedule below. Adjust or
+                  remove it if you want to resume right now.
+                </p>
+              )}
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <h3 className="text-lg font-black">Overnight Pause</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Automatically pause the draft every day between these times
+                (your local time), and resume automatically after.
+              </p>
+
+              <div className="mt-4 flex flex-wrap items-end gap-3">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Pause At
+                  <input
+                    type="time"
+                    value={overnightStartInput}
+                    onChange={(event) => setOvernightStartInput(event.target.value)}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Resume At
+                  <input
+                    type="time"
+                    value={overnightEndInput}
+                    onChange={(event) => setOvernightEndInput(event.target.value)}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                  />
+                </label>
+
+                <button
+                  onClick={() => setOvernightPause(overnightStartInput, overnightEndInput)}
+                  disabled={isSaving}
+                  className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Set Overnight Pause
+                </button>
+
+                <button
+                  onClick={() => setOvernightPause(null, null)}
+                  disabled={
+                    isSaving ||
+                    (!draftData.overnightPauseStart && !draftData.overnightPauseEnd)
+                  }
+                  className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Remove
+                </button>
+
+                <span className="text-sm font-semibold text-slate-400">
+                  {draftData.overnightPauseStart && draftData.overnightPauseEnd
+                    ? `Currently paused nightly: ${draftData.overnightPauseStart} – ${draftData.overnightPauseEnd}`
+                    : "No overnight pause set"}
+                </span>
+              </div>
             </div>
           </section>
         )}
@@ -1108,15 +1309,24 @@ export default function RoomPage() {
                   Pick {currentPickNumber} of {drafters.length}
                 </p>
 
-                {remainingSeconds != null && currentDrafter && !isDraftComplete && (
-                  <p
-                    className={`mt-2 text-2xl font-black ${
-                      remainingSeconds <= 30 ? "text-red-400" : "text-cyan-300"
-                    }`}
-                  >
-                    {formatClock(remainingSeconds)}
+                {currentDrafter && !isDraftComplete && isPausedNow && (
+                  <p className="mt-2 text-2xl font-black text-yellow-300">
+                    ⏸ Paused
                   </p>
                 )}
+
+                {remainingSeconds != null &&
+                  currentDrafter &&
+                  !isDraftComplete &&
+                  !isPausedNow && (
+                    <p
+                      className={`mt-2 text-2xl font-black ${
+                        remainingSeconds <= 30 ? "text-red-400" : "text-cyan-300"
+                      }`}
+                    >
+                      {formatClock(remainingSeconds)}
+                    </p>
+                  )}
               </div>
 
               <input
@@ -1138,7 +1348,9 @@ export default function RoomPage() {
                 }}
                 onSelect={makePick}
                 isClickable={(item) =>
-                  (!viewAsPlayer ? Boolean(currentDrafter) : canPick) &&
+                  (!viewAsPlayer
+                    ? Boolean(currentDrafter)
+                    : canPick && !isPausedNow) &&
                   !isSaving &&
                   availableItemIds.has(item.id)
                 }

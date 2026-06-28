@@ -44,6 +44,9 @@ export type SavedDraftState = {
   groups?: DraftGroup[];
   pickTimeLimitSeconds?: number | null;
   pickDeadline?: string | null;
+  isPaused?: boolean;
+  overnightPauseStart?: string | null;
+  overnightPauseEnd?: string | null;
 };
 
 export type CloudDraftRow = {

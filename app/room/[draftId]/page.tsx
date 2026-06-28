@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
 import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
@@ -13,6 +13,7 @@ type Drafter = {
   id: number;
   name: string;
   lotteryTickets: number;
+  missedPicks?: number;
 };
 
 type DraftItem = {
@@ -37,7 +38,32 @@ type SavedDraftState = {
   availableItems: DraftItem[];
   picks: Pick[];
   lotteryHasRun: boolean;
+  pickTimeLimitSeconds?: number | null;
+  pickDeadline?: string | null;
 };
+
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+
+  const parts: string[] = [];
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0 || hours === 0) parts.push(`${minutes}m`);
+
+  return parts.join(" ");
+}
+
+function formatClock(totalSeconds: number) {
+  const clamped = Math.max(0, totalSeconds);
+  const hours = Math.floor(clamped / 3600);
+  const minutes = Math.floor((clamped % 3600) / 60);
+  const seconds = clamped % 60;
+
+  const mm = String(minutes).padStart(2, "0");
+  const ss = String(seconds).padStart(2, "0");
+
+  return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 type RoomDraft = {
   id: string;
@@ -71,6 +97,15 @@ export default function RoomPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [liveMessage, setLiveMessage] = useState("Connecting to live room...");
+  const [now, setNow] = useState(() => Date.now());
+  const [timeLimitHoursInput, setTimeLimitHoursInput] = useState(0);
+  const [timeLimitMinutesInput, setTimeLimitMinutesInput] = useState(5);
+  const skipInFlightRef = useRef(false);
+
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   useEffect(() => {
     if (!draftId) return;
@@ -137,6 +172,7 @@ export default function RoomPage() {
       router.replace(`/login?redirect=/room/${draftId}`);
     }
   }, [isLoading, userEmail, draftId, router]);
+
 
   async function loadRoomDraft(roomDraftId = draftId) {
     if (!roomDraftId) return;
@@ -212,6 +248,14 @@ export default function RoomPage() {
     drafters.length > 0 &&
     (picks.length >= drafters.length || availableItems.length === 0);
 
+  const pickTimeLimitSeconds = draftData?.pickTimeLimitSeconds ?? null;
+  const pickDeadlineMs = draftData?.pickDeadline
+    ? new Date(draftData.pickDeadline).getTime()
+    : null;
+  const remainingSeconds =
+    pickDeadlineMs != null ? Math.ceil((pickDeadlineMs - now) / 1000) : null;
+  const isTimeExpired = remainingSeconds != null && remainingSeconds <= 0;
+
   const draftStatus = useMemo(() => {
     if (picks.length === 0) return "Draft Not Started";
     if (isDraftComplete) return "Draft Complete";
@@ -247,6 +291,19 @@ export default function RoomPage() {
     Boolean(currentDrafter) &&
     myParticipant?.drafter_name === currentDrafter?.name &&
     availableItems.length > 0;
+
+  useEffect(() => {
+    if (viewAsPlayer) return;
+    if (!draftData || !currentDrafter || isDraftComplete) return;
+    if (!isTimeExpired) return;
+    if (skipInFlightRef.current) return;
+
+    skipInFlightRef.current = true;
+    handleMissedPick().finally(() => {
+      skipInFlightRef.current = false;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTimeExpired, viewAsPlayer, draftData, currentDrafter, isDraftComplete]);
 
   function exportResultsCsv() {
     if (picks.length === 0) return;
@@ -378,6 +435,11 @@ export default function RoomPage() {
     setIsSaving(false);
   }
 
+  function deadlineForIndex(limitSeconds: number | null | undefined, index: number) {
+    if (!limitSeconds || index >= drafters.length) return null;
+    return new Date(Date.now() + limitSeconds * 1000).toISOString();
+  }
+
   async function makePick(item: DraftItem) {
     if (!draftData || !currentDrafter) return;
 
@@ -403,6 +465,7 @@ export default function RoomPage() {
       availableItems: availableItems.filter(
         (availableItem) => availableItem.id !== item.id
       ),
+      pickDeadline: deadlineForIndex(draftData.pickTimeLimitSeconds, picks.length + 1),
     };
 
     await saveRoomDraft(nextDraftData);
@@ -418,9 +481,60 @@ export default function RoomPage() {
       ...draftData,
       picks: picks.slice(0, -1),
       availableItems: [...availableItems, lastPick.item],
+      pickDeadline: deadlineForIndex(draftData.pickTimeLimitSeconds, picks.length - 1),
     };
 
     await saveRoomDraft(nextDraftData);
+  }
+
+  async function handleMissedPick() {
+    if (!draftData || !currentDrafter) return;
+
+    const onClockIndex = picks.length;
+    const missCount = (currentDrafter.missedPicks ?? 0) + 1;
+    const updatedDrafter: Drafter = { ...currentDrafter, missedPicks: missCount };
+    const nextDrafters = [...drafters];
+    const bumpedToEnd = missCount >= 3;
+
+    if (bumpedToEnd) {
+      nextDrafters.splice(onClockIndex, 1);
+      nextDrafters.push(updatedDrafter);
+    } else if (onClockIndex + 1 < nextDrafters.length) {
+      nextDrafters[onClockIndex] = nextDrafters[onClockIndex + 1];
+      nextDrafters[onClockIndex + 1] = updatedDrafter;
+    } else {
+      nextDrafters[onClockIndex] = updatedDrafter;
+    }
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      drafters: nextDrafters,
+      pickDeadline: deadlineForIndex(draftData.pickTimeLimitSeconds, onClockIndex),
+    };
+
+    await saveRoomDraft(nextDraftData);
+    setMessage(
+      bumpedToEnd
+        ? `${currentDrafter.name} missed 3 picks and was moved to the end of the draft order.`
+        : `${currentDrafter.name} ran out of time and was pushed back a spot.`
+    );
+  }
+
+  async function setPickTimeLimit(totalSeconds: number | null) {
+    if (!draftData) return;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      pickTimeLimitSeconds: totalSeconds,
+      pickDeadline: deadlineForIndex(totalSeconds, picks.length),
+    };
+
+    await saveRoomDraft(nextDraftData);
+    setMessage(
+      totalSeconds
+        ? `Pick time limit set to ${formatDuration(totalSeconds)}.`
+        : "Pick time limit removed."
+    );
   }
 
   async function claimDrafter(drafterName: string) {
@@ -672,6 +786,80 @@ export default function RoomPage() {
           )}
         </header>
 
+        {!viewAsPlayer && (
+          <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+            <h2 className="text-xl font-black">Pick Timer</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Set a per-pick time limit. If a drafter&apos;s timer runs out,
+              they&apos;re pushed back one spot. Miss 3 picks and they&apos;re
+              moved to the very end of the draft order.
+            </p>
+
+            <div className="mt-5 flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Hours
+                <input
+                  type="number"
+                  min={0}
+                  max={23}
+                  value={timeLimitHoursInput}
+                  onChange={(event) =>
+                    setTimeLimitHoursInput(
+                      Math.max(0, Number(event.target.value) || 0)
+                    )
+                  }
+                  className="w-20 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Minutes
+                <input
+                  type="number"
+                  min={0}
+                  max={59}
+                  value={timeLimitMinutesInput}
+                  onChange={(event) =>
+                    setTimeLimitMinutesInput(
+                      Math.max(0, Math.min(59, Number(event.target.value) || 0))
+                    )
+                  }
+                  className="w-20 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <button
+                onClick={() =>
+                  setPickTimeLimit(
+                    timeLimitHoursInput * 3600 + timeLimitMinutesInput * 60
+                  )
+                }
+                disabled={
+                  isSaving ||
+                  timeLimitHoursInput * 3600 + timeLimitMinutesInput * 60 <= 0
+                }
+                className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Set Time Limit
+              </button>
+
+              <button
+                onClick={() => setPickTimeLimit(null)}
+                disabled={isSaving || !pickTimeLimitSeconds}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Remove Limit
+              </button>
+
+              <span className="text-sm font-semibold text-slate-400">
+                {pickTimeLimitSeconds
+                  ? `Current limit: ${formatDuration(pickTimeLimitSeconds)} per pick`
+                  : "No time limit set"}
+              </span>
+            </div>
+          </section>
+        )}
+
         <section className="grid gap-4 md:grid-cols-4">
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="text-3xl font-black">{drafters.length}</div>
@@ -802,6 +990,11 @@ export default function RoomPage() {
                         (you)
                       </span>
                     )}
+                    {Boolean(drafter.missedPicks) && (
+                      <span className="ml-1.5 rounded-full border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300">
+                        Missed {drafter.missedPicks}
+                      </span>
+                    )}
                   </span>
 
                   {pick ? (
@@ -914,6 +1107,16 @@ export default function RoomPage() {
                 <p className="mt-2 text-slate-400">
                   Pick {currentPickNumber} of {drafters.length}
                 </p>
+
+                {remainingSeconds != null && currentDrafter && !isDraftComplete && (
+                  <p
+                    className={`mt-2 text-2xl font-black ${
+                      remainingSeconds <= 30 ? "text-red-400" : "text-cyan-300"
+                    }`}
+                  >
+                    {formatClock(remainingSeconds)}
+                  </p>
+                )}
               </div>
 
               <input

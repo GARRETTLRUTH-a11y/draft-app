@@ -8,6 +8,7 @@ export type Drafter = {
   name: string;
   lotteryTickets: number;
   groupId?: string;
+  missedPicks?: number;
 };
 
 export type DraftGroupMode = "lottery" | "manual";
@@ -41,6 +42,8 @@ export type SavedDraftState = {
   picks: Pick[];
   lotteryHasRun: boolean;
   groups?: DraftGroup[];
+  pickTimeLimitSeconds?: number | null;
+  pickDeadline?: string | null;
 };
 
 export type CloudDraftRow = {

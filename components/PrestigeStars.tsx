@@ -16,12 +16,12 @@ export function PrestigeStars({ value, className = "" }: PrestigeStarsProps) {
 
   return (
     <span
-      className={`relative inline-flex text-xs leading-none tracking-tighter ${className}`}
+      className={`relative inline-flex text-[10px] leading-none tracking-tighter ${className}`}
       title={`${value} / 5 prestige`}
     >
       <span className="text-slate-600">★★★★★</span>
       <span
-        className="absolute inset-0 overflow-hidden whitespace-nowrap text-amber-400"
+        className="absolute inset-0 overflow-hidden whitespace-nowrap text-white"
         style={{ width: `${fillPercent}%` }}
       >
         ★★★★★

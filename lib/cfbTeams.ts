@@ -4,6 +4,169 @@ export type CfbTeam = {
   color: string;
 };
 
+// Prestige (0-5 stars, half-star increments) sourced from CFB 27 beta team
+// ratings. `null` means the program's prestige hasn't been rated yet (shown
+// as "TBD" in-app). Revisit as the beta data settles.
+export const TEAM_PRESTIGE: Record<string, number | null> = {
+  // SEC
+  Alabama: 5,
+  Arkansas: 4.5,
+  Auburn: 4,
+  Florida: 4,
+  Georgia: 5,
+  Kentucky: 3,
+  LSU: 5,
+  "Mississippi State": 3,
+  Missouri: 3.5,
+  "Ole Miss": 4.5,
+  Oklahoma: 5,
+  "South Carolina": 3.5,
+  Tennessee: 4.5,
+  Texas: 5,
+  "Texas A&M": 4.5,
+  Vanderbilt: 2.5,
+
+  // Big Ten
+  Illinois: 3,
+  Indiana: 3.5,
+  Iowa: 4,
+  Maryland: 3.5,
+  Michigan: 4.5,
+  "Michigan State": 3.5,
+  Minnesota: 3,
+  Nebraska: 4.5,
+  Northwestern: 2.5,
+  "Ohio State": 5,
+  Oregon: 4.5,
+  "Penn State": 4.5,
+  Purdue: 3.5,
+  Rutgers: 2,
+  UCLA: 3.5,
+  USC: 5,
+  Washington: 4,
+  Wisconsin: 3.5,
+
+  // Big 12
+  Arizona: 3.5,
+  "Arizona State": 4.5,
+  Baylor: 2.5,
+  BYU: 3.5,
+  Cincinnati: 2.5,
+  Colorado: 3,
+  Houston: 3.5,
+  "Iowa State": 3.5,
+  Kansas: 2,
+  "Kansas State": 3.5,
+  "Oklahoma State": 3.5,
+  TCU: 3.5,
+  "Texas Tech": 4.5,
+  UCF: 2,
+  Utah: 4.5,
+  "West Virginia": 3,
+
+  // ACC
+  "Boston College": 3.5,
+  California: 3,
+  Clemson: 4.5,
+  Duke: 3,
+  "Florida State": 3.5,
+  "Georgia Tech": 3.5,
+  Louisville: 3.5,
+  Miami: 4.5,
+  "NC State": 3.5,
+  "North Carolina": 3,
+  Pittsburgh: 3.5,
+  SMU: 3,
+  Stanford: 3,
+  Syracuse: 3,
+  Virginia: 3,
+  "Virginia Tech": 3.5,
+  "Wake Forest": 2,
+
+  // Pac-12
+  "Oregon State": 2,
+  "Washington State": 2.5,
+  "Boise State": 2.5,
+  "Colorado State": 2.5,
+  "Fresno State": 2.5,
+  "San Diego State": 2,
+  UNLV: 1,
+  "Utah State": 2.5,
+
+  // American
+  Army: 2,
+  Charlotte: 1,
+  "East Carolina": 2.5,
+  "Florida Atlantic": 1,
+  Memphis: 2,
+  Navy: 2.5,
+  "North Texas": 2.5,
+  Rice: 2,
+  "South Florida": 2.5,
+  Temple: 1,
+  Tulane: 2.5,
+  Tulsa: 2,
+  UAB: 1,
+  UTSA: 1,
+
+  // Mountain West
+  "Air Force": 2.5,
+  Hawaii: 2.5,
+  Nevada: 2.5,
+  "New Mexico": 2.5,
+  "San Jose State": 2.5,
+  Wyoming: 1,
+
+  // Conference USA
+  Delaware: null,
+  FIU: 1,
+  "Jacksonville State": null,
+  "Kennesaw State": null,
+  Liberty: 1,
+  "Louisiana Tech": 2.5,
+  "Middle Tennessee": 1,
+  "Missouri State": null,
+  "New Mexico State": 1,
+  "Sam Houston": null,
+  UTEP: 1,
+  "Western Kentucky": 1,
+
+  // MAC
+  Akron: null,
+  "Ball State": 1,
+  "Bowling Green": 1,
+  Buffalo: 1,
+  "Central Michigan": 1,
+  "Eastern Michigan": 1,
+  "Kent State": null,
+  Massachusetts: 1,
+  "Miami (OH)": 1,
+  "Northern Illinois": 1,
+  Ohio: 1,
+  Toledo: 2.5,
+  "Western Michigan": 1,
+
+  // Sun Belt
+  "Appalachian State": 1,
+  "Arkansas State": 1,
+  "Coastal Carolina": 1,
+  "Georgia Southern": 1,
+  "Georgia State": 1,
+  "James Madison": 1,
+  Louisiana: 1,
+  "Louisiana-Monroe": 1,
+  Marshall: 2.5,
+  "Old Dominion": 1,
+  "South Alabama": 1,
+  "Southern Miss": 2.5,
+  "Texas State": 1,
+  Troy: 1,
+
+  // FBS Independents
+  "Notre Dame": 5,
+  UConn: 1,
+};
+
 export const CONFERENCE_ORDER = [
   "SEC",
   "Big Ten",
@@ -200,6 +363,7 @@ export type CfbDraftItem = {
   category: string;
   description: string;
   color?: string;
+  prestige?: number | null;
 };
 
 export const CFB_ITEMS: CfbDraftItem[] = CFB_TEAMS.map((team, index) => ({
@@ -208,4 +372,5 @@ export const CFB_ITEMS: CfbDraftItem[] = CFB_TEAMS.map((team, index) => ({
   category: team.conference,
   description: `${team.conference} program.`,
   color: team.color,
+  prestige: TEAM_PRESTIGE[team.name] ?? null,
 }));

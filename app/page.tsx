@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
 import type { ItemTier } from "@/lib/draftBoard";
+import { TEAM_PRESTIGE } from "@/lib/cfbTeams";
 
 type ExampleTeam = {
   id: number;
@@ -12,6 +13,7 @@ type ExampleTeam = {
   description: string;
   color: string;
   drafter?: string;
+  prestige?: number | null;
 };
 
 const EXAMPLE_TIERS: ItemTier<ExampleTeam>[] = [
@@ -21,25 +23,25 @@ const EXAMPLE_TIERS: ItemTier<ExampleTeam>[] = [
       {
         category: "SEC",
         items: [
-          { id: 1, name: "Alabama", category: "SEC", description: "", color: "#9E1B32", drafter: "Garrett" },
-          { id: 2, name: "Georgia", category: "SEC", description: "", color: "#BA0C2F" },
-          { id: 3, name: "LSU", category: "SEC", description: "", color: "#461D7C" },
+          { id: 1, name: "Alabama", category: "SEC", description: "", color: "#9E1B32", drafter: "Garrett", prestige: TEAM_PRESTIGE["Alabama"] },
+          { id: 2, name: "Georgia", category: "SEC", description: "", color: "#BA0C2F", prestige: TEAM_PRESTIGE["Georgia"] },
+          { id: 3, name: "LSU", category: "SEC", description: "", color: "#461D7C", prestige: TEAM_PRESTIGE["LSU"] },
         ],
       },
       {
         category: "Big Ten",
         items: [
-          { id: 4, name: "Ohio State", category: "Big Ten", description: "", color: "#BB0000", drafter: "Chris" },
-          { id: 5, name: "Michigan", category: "Big Ten", description: "", color: "#00274C" },
-          { id: 6, name: "Oregon", category: "Big Ten", description: "", color: "#154733" },
+          { id: 4, name: "Ohio State", category: "Big Ten", description: "", color: "#BB0000", drafter: "Chris", prestige: TEAM_PRESTIGE["Ohio State"] },
+          { id: 5, name: "Michigan", category: "Big Ten", description: "", color: "#00274C", prestige: TEAM_PRESTIGE["Michigan"] },
+          { id: 6, name: "Oregon", category: "Big Ten", description: "", color: "#154733", prestige: TEAM_PRESTIGE["Oregon"] },
         ],
       },
       {
         category: "Big 12",
         items: [
-          { id: 7, name: "Texas Tech", category: "Big 12", description: "", color: "#CC0000", drafter: "Tyler" },
-          { id: 8, name: "Kansas State", category: "Big 12", description: "", color: "#512888" },
-          { id: 9, name: "BYU", category: "Big 12", description: "", color: "#002E5D" },
+          { id: 7, name: "Texas Tech", category: "Big 12", description: "", color: "#CC0000", drafter: "Tyler", prestige: TEAM_PRESTIGE["Texas Tech"] },
+          { id: 8, name: "Kansas State", category: "Big 12", description: "", color: "#512888", prestige: TEAM_PRESTIGE["Kansas State"] },
+          { id: 9, name: "BYU", category: "Big 12", description: "", color: "#002E5D", prestige: TEAM_PRESTIGE["BYU"] },
         ],
       },
     ],
@@ -50,15 +52,15 @@ const EXAMPLE_TIERS: ItemTier<ExampleTeam>[] = [
       {
         category: "American",
         items: [
-          { id: 10, name: "Tulane", category: "American", description: "", color: "#006747" },
-          { id: 11, name: "Memphis", category: "American", description: "", color: "#003087", drafter: "John" },
+          { id: 10, name: "Tulane", category: "American", description: "", color: "#006747", prestige: TEAM_PRESTIGE["Tulane"] },
+          { id: 11, name: "Memphis", category: "American", description: "", color: "#003087", drafter: "John", prestige: TEAM_PRESTIGE["Memphis"] },
         ],
       },
       {
         category: "Sun Belt",
         items: [
-          { id: 12, name: "James Madison", category: "Sun Belt", description: "", color: "#450084" },
-          { id: 13, name: "Coastal Carolina", category: "Sun Belt", description: "", color: "#006A65" },
+          { id: 12, name: "James Madison", category: "Sun Belt", description: "", color: "#450084", prestige: TEAM_PRESTIGE["James Madison"] },
+          { id: 13, name: "Coastal Carolina", category: "Sun Belt", description: "", color: "#006A65", prestige: TEAM_PRESTIGE["Coastal Carolina"] },
         ],
       },
     ],

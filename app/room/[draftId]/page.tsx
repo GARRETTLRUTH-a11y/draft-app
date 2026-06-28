@@ -7,6 +7,7 @@ import { supabase } from "@/lib/supabaseClient";
 import { CFB_ITEMS, CONFERENCE_ORDER, CONFERENCE_TIERS, TIER_ORDER } from "@/lib/cfbTeams";
 import { buildTiers, groupItemsByConference } from "@/lib/draftBoard";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
+import { PrestigeStars } from "@/components/PrestigeStars";
 
 type Drafter = {
   id: number;
@@ -20,6 +21,7 @@ type DraftItem = {
   category: string;
   description: string;
   color?: string;
+  prestige?: number | null;
 };
 
 type Pick = {
@@ -732,8 +734,16 @@ export default function RoomPage() {
                       <div className="truncate text-sm text-slate-400">
                         {drafter.name}
                       </div>
-                      <div className="truncate text-lg font-black">
-                        {pick?.item.name ?? "—"}
+                      <div className="flex items-center gap-2">
+                        <div className="truncate text-lg font-black">
+                          {pick?.item.name ?? "—"}
+                        </div>
+                        {pick && (
+                          <PrestigeStars
+                            value={pick.item.prestige}
+                            className="flex-shrink-0"
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -803,6 +813,10 @@ export default function RoomPage() {
                         />
                       )}
                       <span className="truncate">{pick.item.name}</span>
+                      <PrestigeStars
+                        value={pick.item.prestige}
+                        className="flex-shrink-0"
+                      />
                     </span>
                   ) : (
                     <span

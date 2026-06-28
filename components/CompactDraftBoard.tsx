@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { DraftItemLike, ItemTier } from "@/lib/draftBoard";
+import { PrestigeStars } from "@/components/PrestigeStars";
 
 export type ItemStatus = {
   variant: "available" | "taken" | "disabled";
@@ -156,6 +157,14 @@ export function CompactDraftBoard<T extends DraftItemLike>({
                           >
                             {item.name}
                           </span>
+
+                          {typeof item.prestige !== "undefined" &&
+                            status.variant === "available" && (
+                              <PrestigeStars
+                                value={item.prestige}
+                                className="flex-shrink-0"
+                              />
+                            )}
 
                           {status.badge && status.variant !== "available" && (
                             <span

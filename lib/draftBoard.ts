@@ -4,6 +4,7 @@ export type DraftItemLike = {
   category: string;
   description: string;
   color?: string;
+  prestige?: number | null;
 };
 
 export type ItemGroup<T extends DraftItemLike> = {

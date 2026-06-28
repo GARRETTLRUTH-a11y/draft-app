@@ -24,6 +24,7 @@ export type DraftItem = {
   category: string;
   description: string;
   color?: string;
+  prestige?: number | null;
 };
 
 export type Pick = {

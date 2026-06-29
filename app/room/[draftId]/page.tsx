@@ -43,6 +43,7 @@ type SavedDraftState = {
   isPaused?: boolean;
   overnightPauseStart?: string | null;
   overnightPauseEnd?: string | null;
+  hasStarted?: boolean;
 };
 
 function isWithinOvernightWindow(
@@ -276,6 +277,10 @@ export default function RoomPage() {
     drafters.length > 0 &&
     (picks.length >= drafters.length || availableItems.length === 0);
 
+  // Drafts created before this flag existed already have picks, so treat
+  // any draft with a pick on the board as started regardless of the flag.
+  const hasStarted = Boolean(draftData?.hasStarted) || picks.length > 0;
+
   const pickTimeLimitSeconds = draftData?.pickTimeLimitSeconds ?? null;
   const pickDeadlineMs = draftData?.pickDeadline
     ? new Date(draftData.pickDeadline).getTime()
@@ -293,10 +298,10 @@ export default function RoomPage() {
   const isPausedNow = isManuallyPaused || isOvernightPausedNow;
 
   const draftStatus = useMemo(() => {
-    if (picks.length === 0) return "Draft Not Started";
+    if (!hasStarted) return "Draft Not Started";
     if (isDraftComplete) return "Draft Complete";
     return "Draft In Progress";
-  }, [picks.length, isDraftComplete]);
+  }, [hasStarted, isDraftComplete]);
 
   const participantByName = useMemo(() => {
     const map = new Map<string, Participant>();
@@ -331,6 +336,7 @@ export default function RoomPage() {
   useEffect(() => {
     if (viewAsPlayer) return;
     if (!draftData || !currentDrafter || isDraftComplete) return;
+    if (!hasStarted) return;
     if (isPausedNow) return;
     if (!isTimeExpired) return;
     if (skipInFlightRef.current) return;
@@ -504,6 +510,19 @@ export default function RoomPage() {
     }
   }
 
+  async function startDraft() {
+    if (!draftData || hasStarted) return;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      hasStarted: true,
+      pickDeadline: deadlineForIndex(draftData.pickTimeLimitSeconds, picks.length),
+    };
+
+    await saveRoomDraft(nextDraftData);
+    setMessage("Draft started! Picking is now open.");
+  }
+
   async function togglePause() {
     if (!draftData) return;
 
@@ -537,6 +556,11 @@ export default function RoomPage() {
 
   async function makePick(item: DraftItem) {
     if (!draftData || !currentDrafter) return;
+
+    if (!hasStarted) {
+      setMessage("The host hasn't started the draft yet.");
+      return;
+    }
 
     if (viewAsPlayer && !canPick) {
       setMessage("It is not your turn yet.");
@@ -977,26 +1001,46 @@ export default function RoomPage() {
             </div>
 
             <div className="mt-6 border-t border-white/10 pt-6">
-              <h3 className="text-lg font-black">Pause Draft</h3>
+              <h3 className="text-lg font-black">Start &amp; Pause</h3>
               <p className="mt-2 text-sm text-slate-400">
-                Pausing stops players from picking and stops the pick timer
-                from expiring anyone. As host, you can still make picks while
-                paused if you need to.
+                The draft won&apos;t let anyone pick until you start it.
+                Pausing afterward stops players from picking and stops the
+                pick timer from expiring anyone — you can still make picks
+                yourself while paused if you need to.
               </p>
 
-              <button
-                onClick={togglePause}
-                disabled={isSaving}
-                className={`mt-4 rounded-2xl px-5 py-3 font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                  isManuallyPaused
-                    ? "bg-green-400 text-slate-950 hover:bg-green-300"
-                    : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
-                }`}
-              >
-                {isManuallyPaused ? "Resume Draft" : "Pause Draft"}
-              </button>
+              <div className="mt-4 flex flex-wrap gap-3">
+                {!hasStarted ? (
+                  <button
+                    onClick={startDraft}
+                    disabled={isSaving}
+                    className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Start Draft
+                  </button>
+                ) : (
+                  <button
+                    onClick={togglePause}
+                    disabled={isSaving}
+                    className={`rounded-2xl px-5 py-3 font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                      isManuallyPaused
+                        ? "bg-green-400 text-slate-950 hover:bg-green-300"
+                        : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
+                    }`}
+                  >
+                    {isManuallyPaused ? "Resume Draft" : "Pause Draft"}
+                  </button>
+                )}
+              </div>
 
-              {isOvernightPausedNow && !isManuallyPaused && (
+              {!hasStarted && (
+                <p className="mt-3 text-sm font-semibold text-cyan-200">
+                  Draft not started yet. Players can claim slots, but no one
+                  can pick until you click Start Draft.
+                </p>
+              )}
+
+              {hasStarted && isOvernightPausedNow && !isManuallyPaused && (
                 <p className="mt-3 text-sm font-semibold text-yellow-200">
                   Currently paused by the overnight schedule below. Adjust or
                   remove it if you want to resume right now.
@@ -1309,13 +1353,20 @@ export default function RoomPage() {
                   Pick {currentPickNumber} of {drafters.length}
                 </p>
 
-                {currentDrafter && !isDraftComplete && isPausedNow && (
+                {!hasStarted && (
+                  <p className="mt-2 text-2xl font-black text-cyan-300">
+                    Waiting for host to start
+                  </p>
+                )}
+
+                {hasStarted && currentDrafter && !isDraftComplete && isPausedNow && (
                   <p className="mt-2 text-2xl font-black text-yellow-300">
                     ⏸ Paused
                   </p>
                 )}
 
-                {remainingSeconds != null &&
+                {hasStarted &&
+                  remainingSeconds != null &&
                   currentDrafter &&
                   !isDraftComplete &&
                   !isPausedNow && (
@@ -1348,6 +1399,7 @@ export default function RoomPage() {
                 }}
                 onSelect={makePick}
                 isClickable={(item) =>
+                  hasStarted &&
                   (!viewAsPlayer
                     ? Boolean(currentDrafter)
                     : canPick && !isPausedNow) &&

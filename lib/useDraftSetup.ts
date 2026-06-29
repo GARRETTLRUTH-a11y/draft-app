@@ -47,6 +47,7 @@ export type SavedDraftState = {
   isPaused?: boolean;
   overnightPauseStart?: string | null;
   overnightPauseEnd?: string | null;
+  hasStarted?: boolean;
 };
 
 export type CloudDraftRow = {

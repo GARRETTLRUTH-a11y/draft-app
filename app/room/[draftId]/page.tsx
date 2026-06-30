@@ -1238,7 +1238,7 @@ export default function RoomPage() {
                 drafter.name.toLowerCase()
               );
               const pick = picks.find((p) => p.drafter === drafter.name);
-              const isOnClock = drafter.id === currentDrafter?.id;
+              const isOnClock = hasStarted && drafter.id === currentDrafter?.id;
               const isMe =
                 viewAsPlayer && myParticipant?.drafter_name === drafter.name;
 

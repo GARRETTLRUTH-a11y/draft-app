@@ -13,6 +13,14 @@ export default function LoginPage() {
   );
 }
 
+function describeAuthError(message: string) {
+  if (message.toLowerCase().includes("anonymous sign-ins")) {
+    return "Enter an email and password.";
+  }
+
+  return message;
+}
+
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -45,11 +53,16 @@ function LoginPageContent() {
   }, []);
 
   async function signUp() {
+    if (!email.trim() || !password) {
+      setMessage("Enter an email and password.");
+      return;
+    }
+
     setIsLoading(true);
     setMessage("");
 
     const { data, error } = await supabase.auth.signUp({
-      email,
+      email: email.trim(),
       password,
       options: {
         emailRedirectTo:
@@ -60,7 +73,7 @@ function LoginPageContent() {
     });
 
     if (error) {
-      setMessage(error.message);
+      setMessage(describeAuthError(error.message));
     } else if (data.session) {
       router.push(redirectTarget);
       return;
@@ -74,11 +87,16 @@ function LoginPageContent() {
   }
 
   async function signIn() {
+    if (!email.trim() || !password) {
+      setMessage("Enter an email and password.");
+      return;
+    }
+
     setIsLoading(true);
     setMessage("");
 
     const { error } = await supabase.auth.signInWithPassword({
-      email,
+      email: email.trim(),
       password,
     });
 
@@ -87,7 +105,7 @@ function LoginPageContent() {
       return;
     }
 
-    setMessage(error.message);
+    setMessage(describeAuthError(error.message));
     setIsLoading(false);
   }
 

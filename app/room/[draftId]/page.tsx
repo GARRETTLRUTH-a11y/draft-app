@@ -725,6 +725,35 @@ export default function RoomPage() {
     setIsSaving(false);
   }
 
+  async function removeClaim(participant: Participant) {
+    if (!draft) return;
+
+    const confirmed = window.confirm(
+      `Remove the claim on ${participant.drafter_name}? They will need to claim a slot again.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("draft_participants")
+      .delete()
+      .eq("id", participant.id);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage(`Removed ${participant.drafter_name}'s claim.`);
+      await loadParticipants(draft.id);
+    }
+
+    setIsSaving(false);
+  }
+
   if (isLoading) {
     return (
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -1272,6 +1301,17 @@ export default function RoomPage() {
                           ? "Claimed"
                           : "Open"}
                     </span>
+                  )}
+
+                  {!viewAsPlayer && participant && (
+                    <button
+                      onClick={() => removeClaim(participant)}
+                      disabled={isSaving}
+                      title={`Remove ${participant.drafter_name}'s claim`}
+                      className="flex-shrink-0 rounded-full border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      ✕
+                    </button>
                   )}
                 </div>
               );

@@ -754,6 +754,57 @@ export default function RoomPage() {
     setIsSaving(false);
   }
 
+  async function removeDrafterSlot(drafter: Drafter) {
+    if (!draft || !draftData) return;
+
+    const alreadyPicked = picks.some((pick) => pick.drafter === drafter.name);
+    if (alreadyPicked) return;
+
+    const participant = participantByName.get(drafter.name.toLowerCase());
+
+    const confirmed = window.confirm(
+      participant
+        ? `Remove ${drafter.name} from the draft entirely? Their claimed slot will also be released.`
+        : `Remove ${drafter.name} from the draft entirely?`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    if (participant) {
+      const { error: participantError } = await supabase
+        .from("draft_participants")
+        .delete()
+        .eq("id", participant.id);
+
+      if (participantError) {
+        setMessage(participantError.message);
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    const nextDrafters = drafters.filter((d) => d.id !== drafter.id);
+    const wasOnClock = currentDrafter?.id === drafter.id;
+
+    const nextDraftData: SavedDraftState = {
+      ...draftData,
+      drafters: nextDrafters,
+      pickDeadline:
+        wasOnClock && hasStarted
+          ? deadlineForIndex(draftData.pickTimeLimitSeconds, picks.length)
+          : draftData.pickDeadline,
+    };
+
+    await saveRoomDraft(nextDraftData);
+    await loadParticipants(draft.id);
+    setMessage(`Removed ${drafter.name} from the draft.`);
+  }
+
   if (isLoading) {
     return (
       <main className="min-h-screen bg-slate-950 px-6 py-8 text-white">
@@ -1311,6 +1362,17 @@ export default function RoomPage() {
                       className="flex-shrink-0 rounded-full border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
                     >
                       ✕
+                    </button>
+                  )}
+
+                  {!viewAsPlayer && !pick && (
+                    <button
+                      onClick={() => removeDrafterSlot(drafter)}
+                      disabled={isSaving}
+                      title={`Remove ${drafter.name} from the draft entirely`}
+                      className="flex-shrink-0 rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      🗑
                     </button>
                   )}
                 </div>

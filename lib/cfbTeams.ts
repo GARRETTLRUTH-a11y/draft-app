@@ -56,7 +56,7 @@ export const TEAM_PRESTIGE: Record<string, number | null> = {
   "Iowa State": 2.5,
   Kansas: 2.5,
   "Kansas State": 2.5,
-  "Oklahoma State": 3.5,
+  "Oklahoma State": 3,
   TCU: 3.5,
   "Texas Tech": 4.5,
   UCF: 2.5,

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { teamColor } from "@/lib/cfbTeams";
 import {
   advanceWindowStart,
   buildWeekSummary,
@@ -329,9 +330,7 @@ export default function SeasonRoomPage() {
     const participant = participantByName.get(player.name.toLowerCase());
 
     const confirmed = window.confirm(
-      participant
-        ? `Remove ${player.name} entirely? Their claimed slot will also be released.`
-        : `Remove ${player.name} entirely?`
+      `Remove ${player.name} from the season? This releases their claimed slot (if any) and clears their ready/extension history. This can't be undone.`
     );
     if (!confirmed) return;
 
@@ -352,8 +351,67 @@ export default function SeasonRoomPage() {
     }
 
     const nextPlayers = players.filter((p) => p.id !== player.id);
+
+    const nextReadyPlayerIdsByWeek = Object.fromEntries(
+      Object.entries(seasonData.readyPlayerIdsByWeek).map(([week, ids]) => [
+        week,
+        ids.filter((id) => id !== player.id),
+      ])
+    );
+
+    const nextExtensionRequests = seasonData.extensionRequests.filter(
+      (request) => request.playerId !== player.id
+    );
+
+    await saveRoomSeason({
+      ...seasonData,
+      players: nextPlayers,
+      readyPlayerIdsByWeek: nextReadyPlayerIdsByWeek,
+      extensionRequests: nextExtensionRequests,
+    });
+    await loadParticipants(season.id);
+    setMessage(`Removed ${player.name} from the season.`);
+    setIsSaving(false);
+  }
+
+  async function renamePlayer(player: SeasonPlayer, rawNewName: string) {
+    if (!seasonData || !season) return;
+
+    const newName = rawNewName.trim();
+    if (!newName || newName === player.name) return;
+
+    const nameCollision = players.some(
+      (p) => p.id !== player.id && p.name.toLowerCase() === newName.toLowerCase()
+    );
+    if (nameCollision) {
+      setMessage(`Another player is already named "${newName}".`);
+      return;
+    }
+
+    setIsSaving(true);
+    setMessage("");
+
+    const participant = participantByName.get(player.name.toLowerCase());
+    if (participant) {
+      const { error } = await supabase
+        .from("season_participants")
+        .update({ player_name: newName })
+        .eq("id", participant.id);
+
+      if (error) {
+        setMessage(error.message);
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    const nextPlayers = players.map((p) =>
+      p.id === player.id ? { ...p, name: newName } : p
+    );
+
     await saveRoomSeason({ ...seasonData, players: nextPlayers });
     await loadParticipants(season.id);
+    setMessage(`Renamed to ${newName}.`);
     setIsSaving(false);
   }
 
@@ -1292,6 +1350,76 @@ export default function SeasonRoomPage() {
                 </button>
               </div>
             </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6">
+              <h3 className="text-lg font-black">Manage Players</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Rename a player (their claimed slot moves with them), or
+                remove someone who&apos;s dropped out mid-season.
+              </p>
+
+              <div className="mt-4 flex flex-col gap-2">
+                {players.map((player) => {
+                  const participant = participantByName.get(player.name.toLowerCase());
+                  const color = teamColor(player.team);
+
+                  return (
+                    <div
+                      key={player.id}
+                      className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-slate-900 p-3"
+                    >
+                      <span
+                        className="h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
+                        style={{ backgroundColor: color || "#64748b" }}
+                      />
+
+                      <span className="w-32 flex-shrink-0 truncate text-sm text-slate-400">
+                        {player.team || "—"}
+                      </span>
+
+                      <input
+                        key={`${player.id}-${player.name}`}
+                        defaultValue={player.name}
+                        onBlur={(event) => renamePlayer(player, event.target.value)}
+                        disabled={isSaving}
+                        className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
+                      />
+
+                      <span
+                        className={`flex-shrink-0 text-xs font-bold ${
+                          participant ? "text-cyan-300" : "text-slate-500"
+                        }`}
+                      >
+                        {participant ? "Claimed" : "Unclaimed"}
+                      </span>
+
+                      {participant && (
+                        <button
+                          onClick={() => removeClaim(participant)}
+                          disabled={isSaving}
+                          title="Release this claim so someone can select this team again, without removing the player"
+                          className="flex-shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          Release Claim
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => removePlayer(player)}
+                        disabled={isSaving}
+                        className="flex-shrink-0 rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  );
+                })}
+
+                {players.length === 0 && (
+                  <p className="text-sm text-slate-500">No players in this season yet.</p>
+                )}
+              </div>
+            </div>
           </section>
         )}
 
@@ -1454,7 +1582,7 @@ export default function SeasonRoomPage() {
               <h2 className="text-2xl font-black">Teams — {formatWeekLabel(currentWeek)}</h2>
               <p className="mt-2 text-sm text-slate-400">
                 {!myParticipant
-                  ? "Check the box next to the team you drafted to select it."
+                  ? "Click the team you drafted to select it."
                   : "Every team, publicly visible, with ready and extension status."}
               </p>
             </div>
@@ -1502,12 +1630,32 @@ export default function SeasonRoomPage() {
                 unclaimed: "border-white/10 bg-slate-900/60",
               };
 
+              const color = teamColor(player.team);
+
               return (
                 <div
                   key={player.id}
-                  className={`relative flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm ${
+                  role={canClaim ? "button" : undefined}
+                  tabIndex={canClaim ? 0 : undefined}
+                  onClick={() => canClaim && claimPlayer(player)}
+                  onKeyDown={(event) => {
+                    if (canClaim && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      claimPlayer(player);
+                    }
+                  }}
+                  title={
+                    canClaim
+                      ? `Click to select ${player.team || player.name}`
+                      : isClaimed
+                        ? "Already selected"
+                        : undefined
+                  }
+                  className={`relative flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
                     cardClasses[cardState]
-                  } ${isMe ? "ring-2 ring-cyan-300/60" : ""}`}
+                  } ${isMe ? "ring-2 ring-cyan-300/60" : ""} ${
+                    canClaim ? "cursor-pointer hover:brightness-125" : ""
+                  }`}
                 >
                   {cardState === "denied" && (
                     <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden rounded-xl">
@@ -1515,19 +1663,9 @@ export default function SeasonRoomPage() {
                     </div>
                   )}
 
-                  <input
-                    type="checkbox"
-                    checked={isClaimed}
-                    disabled={!canClaim}
-                    onChange={() => canClaim && claimPlayer(player)}
-                    title={
-                      canClaim
-                        ? `Select ${player.team || player.name}`
-                        : isClaimed
-                          ? "Already selected"
-                          : "Not selectable"
-                    }
-                    className="relative mt-1 h-4 w-4 flex-shrink-0 accent-cyan-400 disabled:cursor-not-allowed"
+                  <span
+                    className="relative mt-1.5 h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
+                    style={{ backgroundColor: color || "#64748b" }}
                   />
 
                   <div className="relative min-w-0 flex-1">
@@ -1545,28 +1683,6 @@ export default function SeasonRoomPage() {
                           {player.name}
                         </span>
                       </span>
-
-                      {showCommissionerControls && participant && (
-                        <button
-                          onClick={() => removeClaim(participant)}
-                          disabled={isSaving}
-                          title={`Remove ${participant.player_name}'s claim`}
-                          className="flex-shrink-0 rounded-full border border-red-400/30 bg-red-400/10 px-1.5 py-0.5 text-[9px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          ✕
-                        </button>
-                      )}
-
-                      {showCommissionerControls && (
-                        <button
-                          onClick={() => removePlayer(player)}
-                          disabled={isSaving}
-                          title={`Remove ${player.name} entirely`}
-                          className="flex-shrink-0 rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[9px] font-bold text-slate-400 transition hover:bg-white/15 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          🗑
-                        </button>
-                      )}
                     </div>
 
                     <span

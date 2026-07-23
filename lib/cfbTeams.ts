@@ -373,3 +373,14 @@ export const CFB_ITEMS: CfbDraftItem[] = CFB_TEAMS.map((team, index) => ({
   color: team.color,
   prestige: TEAM_PRESTIGE[team.name] ?? null,
 }));
+
+const TEAM_COLOR_BY_NAME: Record<string, string> = Object.fromEntries(
+  CFB_TEAMS.map((team) => [team.name.toLowerCase(), team.color])
+);
+
+// Looks up a team's school color by name (case-insensitive), for anywhere
+// outside the draft flow itself that wants the same team-color styling.
+export function teamColor(name: string | undefined | null): string | undefined {
+  if (!name) return undefined;
+  return TEAM_COLOR_BY_NAME[name.toLowerCase()];
+}

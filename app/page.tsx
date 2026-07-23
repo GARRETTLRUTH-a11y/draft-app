@@ -90,12 +90,21 @@ export default function Home() {
             </div>
           </div>
 
-          <Link
-            href="/create"
-            className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
-          >
-            Create Draft
-          </Link>
+          <div className="flex gap-3">
+            <Link
+              href="/create"
+              className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300"
+            >
+              Create Draft
+            </Link>
+
+            <Link
+              href="/season"
+              className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
+            >
+              Season Check-In
+            </Link>
+          </div>
         </header>
 
         <div className="grid flex-1 items-center gap-10 py-16 lg:grid-cols-[1.1fr_0.9fr]">
@@ -122,7 +131,19 @@ export default function Home() {
               >
                 Start a Draft
               </Link>
+
+              <Link
+                href="/season"
+                className="rounded-2xl border border-white/15 bg-white/5 px-6 py-4 text-center font-black text-white transition hover:bg-white/10"
+              >
+                Start a Season Check-In
+              </Link>
             </div>
+
+            <p className="mt-4 max-w-2xl text-sm text-slate-500">
+              Already drafted your teams? Use Season Check-In to track who&apos;s
+              ready to advance each week and manage extension requests.
+            </p>
           </section>
 
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6 shadow-2xl">

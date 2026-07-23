@@ -1,0 +1,17 @@
+name: Season Reminders
+
+on:
+  schedule:
+    # Every 10 minutes. The cron route treats a reminder as "due" for 15
+    # minutes after its target time, so this interval can't fall behind it.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for due season reminders
+        run: |
+          curl -sf -X GET "https://cfb-draft.vercel.app/api/cron/season-reminders" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}"

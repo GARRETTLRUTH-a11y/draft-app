@@ -267,6 +267,41 @@ export default function SeasonRoomPage() {
     setIsSaving(false);
   }
 
+  // This page deliberately has no realtime subscription (load-on-mount +
+  // manual Refresh only), so a tab can sit open for a long time while other
+  // people change the season. Reading season_data straight from the DB
+  // right before a write — instead of trusting whatever this tab loaded at
+  // mount — keeps a stale tab from silently clobbering someone else's more
+  // recent change (e.g. a player's "ready" getting wiped out by another
+  // save that was based on an older snapshot).
+  async function fetchFreshSeasonData(): Promise<SeasonData | null> {
+    if (!season) return null;
+
+    const { data, error } = await supabase
+      .from("seasons")
+      .select("season_data")
+      .eq("id", season.id)
+      .maybeSingle();
+
+    if (error || !data) return null;
+    return data.season_data as SeasonData;
+  }
+
+  // Safe read-modify-write: fetches the freshest season_data, applies
+  // `mutate` to it, and saves the result. Returns the saved data (or null
+  // if nothing was saved) so callers can use it for things like Discord
+  // notifications instead of a possibly-stale local value.
+  async function updateSeasonData(
+    mutate: (fresh: SeasonData) => SeasonData
+  ): Promise<SeasonData | null> {
+    if (!seasonData) return null;
+
+    const fresh = (await fetchFreshSeasonData()) ?? seasonData;
+    const nextSeasonData = mutate(fresh);
+    await saveRoomSeason(nextSeasonData);
+    return nextSeasonData;
+  }
+
   async function notifyDiscord(payload: DiscordNotifyPayload): Promise<boolean> {
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -293,12 +328,20 @@ export default function SeasonRoomPage() {
 
     setIsPostingToDiscord(true);
 
+    // Always post from the DB's current state, not whatever this tab
+    // happened to load at mount — otherwise a stale tab posts last week's
+    // status even though the season has already moved on.
+    const fresh = (await fetchFreshSeasonData()) ?? seasonData;
+    const freshWeek = fresh.currentWeek;
+
     const ok = await notifyDiscord({
       type: "summary",
-      periodHeading: periodHeading(seasonData.periodLabel, currentWeek, seasonData.seasonYear),
-      summary: buildWeekSummary(seasonData, currentWeek),
-      plannedAdvanceTime: formatAdvanceWindow(seasonData.advanceWindow),
+      periodHeading: periodHeading(fresh.periodLabel, freshWeek, fresh.seasonYear),
+      summary: buildWeekSummary(fresh, freshWeek),
+      plannedAdvanceTime: formatAdvanceWindow(fresh.advanceWindow),
     });
+
+    setSeason((current) => (current ? { ...current, season_data: fresh } : current));
 
     setMessage(
       ok
@@ -311,17 +354,17 @@ export default function SeasonRoomPage() {
   async function saveTitle(value: string) {
     if (!seasonData) return;
     const cleanTitle = value.trim() || "Untitled Season";
-    await saveRoomSeason({ ...seasonData, seasonTitle: cleanTitle });
+    await updateSeasonData((fresh) => ({ ...fresh, seasonTitle: cleanTitle }));
   }
 
   async function savePeriodLabel(value: string) {
     if (!seasonData) return;
-    await saveRoomSeason({ ...seasonData, periodLabel: value.trim() || null });
+    await updateSeasonData((fresh) => ({ ...fresh, periodLabel: value.trim() || null }));
   }
 
   async function saveSeasonYear(value: number) {
     if (!seasonData || !Number.isFinite(value)) return;
-    await saveRoomSeason({ ...seasonData, seasonYear: value });
+    await updateSeasonData((fresh) => ({ ...fresh, seasonYear: value }));
   }
 
   async function removePlayer(player: SeasonPlayer) {
@@ -350,25 +393,19 @@ export default function SeasonRoomPage() {
       }
     }
 
-    const nextPlayers = players.filter((p) => p.id !== player.id);
-
-    const nextReadyPlayerIdsByWeek = Object.fromEntries(
-      Object.entries(seasonData.readyPlayerIdsByWeek).map(([week, ids]) => [
-        week,
-        ids.filter((id) => id !== player.id),
-      ])
-    );
-
-    const nextExtensionRequests = seasonData.extensionRequests.filter(
-      (request) => request.playerId !== player.id
-    );
-
-    await saveRoomSeason({
-      ...seasonData,
-      players: nextPlayers,
-      readyPlayerIdsByWeek: nextReadyPlayerIdsByWeek,
-      extensionRequests: nextExtensionRequests,
-    });
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      players: fresh.players.filter((p) => p.id !== player.id),
+      readyPlayerIdsByWeek: Object.fromEntries(
+        Object.entries(fresh.readyPlayerIdsByWeek).map(([week, ids]) => [
+          week,
+          ids.filter((id) => id !== player.id),
+        ])
+      ),
+      extensionRequests: fresh.extensionRequests.filter(
+        (request) => request.playerId !== player.id
+      ),
+    }));
     await loadParticipants(season.id);
     setMessage(`Removed ${player.name} from the season.`);
     setIsSaving(false);
@@ -405,11 +442,10 @@ export default function SeasonRoomPage() {
       }
     }
 
-    const nextPlayers = players.map((p) =>
-      p.id === player.id ? { ...p, name: newName } : p
-    );
-
-    await saveRoomSeason({ ...seasonData, players: nextPlayers });
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      players: fresh.players.map((p) => (p.id === player.id ? { ...p, name: newName } : p)),
+    }));
     await loadParticipants(season.id);
     setMessage(`Renamed to ${newName}.`);
     setIsSaving(false);
@@ -417,28 +453,40 @@ export default function SeasonRoomPage() {
 
   async function markReady() {
     if (!seasonData || !myPlayer) return;
-    if (readyPlayerIds.has(myPlayer.id)) return;
+
+    // Fetch fresh before deciding anything — if this tab has been open a
+    // while, the season may have already advanced, or another tab may have
+    // already marked this player ready, since there's no realtime sync.
+    const fresh = (await fetchFreshSeasonData()) ?? seasonData;
+    const week = fresh.currentWeek;
+
+    if (readyPlayerIdsForWeek(fresh, week).includes(myPlayer.id)) {
+      setSeason((current) => (current ? { ...current, season_data: fresh } : current));
+      return;
+    }
 
     const confirmed = window.confirm(
-      `Mark yourself ready to advance for ${formatWeekLabel(currentWeek)}? This locks in your status and can't be undone.`
+      `Mark yourself ready to advance for ${formatWeekLabel(week)}? This locks in your status and can't be undone.`
     );
     if (!confirmed) return;
 
-    const current = new Set(readyPlayerIdsForWeek(seasonData, currentWeek));
-    current.add(myPlayer.id);
+    const readyIdsForWeek = new Set(readyPlayerIdsForWeek(fresh, week));
+    readyIdsForWeek.add(myPlayer.id);
 
-    await saveRoomSeason({
-      ...seasonData,
+    const nextSeasonData: SeasonData = {
+      ...fresh,
       readyPlayerIdsByWeek: {
-        ...seasonData.readyPlayerIdsByWeek,
-        [currentWeek]: Array.from(current),
+        ...fresh.readyPlayerIdsByWeek,
+        [week]: Array.from(readyIdsForWeek),
       },
-    });
+    };
+
+    await saveRoomSeason(nextSeasonData);
 
     notifyDiscord({
       type: "ready",
-      seasonTitle: seasonData.seasonTitle,
-      week: currentWeek,
+      seasonTitle: nextSeasonData.seasonTitle,
+      week,
       playerName: myPlayer.name,
       team: myPlayer.team,
     });
@@ -448,35 +496,41 @@ export default function SeasonRoomPage() {
     if (!seasonData || !myPlayer) return;
     if (!extensionDate) return;
 
-    const request: ExtensionRequest = {
-      id:
-        typeof crypto !== "undefined" && crypto.randomUUID
-          ? crypto.randomUUID()
-          : `${Date.now()}`,
-      playerId: myPlayer.id,
-      week: currentWeek,
-      requestedUntilDate: extensionDate,
-      reason: extensionReason.trim() || undefined,
-      status: "pending",
-      requestedAt: new Date().toISOString(),
-    };
+    const requestedUntilDate = extensionDate;
+    const reason = extensionReason.trim() || undefined;
 
     setExtensionDate("");
     setExtensionReason("");
-    await saveRoomSeason({
-      ...seasonData,
-      extensionRequests: [...seasonData.extensionRequests, request],
+
+    let postedWeek = currentWeek;
+
+    const updated = await updateSeasonData((fresh) => {
+      postedWeek = fresh.currentWeek;
+      const request: ExtensionRequest = {
+        id:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}`,
+        playerId: myPlayer.id,
+        week: fresh.currentWeek,
+        requestedUntilDate,
+        reason,
+        status: "pending",
+        requestedAt: new Date().toISOString(),
+      };
+      return { ...fresh, extensionRequests: [...fresh.extensionRequests, request] };
     });
+
     setMessage("Extension request sent to the commissioner.");
 
     notifyDiscord({
       type: "extension_requested",
-      seasonTitle: seasonData.seasonTitle,
-      week: currentWeek,
+      seasonTitle: updated?.seasonTitle ?? seasonData.seasonTitle,
+      week: postedWeek,
       playerName: myPlayer.name,
       team: myPlayer.team,
-      requestedUntilDate: request.requestedUntilDate,
-      reason: request.reason,
+      requestedUntilDate,
+      reason,
     });
   }
 
@@ -490,38 +544,39 @@ export default function SeasonRoomPage() {
   ) {
     if (!seasonData) return;
 
-    const nextRequests = seasonData.extensionRequests.map((request) => {
-      if (request.id !== requestId) return request;
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      extensionRequests: fresh.extensionRequests.map((request) => {
+        if (request.id !== requestId) return request;
 
-      let grantedUntil: string | undefined;
-      if (approve && grantedUntilDate) {
-        const [year, month, day] = grantedUntilDate.split("-").map(Number);
-        grantedUntil = new Date(
-          year,
-          month - 1,
-          day,
-          grantedUntilHour ?? 20,
-          0,
-          0,
-          0
-        ).toISOString();
-      }
+        let grantedUntil: string | undefined;
+        if (approve && grantedUntilDate) {
+          const [year, month, day] = grantedUntilDate.split("-").map(Number);
+          grantedUntil = new Date(
+            year,
+            month - 1,
+            day,
+            grantedUntilHour ?? 20,
+            0,
+            0,
+            0
+          ).toISOString();
+        }
 
-      return {
-        ...request,
-        status: approve ? ("granted" as const) : ("denied" as const),
-        resolvedAt: new Date().toISOString(),
-        grantedUntil,
-      };
-    });
-
-    await saveRoomSeason({ ...seasonData, extensionRequests: nextRequests });
+        return {
+          ...request,
+          status: approve ? ("granted" as const) : ("denied" as const),
+          resolvedAt: new Date().toISOString(),
+          grantedUntil,
+        };
+      }),
+    }));
     setMessage(approve ? "Extension granted." : "Extension denied.");
   }
 
   async function setAdvanceWindow(nextWindow: AdvanceWindow | null) {
     if (!seasonData) return;
-    await saveRoomSeason({ ...seasonData, advanceWindow: nextWindow });
+    await updateSeasonData((fresh) => ({ ...fresh, advanceWindow: nextWindow }));
     setMessage(
       nextWindow ? "Anticipated advance time set." : "Anticipated advance time removed."
     );
@@ -554,10 +609,10 @@ export default function SeasonRoomPage() {
       lastSentDate: null,
     };
 
-    await saveRoomSeason({
-      ...seasonData,
-      reminders: [...(seasonData.reminders || []), reminder],
-    });
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      reminders: [...(fresh.reminders || []), reminder],
+    }));
 
     setNewReminderDays(new Set());
     setNewReminderPingEveryone(false);
@@ -566,20 +621,20 @@ export default function SeasonRoomPage() {
 
   async function toggleReminderEnabled(reminderId: string) {
     if (!seasonData) return;
-    await saveRoomSeason({
-      ...seasonData,
-      reminders: (seasonData.reminders || []).map((reminder) =>
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      reminders: (fresh.reminders || []).map((reminder) =>
         reminder.id === reminderId ? { ...reminder, enabled: !reminder.enabled } : reminder
       ),
-    });
+    }));
   }
 
   async function removeReminder(reminderId: string) {
     if (!seasonData) return;
-    await saveRoomSeason({
-      ...seasonData,
-      reminders: (seasonData.reminders || []).filter((reminder) => reminder.id !== reminderId),
-    });
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      reminders: (fresh.reminders || []).filter((reminder) => reminder.id !== reminderId),
+    }));
     setMessage("Reminder removed.");
   }
 
@@ -596,19 +651,20 @@ export default function SeasonRoomPage() {
       if (!confirmed) return;
     }
 
-    const nextWeek = currentWeek + 1;
-
-    await saveRoomSeason({
-      ...seasonData,
-      currentWeek: nextWeek,
-      readyPlayerIdsByWeek: {
-        ...seasonData.readyPlayerIdsByWeek,
-        [nextWeek]: seasonData.readyPlayerIdsByWeek[nextWeek] ?? [],
-      },
-      periodLabel: null,
-      advanceWindow: null,
+    const updated = await updateSeasonData((fresh) => {
+      const freshNextWeek = fresh.currentWeek + 1;
+      return {
+        ...fresh,
+        currentWeek: freshNextWeek,
+        readyPlayerIdsByWeek: {
+          ...fresh.readyPlayerIdsByWeek,
+          [freshNextWeek]: fresh.readyPlayerIdsByWeek[freshNextWeek] ?? [],
+        },
+        periodLabel: null,
+        advanceWindow: null,
+      };
     });
-    setMessage(`Advanced to ${formatWeekLabel(nextWeek)}.`);
+    setMessage(`Advanced to ${formatWeekLabel(updated?.currentWeek ?? currentWeek + 1)}.`);
   }
 
   // Dev-only helper: seeds a realistic mix of ready/pending/granted/denied

@@ -236,25 +236,39 @@ export default function SeasonRoomPage() {
     }
   }
 
-  async function saveRoomSeason(nextSeasonData: SeasonData) {
-    if (!season) return;
+  async function saveRoomSeason(nextSeasonData: SeasonData): Promise<boolean> {
+    if (!season) return false;
 
     setIsSaving(true);
     setMessage("");
 
-    const { error } = await supabase
+    // .select("id") is deliberate: if RLS silently blocks the write (the
+    // row just doesn't match the policy), Supabase returns no error at
+    // all -- 0 rows updated looks identical to success unless we check
+    // what actually came back. Without this, a blocked write would look
+    // like it saved in this tab while the database never changed.
+    const { data, error } = await supabase
       .from("seasons")
       .update({
         title: nextSeasonData.seasonTitle,
         season_data: nextSeasonData,
         updated_at: new Date().toISOString(),
       })
-      .eq("id", season.id);
+      .eq("id", season.id)
+      .select("id");
 
     if (error) {
       setMessage(error.message);
       setIsSaving(false);
-      return;
+      return false;
+    }
+
+    if (!data || data.length === 0) {
+      setMessage(
+        "Your change didn't save. You may not have permission to edit this season, or your session may have expired -- try refreshing and signing in again."
+      );
+      setIsSaving(false);
+      return false;
     }
 
     setSeason({
@@ -265,6 +279,7 @@ export default function SeasonRoomPage() {
     });
 
     setIsSaving(false);
+    return true;
   }
 
   // This page deliberately has no realtime subscription (load-on-mount +
@@ -298,8 +313,8 @@ export default function SeasonRoomPage() {
 
     const fresh = (await fetchFreshSeasonData()) ?? seasonData;
     const nextSeasonData = mutate(fresh);
-    await saveRoomSeason(nextSeasonData);
-    return nextSeasonData;
+    const saved = await saveRoomSeason(nextSeasonData);
+    return saved ? nextSeasonData : null;
   }
 
   async function notifyDiscord(payload: DiscordNotifyPayload): Promise<boolean> {
@@ -481,7 +496,8 @@ export default function SeasonRoomPage() {
       },
     };
 
-    await saveRoomSeason(nextSeasonData);
+    const saved = await saveRoomSeason(nextSeasonData);
+    if (!saved) return;
 
     notifyDiscord({
       type: "ready",
@@ -521,11 +537,13 @@ export default function SeasonRoomPage() {
       return { ...fresh, extensionRequests: [...fresh.extensionRequests, request] };
     });
 
+    if (!updated) return;
+
     setMessage("Extension request sent to the commissioner.");
 
     notifyDiscord({
       type: "extension_requested",
-      seasonTitle: updated?.seasonTitle ?? seasonData.seasonTitle,
+      seasonTitle: updated.seasonTitle,
       week: postedWeek,
       playerName: myPlayer.name,
       team: myPlayer.team,

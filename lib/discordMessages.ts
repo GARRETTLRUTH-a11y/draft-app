@@ -47,12 +47,19 @@ type DiscordEmbed = {
   timestamp?: string;
 };
 
-type DiscordButtonComponent = {
-  type: 2; // BUTTON
-  style: 1 | 2 | 3 | 4 | 5;
-  label: string;
-  custom_id: string;
-};
+type DiscordButtonComponent =
+  | {
+      type: 2; // BUTTON
+      style: 1 | 2 | 3 | 4;
+      label: string;
+      custom_id: string;
+    }
+  | {
+      type: 2;
+      style: 5; // LINK -- opens a URL directly, no interaction/custom_id
+      label: string;
+      url: string;
+    };
 
 type DiscordActionRow = {
   type: 1; // ACTION_ROW
@@ -97,6 +104,13 @@ function actionButtonsRow(seasonId: string): DiscordActionRow {
         style: 1, // PRIMARY (blurple)
         label: "🔗 Link Discord Account",
         custom_id: "link_account",
+      },
+      {
+        type: 2,
+        style: 5, // LINK -- opens the room page directly, no round trip
+        // through the bot.
+        label: "🌐 Open Season Page",
+        url: `${process.env.NEXT_PUBLIC_SITE_URL || "https://cfb-draft.vercel.app"}/season/room/${seasonId}`,
       },
     ],
   };

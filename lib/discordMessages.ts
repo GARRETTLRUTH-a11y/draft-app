@@ -132,17 +132,24 @@ function statusFields(summary: DiscordWeekSummary) {
         }`
     );
 
-  return [
-    { name: `✅ Ready (${ready.length})`, value: fieldValue(ready.map(personLine)) },
-    SPACER_FIELD,
-    { name: `🕒 Pending Extension (${pending.length})`, value: fieldValue(pendingLines(pending)) },
-    SPACER_FIELD,
-    { name: `🔵 Granted Extension (${granted.length})`, value: fieldValue(grantedLines(granted)) },
-    SPACER_FIELD,
-    { name: `❌ Denied Extension (${denied.length})`, value: fieldValue(denied.map(personLine)) },
-    SPACER_FIELD,
-    { name: `⚪ Not Ready (${notReady.length})`, value: fieldValue(notReady.map(personLine)) },
-  ];
+  // Skip empty categories entirely (e.g. no one's requested an extension
+  // yet) instead of showing a blank "—" field for it, so the message
+  // doesn't get cluttered with sections nobody's in.
+  const sections = [
+    ready.length > 0 && { name: `✅ Ready (${ready.length})`, value: fieldValue(ready.map(personLine)) },
+    pending.length > 0 && {
+      name: `🕒 Pending Extension (${pending.length})`,
+      value: fieldValue(pendingLines(pending)),
+    },
+    granted.length > 0 && {
+      name: `🔵 Granted Extension (${granted.length})`,
+      value: fieldValue(grantedLines(granted)),
+    },
+    denied.length > 0 && { name: `❌ Denied Extension (${denied.length})`, value: fieldValue(denied.map(personLine)) },
+    notReady.length > 0 && { name: `⚪ Not Ready (${notReady.length})`, value: fieldValue(notReady.map(personLine)) },
+  ].filter((section): section is { name: string; value: string } => Boolean(section));
+
+  return sections.flatMap((section, index) => (index === 0 ? [section] : [SPACER_FIELD, section]));
 }
 
 export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessage | null {

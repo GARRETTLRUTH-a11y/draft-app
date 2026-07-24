@@ -1930,7 +1930,7 @@ export default function SeasonRoomPage() {
             </button>
           </div>
 
-          <div className="mt-5 grid gap-2 sm:grid-cols-2 md:grid-cols-3">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-2 md:grid-cols-3">
             {players.map((player) => {
               const participant = participantByName.get(player.name.toLowerCase());
               const isClaimed = Boolean(participant);

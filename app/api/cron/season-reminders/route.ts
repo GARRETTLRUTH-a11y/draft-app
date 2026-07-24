@@ -11,11 +11,16 @@ import {
   type SeasonData,
 } from "@/lib/season";
 
-// How often the external scheduler (GitHub Actions, hitting this route) is
-// expected to run. A reminder fires once its target time has arrived, and
-// stays "due" for this many minutes afterward — must be >= the scheduler's
-// actual interval or a reminder could be skipped entirely.
-const FIRE_WINDOW_MINUTES = 15;
+// How long a reminder stays "due" after its target time before being
+// skipped for the day. GitHub Actions scheduled workflows are NOT
+// reliable timers -- GitHub's own docs warn runs can be arbitrarily
+// delayed under load, and in practice this project's every-10-minutes
+// schedule has actually landed with gaps over 90 minutes. This window is
+// intentionally wide (not just the nominal 10-minute interval) so a
+// reminder still fires even if the scheduler misses several beats in a
+// row; a proper fix is a more reliable external trigger (e.g.
+// cron-job.org) hitting this route instead of/alongside GitHub Actions.
+const FIRE_WINDOW_MINUTES = 90;
 
 function nowInTimeZone(timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {

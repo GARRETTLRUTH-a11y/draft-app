@@ -197,13 +197,15 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
 
     return {
-      // "# " is Discord's native large-header markdown — the only way to
-      // get bigger text, since embeds don't support custom font sizes.
-      content: `# ${payload.periodHeading}`,
+      // "# " and "## " are Discord's native header markdown — the only
+      // way to get bigger text, since embeds don't support custom font
+      // sizes. Planned Advance Time lives here (not as an embed field) so
+      // it's actually readable at a glance instead of small embed text.
+      content: `# ${payload.periodHeading}\n## 🗓️ Planned Advance: ${plannedAdvance}`,
       embeds: [
         {
           color: COLOR_GOLD,
-          fields: [...statusFields(payload.summary), SPACER_FIELD, { name: "🗓️ Planned Advance Time", value: plannedAdvance }],
+          fields: statusFields(payload.summary),
           timestamp: new Date().toISOString(),
         },
       ],
@@ -216,16 +218,15 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
+    const header = `# ⏰ ${payload.periodHeading}\n## 🗓️ Planned Advance: ${plannedAdvance}`;
 
     return {
-      content: payload.pingEveryone
-        ? `@everyone\n# ⏰ ${payload.periodHeading}`
-        : `# ⏰ ${payload.periodHeading}`,
+      content: payload.pingEveryone ? `@everyone\n${header}` : header,
       embeds: [
         {
           title: "Reminder: mark yourself ready to advance",
           color: COLOR_GOLD,
-          fields: [...statusFields(payload.summary), SPACER_FIELD, { name: "🗓️ Planned Advance Time", value: plannedAdvance }],
+          fields: statusFields(payload.summary),
           timestamp: new Date().toISOString(),
         },
       ],

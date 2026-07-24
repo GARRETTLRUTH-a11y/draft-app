@@ -1148,7 +1148,7 @@ export default function SeasonRoomPage() {
                 <button
                   onClick={postSummaryToDiscord}
                   disabled={isPostingToDiscord || players.length === 0}
-                  title="Posts a status summary (ready/pending/granted/denied) to your Discord webhook"
+                  title="Re-posts the status summary to Discord with fresh Ready / Request Extension / Link / Open Season Page buttons -- use this to manually re-send the link"
                   className="rounded-2xl bg-indigo-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   {isPostingToDiscord ? "Posting..." : "Post Status to Discord"}

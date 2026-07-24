@@ -227,5 +227,18 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     };
   }
 
+  if (payload.type === "nudge") {
+    if (!payload.periodHeading || !payload.seasonId) return null;
+
+    const plannedAdvance = payload.plannedAdvanceTime || "Not set";
+
+    return {
+      content: `# ${payload.periodHeading}\n-# 🗓️ Planned advance: ${plannedAdvance}`,
+      embeds: [],
+      allowed_mentions: { parse: [] },
+      components: [actionButtonsRow(payload.seasonId)],
+    };
+  }
+
   return null;
 }

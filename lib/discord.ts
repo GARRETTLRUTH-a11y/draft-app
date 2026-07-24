@@ -59,4 +59,13 @@ export type DiscordNotifyPayload =
       // Pre-formatted display string, e.g. "7/11/2026, 7:00 PM – 10:00 PM".
       plannedAdvanceTime?: string | null;
       pingEveryone: boolean;
+    }
+  | {
+      // Just the header + buttons, no ready/pending/granted/denied
+      // breakdown -- for a quick "check in" nudge without re-posting the
+      // full status list every time.
+      type: "nudge";
+      seasonId: string;
+      periodHeading: string;
+      plannedAdvanceTime?: string | null;
     };

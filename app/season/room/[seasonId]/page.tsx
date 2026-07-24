@@ -75,6 +75,7 @@ export default function SeasonRoomPage() {
   const [extensionDate, setExtensionDate] = useState("");
   const [extensionReason, setExtensionReason] = useState("");
   const [isPostingToDiscord, setIsPostingToDiscord] = useState(false);
+  const [isPostingNudge, setIsPostingNudge] = useState(false);
   const [isResyncingClaims, setIsResyncingClaims] = useState(false);
   const [grantDateInputs, setGrantDateInputs] = useState<Record<string, string>>({});
   const [grantHourInputs, setGrantHourInputs] = useState<Record<string, number>>({});
@@ -378,6 +379,32 @@ export default function SeasonRoomPage() {
         : "Couldn't post to Discord — make sure DISCORD_WEBHOOK_URL is set on the server."
     );
     setIsPostingToDiscord(false);
+  }
+
+  // Same buttons, no ready/pending/granted/denied breakdown -- for a quick
+  // "check in" nudge without re-posting the full status list every time.
+  async function postNudgeToDiscord() {
+    if (!seasonData || !season) return;
+
+    setIsPostingNudge(true);
+
+    const fresh = (await fetchFreshSeasonData()) ?? seasonData;
+
+    const ok = await notifyDiscord({
+      type: "nudge",
+      seasonId: season.id,
+      periodHeading: periodHeading(fresh.periodLabel, fresh.currentWeek, fresh.seasonYear),
+      plannedAdvanceTime: formatAdvanceWindow(fresh.advanceWindow),
+    });
+
+    setSeason((current) => (current ? { ...current, season_data: fresh } : current));
+
+    setMessage(
+      ok
+        ? "Posted a quick reminder link to Discord."
+        : "Couldn't post to Discord — make sure the bot is configured on the server."
+    );
+    setIsPostingNudge(false);
   }
 
   async function saveTitle(value: string) {
@@ -1148,10 +1175,19 @@ export default function SeasonRoomPage() {
                 <button
                   onClick={postSummaryToDiscord}
                   disabled={isPostingToDiscord || players.length === 0}
-                  title="Re-posts the status summary to Discord with fresh Ready / Request Extension / Link / Open Season Page buttons -- use this to manually re-send the link"
+                  title="Posts the full ready / pending / granted / denied / not-ready breakdown to Discord, with the Ready / Request Extension / Link / Open Season Page buttons"
                   className="rounded-2xl bg-indigo-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-indigo-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {isPostingToDiscord ? "Posting..." : "Post Status to Discord"}
+                  {isPostingToDiscord ? "Posting..." : "Post Full Status to Discord"}
+                </button>
+
+                <button
+                  onClick={postNudgeToDiscord}
+                  disabled={isPostingNudge || players.length === 0}
+                  title="Posts just the header and buttons, no ready/not-ready list -- a lighter-weight nudge to check in"
+                  className="rounded-2xl bg-indigo-400/20 border border-indigo-400/40 px-5 py-3 font-bold text-indigo-200 transition hover:bg-indigo-400/30 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isPostingNudge ? "Posting..." : "Post Quick Reminder Link"}
                 </button>
 
                 {process.env.NODE_ENV !== "production" && (

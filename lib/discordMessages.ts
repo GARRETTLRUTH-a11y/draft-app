@@ -86,9 +86,17 @@ function actionButtonsRow(seasonId: string): DiscordActionRow {
       },
       {
         type: 2,
-        style: 2, // SECONDARY (gray)
+        style: 2, // SECONDARY (gray) -- Discord's 5 button styles don't
+        // include yellow, so this is as close as it gets to "distinct
+        // from the others."
         label: "🕒 Request Extension",
         custom_id: `extend:${seasonId}`,
+      },
+      {
+        type: 2,
+        style: 1, // PRIMARY (blurple)
+        label: "🔗 Link Discord Account",
+        custom_id: "link_account",
       },
     ],
   };

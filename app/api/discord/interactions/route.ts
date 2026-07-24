@@ -35,8 +35,52 @@ function ephemeral(content: string) {
   return NextResponse.json({ type: 4, data: { content, flags: 64 } });
 }
 
+const LINK_BUTTON_ROW = {
+  type: 1,
+  components: [
+    { type: 2, style: 1, label: "🔗 Link Discord Account", custom_id: "link_account" },
+  ],
+};
+
+// Same as ephemeral(), but with the Link button attached so someone who
+// isn't linked yet can fix that in one click instead of having to type
+// /link separately.
+function ephemeralNeedsLink(content: string) {
+  return NextResponse.json({
+    type: 4,
+    data: { content, flags: 64, components: [LINK_BUTTON_ROW] },
+  });
+}
+
 function randomToken(): string {
   return crypto.randomBytes(24).toString("hex");
+}
+
+async function createLinkToken(
+  admin: SupabaseClient,
+  discordUserId: string | undefined,
+  discordUsername: string | undefined
+) {
+  if (!discordUserId) return ephemeral("Couldn't identify your Discord account. Try again.");
+
+  const token = randomToken();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  const { error } = await admin.from("discord_link_tokens").insert({
+    token,
+    discord_user_id: discordUserId,
+    discord_username: discordUsername,
+    expires_at: expiresAt,
+  });
+
+  if (error) {
+    return ephemeral("Something went wrong generating your link. Try again in a moment.");
+  }
+
+  const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://cfb-draft.vercel.app";
+  return ephemeral(
+    `Click this link while signed into the site to connect your Discord account (expires in 10 minutes):\n${siteUrl}/link-discord?token=${token}`
+  );
 }
 
 // Accepts YYYY-MM-DD or M/D/YYYY (with or without leading zeros) and
@@ -71,12 +115,13 @@ type DiscordInteraction = {
 };
 
 type ResolvedPlayer = { seasonData: SeasonData; player: SeasonPlayer };
+type ResolveError = { error: string; needsLink?: boolean };
 
 async function resolvePlayer(
   admin: SupabaseClient,
   discordUserId: string,
   seasonId: string
-): Promise<ResolvedPlayer | { error: string }> {
+): Promise<ResolvedPlayer | ResolveError> {
   const { data: link } = await admin
     .from("discord_links")
     .select("user_id")
@@ -84,7 +129,10 @@ async function resolvePlayer(
     .maybeSingle();
 
   if (!link) {
-    return { error: "Your Discord account isn't linked yet. Run `/link` to connect it, then try again." };
+    return {
+      error: "Your Discord account isn't linked yet. Click the button below to connect it, then try again.",
+      needsLink: true,
+    };
   }
 
   const { data: participant } = await admin
@@ -118,6 +166,10 @@ async function resolvePlayer(
   }
 
   return { seasonData, player };
+}
+
+function respondToResolveError(resolved: ResolveError) {
+  return resolved.needsLink ? ephemeralNeedsLink(resolved.error) : ephemeral(resolved.error);
 }
 
 export async function POST(request: Request) {
@@ -155,38 +207,23 @@ export async function POST(request: Request) {
 
   // Slash command: /link
   if (interaction.type === 2 && interaction.data?.name === "link") {
-    if (!discordUserId) return ephemeral("Couldn't identify your Discord account. Try again.");
-
-    const token = randomToken();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
-
-    const { error } = await admin.from("discord_link_tokens").insert({
-      token,
-      discord_user_id: discordUserId,
-      discord_username: discordUsername,
-      expires_at: expiresAt,
-    });
-
-    if (error) {
-      return ephemeral("Something went wrong generating your link. Try again in a moment.");
-    }
-
-    const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://cfb-draft.vercel.app";
-    return ephemeral(
-      `Click this link while signed into the site to connect your Discord account (expires in 10 minutes):\n${siteUrl}/link-discord?token=${token}`
-    );
+    return createLinkToken(admin, discordUserId, discordUsername);
   }
 
   // Button click
   if (interaction.type === 3 && typeof interaction.data?.custom_id === "string") {
     const customId = interaction.data.custom_id;
 
+    if (customId === "link_account") {
+      return createLinkToken(admin, discordUserId, discordUsername);
+    }
+
     if (customId.startsWith("ready:")) {
       const seasonId = customId.slice("ready:".length);
       if (!discordUserId) return ephemeral("Couldn't identify your Discord account.");
 
       const resolved = await resolvePlayer(admin, discordUserId, seasonId);
-      if ("error" in resolved) return ephemeral(resolved.error);
+      if ("error" in resolved) return respondToResolveError(resolved);
 
       const { seasonData, player } = resolved;
       const week = seasonData.currentWeek;
@@ -221,7 +258,7 @@ export async function POST(request: Request) {
       // Validate before showing the form, so a not-yet-linked person gets a
       // clear error instead of an empty modal that can't actually submit.
       const resolved = await resolvePlayer(admin, discordUserId, seasonId);
-      if ("error" in resolved) return ephemeral(resolved.error);
+      if ("error" in resolved) return respondToResolveError(resolved);
 
       return NextResponse.json({
         type: 9, // MODAL
@@ -288,7 +325,7 @@ export async function POST(request: Request) {
       }
 
       const resolved = await resolvePlayer(admin, discordUserId, seasonId);
-      if ("error" in resolved) return ephemeral(resolved.error);
+      if ("error" in resolved) return respondToResolveError(resolved);
 
       const { seasonData, player } = resolved;
       const week = seasonData.currentWeek;

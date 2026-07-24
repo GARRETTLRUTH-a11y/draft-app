@@ -52,6 +52,7 @@ type Participant = {
   user_id: string;
   player_name: string;
   role: "host" | "participant";
+  is_co_admin: boolean;
 };
 
 export default function SeasonRoomPage() {
@@ -93,7 +94,7 @@ export default function SeasonRoomPage() {
 
     const { data, error } = await supabase
       .from("season_participants")
-      .select("id, user_id, player_name, role")
+      .select("id, user_id, player_name, role, is_co_admin")
       .eq("season_id", roomSeasonId);
 
     if (error) {
@@ -224,6 +225,12 @@ export default function SeasonRoomPage() {
   const showCommissionerControls = isOwner && adminView === "commissioner";
   const showPlayerStatus =
     Boolean(myParticipant && myPlayer) && (!isOwner || adminView === "player");
+
+  // A co-admin can toggle ready status for anyone, but gets none of the
+  // rest of Commissioner Controls. The host doesn't need this separate
+  // view -- the ready/unready toggle is already in Manage Players.
+  const isCoAdmin = Boolean(myParticipant?.is_co_admin);
+  const showCoAdminControls = isCoAdmin && !isOwner;
 
   const myPendingOrGrantedRequest = useMemo(() => {
     if (!myPlayer || !seasonData) return undefined;
@@ -504,6 +511,53 @@ export default function SeasonRoomPage() {
     }));
     await loadParticipants(season.id);
     setMessage(`Renamed to ${newName}.`);
+    setIsSaving(false);
+  }
+
+  // Admin/co-admin override: unlike a player's own one-way "mark ready"
+  // lock-in, this can be toggled back and forth freely.
+  async function hostSetPlayerReady(player: SeasonPlayer, ready: boolean) {
+    if (!seasonData) return;
+
+    await updateSeasonData((fresh) => {
+      const week = fresh.currentWeek;
+      const current = new Set(readyPlayerIdsForWeek(fresh, week));
+      if (ready) {
+        current.add(player.id);
+      } else {
+        current.delete(player.id);
+      }
+      return {
+        ...fresh,
+        readyPlayerIdsByWeek: { ...fresh.readyPlayerIdsByWeek, [week]: Array.from(current) },
+      };
+    });
+
+    setMessage(ready ? `Marked ${player.name} ready.` : `Marked ${player.name} not ready.`);
+  }
+
+  async function toggleCoAdmin(participant: Participant) {
+    if (!season) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("season_participants")
+      .update({ is_co_admin: !participant.is_co_admin })
+      .eq("id", participant.id);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setMessage(
+        participant.is_co_admin
+          ? `Removed co-admin access from ${participant.player_name}.`
+          : `Made ${participant.player_name} a co-admin (can only mark players ready/not ready).`
+      );
+      await loadParticipants(season.id);
+    }
+
     setIsSaving(false);
   }
 
@@ -1026,6 +1080,12 @@ export default function SeasonRoomPage() {
               </span>
             )}
 
+            {showCoAdminControls && (
+              <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-4 py-1.5 text-xs font-bold text-purple-200">
+                🛡️ Co-Admin
+              </span>
+            )}
+
             {myPlayer && (
               <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-1.5 text-xs font-bold text-cyan-200">
                 🏈 Playing as {myPlayer.team || myPlayer.name}
@@ -1132,6 +1192,61 @@ export default function SeasonRoomPage() {
             </div>
           )}
         </header>
+
+        {showCoAdminControls && (
+          <section className="rounded-3xl border-2 border-purple-400/30 bg-purple-500/[0.06] p-6">
+            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-purple-300">
+              🛡️ Co-Admin: Set Ready Status
+              <span className="rounded-full border border-purple-400/20 bg-purple-400/10 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-purple-200">
+                Only you can see this
+              </span>
+            </div>
+
+            <p className="mt-2 text-sm text-slate-400">
+              You can mark players ready or not ready for {formatWeekLabel(currentWeek)} --
+              that&apos;s the only admin control you have.
+            </p>
+
+            <div className="mt-4 flex flex-col gap-2">
+              {players.map((player) => {
+                const color = teamColor(player.team);
+                const isReady = readyPlayerIds.has(player.id);
+
+                return (
+                  <div
+                    key={player.id}
+                    className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-slate-900 p-3"
+                  >
+                    <span
+                      className="h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
+                      style={{ backgroundColor: color || "#64748b" }}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm">
+                      <span className="font-bold">{player.team || player.name}</span>
+                      <span className="ml-2 text-xs text-slate-400">{player.name}</span>
+                    </span>
+
+                    <button
+                      onClick={() => hostSetPlayerReady(player, !isReady)}
+                      disabled={isSaving}
+                      className={`flex-shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        isReady
+                          ? "border-green-400/40 bg-green-400/20 text-green-200 hover:bg-green-400/30"
+                          : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
+                      }`}
+                    >
+                      {isReady ? "✓ Ready" : "Mark Ready"}
+                    </button>
+                  </div>
+                );
+              })}
+
+              {players.length === 0 && (
+                <p className="text-sm text-slate-500">No players in this season yet.</p>
+              )}
+            </div>
+          </section>
+        )}
 
         {showCommissionerControls && (
           <section className="rounded-3xl border-2 border-purple-400/30 bg-purple-500/[0.06] p-6">
@@ -1523,8 +1638,10 @@ export default function SeasonRoomPage() {
             <div className="mt-6 border-t border-white/10 pt-6">
               <h3 className="text-lg font-black">Manage Players</h3>
               <p className="mt-2 text-sm text-slate-400">
-                Rename a player (their claimed slot moves with them), or
-                remove someone who&apos;s dropped out mid-season.
+                Rename a player (their claimed slot moves with them), remove
+                someone who&apos;s dropped out mid-season, override their
+                ready status, or make a claimed player a co-admin (they can
+                only mark players ready/not ready -- nothing else).
               </p>
 
               <div className="mt-4 flex flex-col gap-2">
@@ -1561,6 +1678,34 @@ export default function SeasonRoomPage() {
                       >
                         {participant ? "Claimed" : "Unclaimed"}
                       </span>
+
+                      <button
+                        onClick={() => hostSetPlayerReady(player, !readyPlayerIds.has(player.id))}
+                        disabled={isSaving}
+                        title="Toggle this player's ready status for the current week"
+                        className={`flex-shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          readyPlayerIds.has(player.id)
+                            ? "border-green-400/40 bg-green-400/20 text-green-200 hover:bg-green-400/30"
+                            : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
+                        }`}
+                      >
+                        {readyPlayerIds.has(player.id) ? "✓ Ready" : "Mark Ready"}
+                      </button>
+
+                      {participant && (
+                        <button
+                          onClick={() => toggleCoAdmin(participant)}
+                          disabled={isSaving}
+                          title="Co-admins can only mark players ready/not ready -- no other admin controls"
+                          className={`flex-shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                            participant.is_co_admin
+                              ? "border-purple-400/40 bg-purple-400/20 text-purple-200 hover:bg-purple-400/30"
+                              : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
+                          }`}
+                        >
+                          {participant.is_co_admin ? "🛡️ Co-Admin" : "Make Co-Admin"}
+                        </button>
+                      )}
 
                       {participant && (
                         <button

@@ -671,7 +671,7 @@ export default function SeasonRoomPage() {
   }
 
   async function advanceWeek() {
-    if (!seasonData) return;
+    if (!seasonData || !season) return;
 
     const readyCount = readyPlayerIdsForWeek(seasonData, currentWeek).length;
     const outstanding = players.length - readyCount;
@@ -696,7 +696,29 @@ export default function SeasonRoomPage() {
         advanceWindow: null,
       };
     });
-    setMessage(`Advanced to ${formatWeekLabel(updated?.currentWeek ?? currentWeek + 1)}.`);
+
+    if (!updated) {
+      setMessage("Something went wrong advancing the week. Try again.");
+      return;
+    }
+
+    setMessage(`Advanced to ${formatWeekLabel(updated.currentWeek)}. Posting to Discord...`);
+
+    // Auto-post so everyone gets a fresh "I'm Ready" prompt for the new
+    // week immediately, instead of waiting on the next scheduled reminder.
+    const posted = await notifyDiscord({
+      type: "summary",
+      seasonId: season.id,
+      periodHeading: periodHeading(updated.periodLabel, updated.currentWeek, updated.seasonYear),
+      summary: buildWeekSummary(updated, updated.currentWeek),
+      plannedAdvanceTime: formatAdvanceWindow(updated.advanceWindow),
+    });
+
+    setMessage(
+      posted
+        ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.`
+        : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post to Discord.`
+    );
   }
 
   // Dev-only helper: seeds a realistic mix of ready/pending/granted/denied

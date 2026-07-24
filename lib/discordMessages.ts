@@ -74,7 +74,7 @@ export type DiscordMessage = {
 // Application owns the message, and a plain incoming webhook doesn't own
 // one. Callers that still use the webhook (ready/extension_requested) just
 // won't attach this.
-function readyButtonRow(seasonId: string): DiscordActionRow {
+function actionButtonsRow(seasonId: string): DiscordActionRow {
   return {
     type: 1,
     components: [
@@ -83,6 +83,12 @@ function readyButtonRow(seasonId: string): DiscordActionRow {
         style: 3, // SUCCESS (green)
         label: "✅ I'm Ready",
         custom_id: `ready:${seasonId}`,
+      },
+      {
+        type: 2,
+        style: 2, // SECONDARY (gray)
+        label: "🕒 Request Extension",
+        custom_id: `extend:${seasonId}`,
       },
     ],
   };
@@ -173,7 +179,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
         },
       ],
       allowed_mentions: { parse: [] },
-      components: [readyButtonRow(payload.seasonId)],
+      components: [actionButtonsRow(payload.seasonId)],
     };
   }
 
@@ -195,7 +201,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
         },
       ],
       allowed_mentions: { parse: payload.pingEveryone ? ["everyone"] : [] },
-      components: [readyButtonRow(payload.seasonId)],
+      components: [actionButtonsRow(payload.seasonId)],
     };
   }
 

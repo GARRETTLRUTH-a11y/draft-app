@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildDiscordMessage } from "@/lib/discordMessages";
+import { sendDiscordMessage } from "@/lib/discordSend";
 import {
   buildWeekSummary,
   formatAdvanceWindow,
@@ -76,11 +77,10 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 
-  if (!webhookUrl || !serviceRoleKey || !supabaseUrl) {
+  if (!serviceRoleKey || !supabaseUrl) {
     return NextResponse.json(
       { error: "Reminders are not fully configured on the server." },
       { status: 501 }
@@ -117,6 +117,7 @@ export async function GET(request: Request) {
 
       const message = buildDiscordMessage({
         type: "reminder",
+        seasonId: row.id,
         periodHeading: periodHeading(seasonData.periodLabel, seasonData.currentWeek, seasonData.seasonYear),
         summary: buildWeekSummary(seasonData, seasonData.currentWeek),
         plannedAdvanceTime: formatAdvanceWindow(seasonData.advanceWindow),
@@ -128,13 +129,9 @@ export async function GET(request: Request) {
         continue;
       }
 
-      const discordResponse = await fetch(webhookUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(message),
-      });
+      const result = await sendDiscordMessage(message);
 
-      if (discordResponse.ok) {
+      if (result.ok) {
         sentCount++;
         changed = true;
         nextReminders.push({ ...reminder, lastSentDate: dateKey });

@@ -47,14 +47,46 @@ type DiscordEmbed = {
   timestamp?: string;
 };
 
-type DiscordMessage = {
+type DiscordButtonComponent = {
+  type: 2; // BUTTON
+  style: 1 | 2 | 3 | 4 | 5;
+  label: string;
+  custom_id: string;
+};
+
+type DiscordActionRow = {
+  type: 1; // ACTION_ROW
+  components: DiscordButtonComponent[];
+};
+
+export type DiscordMessage = {
   content?: string;
   embeds: DiscordEmbed[];
   // Explicit allow-list: nothing pings unless we intend it to (e.g. a
   // reminder with pingEveryone), regardless of what text ends up in
   // `content` (host-editable fields like the period label).
   allowed_mentions: { parse: ("everyone" | "roles" | "users")[] };
+  components?: DiscordActionRow[];
 };
+
+// Only messages sent through the bot (not the plain webhook) can have
+// working buttons -- Discord routes the click back to whichever
+// Application owns the message, and a plain incoming webhook doesn't own
+// one. Callers that still use the webhook (ready/extension_requested) just
+// won't attach this.
+function readyButtonRow(seasonId: string): DiscordActionRow {
+  return {
+    type: 1,
+    components: [
+      {
+        type: 2,
+        style: 3, // SUCCESS (green)
+        label: "✅ I'm Ready",
+        custom_id: `ready:${seasonId}`,
+      },
+    ],
+  };
+}
 
 function statusFields(summary: DiscordWeekSummary) {
   const { ready, pending, granted, denied, notReady } = summary;
@@ -125,7 +157,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
   }
 
   if (payload.type === "summary") {
-    if (!payload.periodHeading || !payload.summary) return null;
+    if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
 
@@ -141,11 +173,12 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
         },
       ],
       allowed_mentions: { parse: [] },
+      components: [readyButtonRow(payload.seasonId)],
     };
   }
 
   if (payload.type === "reminder") {
-    if (!payload.periodHeading || !payload.summary) return null;
+    if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
 
@@ -162,6 +195,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
         },
       ],
       allowed_mentions: { parse: payload.pingEveryone ? ["everyone"] : [] },
+      components: [readyButtonRow(payload.seasonId)],
     };
   }
 

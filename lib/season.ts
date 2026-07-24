@@ -258,6 +258,25 @@ export function readyPlayerIdsForWeek(
   return seasonData.readyPlayerIdsByWeek[week] ?? [];
 }
 
+// Pure "mark this player ready for this week" transform, shared by the
+// room page's markReady() and the Discord button-click handler so both
+// produce identical results from identical fresh data.
+export function withPlayerMarkedReady(
+  seasonData: SeasonData,
+  playerId: number,
+  week: number
+): SeasonData {
+  const current = new Set(readyPlayerIdsForWeek(seasonData, week));
+  current.add(playerId);
+  return {
+    ...seasonData,
+    readyPlayerIdsByWeek: {
+      ...seasonData.readyPlayerIdsByWeek,
+      [week]: Array.from(current),
+    },
+  };
+}
+
 export function pendingExtensionRequests(
   seasonData: SeasonData
 ): ExtensionRequest[] {

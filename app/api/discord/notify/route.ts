@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { buildDiscordMessage } from "@/lib/discordMessages";
+import { sendDiscordMessage } from "@/lib/discordSend";
 import type { DiscordNotifyPayload } from "@/lib/discord";
 
 export async function POST(request: Request) {
@@ -16,14 +17,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
-  if (!webhookUrl) {
-    return NextResponse.json(
-      { error: "DISCORD_WEBHOOK_URL is not configured on the server." },
-      { status: 501 }
-    );
-  }
-
   let payload: DiscordNotifyPayload;
   try {
     payload = await request.json();
@@ -36,18 +29,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid notification payload." }, { status: 400 });
   }
 
-  const discordResponse = await fetch(webhookUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(message),
-  });
-
-  if (!discordResponse.ok) {
-    const text = await discordResponse.text();
-    return NextResponse.json(
-      { error: text || "Discord webhook request failed." },
-      { status: 502 }
-    );
+  const result = await sendDiscordMessage(message);
+  if (!result.ok) {
+    return NextResponse.json({ error: result.error }, { status: 502 });
   }
 
   return NextResponse.json({ ok: true });

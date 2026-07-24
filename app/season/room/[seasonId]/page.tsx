@@ -81,6 +81,7 @@ export default function SeasonRoomPage() {
   const [newReminderTime, setNewReminderTime] = useState("20:00");
   const [newReminderDays, setNewReminderDays] = useState<Set<number>>(new Set());
   const [newReminderPingEveryone, setNewReminderPingEveryone] = useState(false);
+  const [discordUsername, setDiscordUsername] = useState<string | null>(null);
   // Only meaningful for the host: which side of the room they're currently
   // looking at. Lets a host who's also a player flip over and see exactly
   // what everyone else sees, then flip straight back.
@@ -102,6 +103,16 @@ export default function SeasonRoomPage() {
     setParticipants((data || []) as Participant[]);
   }
 
+  async function loadDiscordLink(userId: string) {
+    const { data } = await supabase
+      .from("discord_links")
+      .select("discord_username")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    setDiscordUsername(data?.discord_username ?? null);
+  }
+
   async function loadRoomSeason(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
 
@@ -118,6 +129,8 @@ export default function SeasonRoomPage() {
       setIsLoading(false);
       return;
     }
+
+    await loadDiscordLink(userData.user.id);
 
     const { data, error } = await supabase
       .from("seasons")
@@ -339,7 +352,7 @@ export default function SeasonRoomPage() {
   }
 
   async function postSummaryToDiscord() {
-    if (!seasonData) return;
+    if (!seasonData || !season) return;
 
     setIsPostingToDiscord(true);
 
@@ -351,6 +364,7 @@ export default function SeasonRoomPage() {
 
     const ok = await notifyDiscord({
       type: "summary",
+      seasonId: season.id,
       periodHeading: periodHeading(fresh.periodLabel, freshWeek, fresh.seasonYear),
       summary: buildWeekSummary(fresh, freshWeek),
       plannedAdvanceTime: formatAdvanceWindow(fresh.advanceWindow),
@@ -825,6 +839,29 @@ export default function SeasonRoomPage() {
     } else {
       setMessage(`You selected ${player.team || player.name}.`);
       await loadParticipants(season.id);
+    }
+
+    setIsSaving(false);
+  }
+
+  async function unlinkDiscord() {
+    if (!currentUserId) return;
+
+    const confirmed = window.confirm(
+      "Unlink your Discord account? The \"I'm Ready\" button in Discord won't work for you until you /link again."
+    );
+    if (!confirmed) return;
+
+    setIsSaving(true);
+    setMessage("");
+
+    const { error } = await supabase.from("discord_links").delete().eq("user_id", currentUserId);
+
+    if (error) {
+      setMessage(error.message);
+    } else {
+      setDiscordUsername(null);
+      setMessage("Discord account unlinked.");
     }
 
     setIsSaving(false);
@@ -1544,6 +1581,28 @@ export default function SeasonRoomPage() {
                   >
                     Leave Team
                   </button>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+                  {discordUsername ? (
+                    <>
+                      <span className="rounded-full border border-indigo-400/30 bg-indigo-400/10 px-3 py-1 font-bold text-indigo-200">
+                        🔗 Discord linked as @{discordUsername}
+                      </span>
+                      <button
+                        onClick={unlinkDiscord}
+                        disabled={isSaving}
+                        className="text-xs font-bold text-slate-500 transition hover:text-white disabled:cursor-not-allowed"
+                      >
+                        Unlink
+                      </button>
+                    </>
+                  ) : (
+                    <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-slate-400">
+                      Not linked to Discord — run <code className="text-slate-200">/link</code> in
+                      Discord to use the &quot;I&apos;m Ready&quot; button there
+                    </span>
+                  )}
                 </div>
 
                 {seasonData.advanceWindow && (

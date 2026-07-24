@@ -43,6 +43,7 @@ export type DiscordNotifyPayload =
     }
   | {
       type: "summary";
+      seasonId: string;
       // The big header text, e.g. "Preseason 2026" or "Week 3 2026".
       periodHeading: string;
       summary: DiscordWeekSummary;
@@ -51,6 +52,7 @@ export type DiscordNotifyPayload =
     }
   | {
       type: "reminder";
+      seasonId: string;
       // The big header text, e.g. "Preseason 2026" or "Week 3 2026".
       periodHeading: string;
       summary: DiscordWeekSummary;

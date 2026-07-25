@@ -67,8 +67,13 @@ function isDue(
   dayOfWeek: number
 ) {
   if (!reminder.enabled) return false;
-  if (!reminder.daysOfWeek.includes(dayOfWeek)) return false;
   if (reminder.lastSentDate === dateKey) return false;
+
+  if (reminder.oneTime) {
+    if (reminder.date !== dateKey) return false;
+  } else if (!reminder.daysOfWeek.includes(dayOfWeek)) {
+    return false;
+  }
 
   const elapsed = minutesOfDay - timeToMinutes(reminder.time);
   return elapsed >= 0 && elapsed < FIRE_WINDOW_MINUTES;
@@ -139,7 +144,12 @@ export async function GET(request: Request) {
       if (result.ok) {
         sentCount++;
         changed = true;
-        nextReminders.push({ ...reminder, lastSentDate: dateKey });
+        // One-time reminders just don't get pushed back into the list --
+        // that's the "goes away after firing" behavior. Recurring ones get
+        // lastSentDate stamped so they don't double-fire today.
+        if (!reminder.oneTime) {
+          nextReminders.push({ ...reminder, lastSentDate: dateKey });
+        }
       } else {
         nextReminders.push(reminder);
       }

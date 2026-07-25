@@ -11,6 +11,7 @@ import {
   DAY_LABELS,
   formatAdvanceWindow,
   formatHourLabel,
+  formatReminderDate,
   formatReminderDays,
   formatReminderTime,
   formatWeekLabel,
@@ -83,6 +84,8 @@ export default function SeasonRoomPage() {
   const [newReminderTime, setNewReminderTime] = useState("20:00");
   const [newReminderDays, setNewReminderDays] = useState<Set<number>>(new Set());
   const [newReminderPingEveryone, setNewReminderPingEveryone] = useState(false);
+  const [newReminderOneTime, setNewReminderOneTime] = useState(false);
+  const [newReminderDate, setNewReminderDate] = useState("");
   const [discordUsername, setDiscordUsername] = useState<string | null>(null);
   // Only meaningful for the host: which side of the room they're currently
   // looking at. Lets a host who's also a player flip over and see exactly
@@ -179,6 +182,20 @@ export default function SeasonRoomPage() {
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
+
+  // True alphabetical order by team name (falling back to the player's own
+  // name for players who haven't picked a team), for the Manage Players
+  // list specifically -- other views (Teams board, claim grid) keep the
+  // original draft order.
+  const playersByTeamName = useMemo(
+    () =>
+      [...players].sort((a, b) =>
+        (a.team || a.name).localeCompare(b.team || b.name, undefined, {
+          sensitivity: "base",
+        })
+      ),
+    [players]
+  );
 
   const readyPlayerIds = useMemo(
     () => new Set(seasonData ? readyPlayerIdsForWeek(seasonData, currentWeek) : []),
@@ -708,7 +725,8 @@ export default function SeasonRoomPage() {
   }
 
   async function addReminder() {
-    if (!seasonData || !newReminderTime || newReminderDays.size === 0) return;
+    if (!seasonData || !newReminderTime) return;
+    if (newReminderOneTime ? !newReminderDate : newReminderDays.size === 0) return;
 
     const reminder: ReminderSchedule = {
       id:
@@ -716,7 +734,9 @@ export default function SeasonRoomPage() {
           ? crypto.randomUUID()
           : `${Date.now()}`,
       time: newReminderTime,
-      daysOfWeek: Array.from(newReminderDays),
+      daysOfWeek: newReminderOneTime ? [] : Array.from(newReminderDays),
+      date: newReminderOneTime ? newReminderDate : null,
+      oneTime: newReminderOneTime,
       pingEveryone: newReminderPingEveryone,
       enabled: true,
       lastSentDate: null,
@@ -728,6 +748,8 @@ export default function SeasonRoomPage() {
     }));
 
     setNewReminderDays(new Set());
+    setNewReminderDate("");
+    setNewReminderOneTime(false);
     setNewReminderPingEveryone(false);
     setMessage("Reminder added.");
   }
@@ -1554,8 +1576,15 @@ export default function SeasonRoomPage() {
                       <div className="text-sm">
                         <span className="font-black">{formatReminderTime(reminder.time)}</span>
                         <span className="ml-2 text-slate-400">
-                          {formatReminderDays(reminder.daysOfWeek)}
+                          {reminder.oneTime
+                            ? formatReminderDate(reminder.date || "")
+                            : formatReminderDays(reminder.daysOfWeek)}
                         </span>
+                        {reminder.oneTime && (
+                          <span className="ml-2 rounded-full border border-indigo-400/30 bg-indigo-400/10 px-2 py-0.5 text-xs font-bold text-indigo-300">
+                            One-time
+                          </span>
+                        )}
                         {reminder.pingEveryone && (
                           <span className="ml-2 rounded-full border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-xs font-bold text-red-300">
                             @everyone
@@ -1595,25 +1624,47 @@ export default function SeasonRoomPage() {
                   />
                 </label>
 
-                <div className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                  Days
-                  <div className="flex gap-1">
-                    {DAY_LABELS.map((label, day) => (
-                      <button
-                        key={day}
-                        type="button"
-                        onClick={() => toggleNewReminderDay(day)}
-                        className={`h-8 w-8 rounded-lg text-xs font-bold transition ${
-                          newReminderDays.has(day)
-                            ? "bg-cyan-400 text-slate-950"
-                            : "bg-slate-900 text-slate-400 hover:bg-slate-800"
-                        }`}
-                      >
-                        {label[0]}
-                      </button>
-                    ))}
+                {newReminderOneTime ? (
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Date
+                    <input
+                      type="date"
+                      value={newReminderDate}
+                      onChange={(event) => setNewReminderDate(event.target.value)}
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                    />
+                  </label>
+                ) : (
+                  <div className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Days
+                    <div className="flex gap-1">
+                      {DAY_LABELS.map((label, day) => (
+                        <button
+                          key={day}
+                          type="button"
+                          onClick={() => toggleNewReminderDay(day)}
+                          className={`h-8 w-8 rounded-lg text-xs font-bold transition ${
+                            newReminderDays.has(day)
+                              ? "bg-cyan-400 text-slate-950"
+                              : "bg-slate-900 text-slate-400 hover:bg-slate-800"
+                          }`}
+                        >
+                          {label[0]}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={newReminderOneTime}
+                    onChange={(event) => setNewReminderOneTime(event.target.checked)}
+                    className="h-4 w-4 accent-indigo-400"
+                  />
+                  One-time (fires once, then removes itself)
+                </label>
 
                 <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
                   <input
@@ -1627,7 +1678,11 @@ export default function SeasonRoomPage() {
 
                 <button
                   onClick={addReminder}
-                  disabled={isSaving || !newReminderTime || newReminderDays.size === 0}
+                  disabled={
+                    isSaving ||
+                    !newReminderTime ||
+                    (newReminderOneTime ? !newReminderDate : newReminderDays.size === 0)
+                  }
                   className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Add Reminder
@@ -1645,7 +1700,7 @@ export default function SeasonRoomPage() {
               </p>
 
               <div className="mt-4 flex flex-col gap-2">
-                {players.map((player) => {
+                {playersByTeamName.map((player) => {
                   const participant = participantByName.get(player.name.toLowerCase());
                   const color = teamColor(player.team);
 

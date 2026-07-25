@@ -34,7 +34,14 @@ export type AdvanceWindow = {
 export type ReminderSchedule = {
   id: string;
   time: string; // "HH:MM", 24h
+  // Ignored when oneTime is true.
   daysOfWeek: number[]; // 0 (Sun) - 6 (Sat)
+  // Only used when oneTime is true: the single YYYY-MM-DD (in
+  // REMINDER_TIMEZONE) this reminder fires on.
+  date?: string | null;
+  // A one-time reminder fires once on `date` and is then removed
+  // automatically, instead of recurring weekly on daysOfWeek.
+  oneTime?: boolean;
   pingEveryone: boolean;
   enabled: boolean;
   // YYYY-MM-DD (in REMINDER_TIMEZONE) this reminder last fired on — guards
@@ -117,7 +124,16 @@ export function advanceWindowStart(window: AdvanceWindow | null | undefined): Da
 export function formatAdvanceWindow(window: AdvanceWindow | null | undefined): string {
   const start = advanceWindowStart(window);
   if (!window || !start) return "Not set";
-  return `${start.toLocaleDateString()}, ${formatHourLabel(window.startHour)} – ${formatHourLabel(window.endHour)}`;
+  const dayName = start.toLocaleDateString(undefined, { weekday: "long" });
+  return `${dayName}, ${start.toLocaleDateString()}, ${formatHourLabel(window.startHour)} – ${formatHourLabel(window.endHour)}`;
+}
+
+// Formats a YYYY-MM-DD date (no time component) as a local calendar date,
+// so it doesn't shift a day when displayed in a different timezone.
+export function formatReminderDate(dateStr: string): string {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  if (!year || !month || !day) return dateStr;
+  return new Date(year, month - 1, day).toLocaleDateString();
 }
 
 // Minimal shape of a completed draft's saved data, enough to pull each

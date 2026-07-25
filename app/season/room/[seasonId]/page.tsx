@@ -86,6 +86,9 @@ export default function SeasonRoomPage() {
   const [isResyncingClaims, setIsResyncingClaims] = useState(false);
   const [grantDateInputs, setGrantDateInputs] = useState<Record<string, string>>({});
   const [grantHourInputs, setGrantHourInputs] = useState<Record<string, number>>({});
+  const [manualExtensionPlayerId, setManualExtensionPlayerId] = useState("");
+  const [manualExtensionDate, setManualExtensionDate] = useState("");
+  const [manualExtensionReason, setManualExtensionReason] = useState("");
   const [newReminderTime, setNewReminderTime] = useState("20:00");
   const [newReminderDays, setNewReminderDays] = useState<Set<number>>(new Set());
   const [newReminderPingEveryone, setNewReminderPingEveryone] = useState(false);
@@ -211,6 +214,21 @@ export default function SeasonRoomPage() {
     () => (seasonData ? pendingExtensionRequests(seasonData) : []),
     [seasonData]
   );
+
+  // Every extension request (pending, granted, or denied) for the current
+  // week -- unlike pendingRequests, this includes resolved ones so the host
+  // has something to manage/remove instead of them just disappearing.
+  const currentWeekExtensionRequests = useMemo(() => {
+    if (!seasonData) return [];
+    const statusRank: Record<ExtensionRequest["status"], number> = {
+      pending: 0,
+      granted: 1,
+      denied: 2,
+    };
+    return seasonData.extensionRequests
+      .filter((request) => request.week === currentWeek)
+      .sort((a, b) => statusRank[a.status] - statusRank[b.status]);
+  }, [seasonData, currentWeek]);
 
   const reminders = seasonData?.reminders ?? [];
 
@@ -707,6 +725,68 @@ export default function SeasonRoomPage() {
       }),
     }));
     setMessage(approve ? "Extension granted." : "Extension denied.");
+  }
+
+  // Fully deletes a request (pending, granted, or denied) instead of just
+  // changing its status -- for correcting a mistake, e.g. one added
+  // manually for the wrong player/week.
+  async function removeExtensionRequest(requestId: string) {
+    if (!seasonData) return;
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      extensionRequests: fresh.extensionRequests.filter((request) => request.id !== requestId),
+    }));
+    setMessage("Extension request removed.");
+  }
+
+  // Host-initiated request on a player's behalf (e.g. they asked over
+  // text/in person instead of using the button) -- lands as "pending" so it
+  // goes through the same Grant/Deny flow as a self-service request.
+  async function addExtensionRequestManually() {
+    if (!seasonData || !manualExtensionPlayerId || !manualExtensionDate) return;
+
+    const playerId = Number(manualExtensionPlayerId);
+    const player = players.find((p) => p.id === playerId);
+    if (!player) return;
+
+    const hasActiveRequest = seasonData.extensionRequests.some(
+      (request) =>
+        request.playerId === playerId &&
+        request.week === currentWeek &&
+        (request.status === "pending" || request.status === "granted")
+    );
+    if (hasActiveRequest) {
+      setMessage(
+        `${player.name} already has an active extension request for ${formatWeekLabel(currentWeek)} -- remove it first.`
+      );
+      return;
+    }
+
+    const requestedUntilDate = manualExtensionDate;
+    const reason = manualExtensionReason.trim() || undefined;
+
+    const updated = await updateSeasonData((fresh) => {
+      const request: ExtensionRequest = {
+        id:
+          typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}`,
+        playerId,
+        week: fresh.currentWeek,
+        requestedUntilDate,
+        reason,
+        status: "pending",
+        requestedAt: new Date().toISOString(),
+      };
+      return { ...fresh, extensionRequests: [...fresh.extensionRequests, request] };
+    });
+
+    if (!updated) return;
+
+    setManualExtensionPlayerId("");
+    setManualExtensionDate("");
+    setManualExtensionReason("");
+    setMessage(`Extension request added for ${player.name}.`);
   }
 
   async function setAdvanceWindow(nextWindow: AdvanceWindow | null) {
@@ -1528,22 +1608,80 @@ export default function SeasonRoomPage() {
                   </span>
                 )}
               </h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Grant, deny, remove, or manually add a request on behalf of
+                any player for {formatWeekLabel(currentWeek)}.
+              </p>
 
-              {pendingRequests.length === 0 ? (
-                <p className="mt-3 text-sm text-slate-400">
-                  No pending extension requests.
+              <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-slate-900 p-4">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Player
+                  <select
+                    value={manualExtensionPlayerId}
+                    onChange={(event) => setManualExtensionPlayerId(event.target.value)}
+                    className="min-w-[10rem] rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                  >
+                    <option value="">Select a player...</option>
+                    {playersByTeamName.map((player) => (
+                      <option key={player.id} value={player.id}>
+                        {player.team ? `${player.team} — ${player.name}` : player.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Requested until
+                  <input
+                    type="date"
+                    value={manualExtensionDate}
+                    onChange={(event) => setManualExtensionDate(event.target.value)}
+                    className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                  />
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Reason (optional)
+                  <input
+                    type="text"
+                    value={manualExtensionReason}
+                    onChange={(event) => setManualExtensionReason(event.target.value)}
+                    placeholder="e.g. traveling this week"
+                    className="min-w-[10rem] rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
+                  />
+                </label>
+
+                <button
+                  onClick={addExtensionRequestManually}
+                  disabled={isSaving || !manualExtensionPlayerId || !manualExtensionDate}
+                  className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Add Extension Request
+                </button>
+              </div>
+
+              {currentWeekExtensionRequests.length === 0 ? (
+                <p className="mt-4 text-sm text-slate-400">
+                  No extension requests for {formatWeekLabel(currentWeek)}.
                 </p>
               ) : (
                 <div className="mt-4 flex flex-col gap-3">
-                  {pendingRequests.map((request) => {
+                  {currentWeekExtensionRequests.map((request) => {
                     const player = players.find((p) => p.id === request.playerId);
                     const grantDate = grantDateInputs[request.id] ?? request.requestedUntilDate;
                     const grantHour = grantHourInputs[request.id] ?? 20;
 
+                    const statusBorder =
+                      request.status === "granted"
+                        ? "border-blue-400/20"
+                        : request.status === "denied"
+                          ? "border-red-400/20"
+                          : "border-yellow-400/20";
+
                     return (
                       <div
                         key={request.id}
-                        className="rounded-2xl border border-yellow-400/20 bg-slate-900 p-4"
+                        className={`rounded-2xl border bg-slate-900 p-4 ${statusBorder}`}
                       >
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
@@ -1552,6 +1690,17 @@ export default function SeasonRoomPage() {
                               <span className="font-normal text-slate-400">
                                 — {formatWeekLabel(request.week)}
                               </span>
+                              {request.status !== "pending" && (
+                                <span
+                                  className={`ml-2 rounded-full border px-2 py-0.5 text-xs font-bold ${
+                                    request.status === "granted"
+                                      ? "border-blue-400/30 bg-blue-400/10 text-blue-200"
+                                      : "border-red-400/30 bg-red-400/10 text-red-200"
+                                  }`}
+                                >
+                                  {request.status === "granted" ? "Granted" : "Denied"}
+                                </span>
+                              )}
                             </p>
                             <p className="mt-1 text-sm text-slate-400">
                               Requested until{" "}
@@ -1559,61 +1708,75 @@ export default function SeasonRoomPage() {
                                 `${request.requestedUntilDate}T00:00:00`
                               ).toLocaleDateString()}
                               {request.reason ? ` — "${request.reason}"` : ""}
+                              {request.status === "granted" && request.grantedUntil
+                                ? ` — granted until ${new Date(request.grantedUntil).toLocaleString()}`
+                                : ""}
                             </p>
                           </div>
-                        </div>
-
-                        <div className="mt-4 flex flex-wrap items-end gap-3">
-                          <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                            Grant until
-                            <input
-                              type="date"
-                              value={grantDate}
-                              onChange={(event) =>
-                                setGrantDateInputs((current) => ({
-                                  ...current,
-                                  [request.id]: event.target.value,
-                                }))
-                              }
-                              className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
-                            />
-                          </label>
-
-                          <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                            At
-                            <select
-                              value={grantHour}
-                              onChange={(event) =>
-                                setGrantHourInputs((current) => ({
-                                  ...current,
-                                  [request.id]: Number(event.target.value),
-                                }))
-                              }
-                              className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
-                            >
-                              {Array.from({ length: 24 }, (_, hour) => (
-                                <option key={hour} value={hour}>
-                                  {formatHourLabel(hour)}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
 
                           <button
-                            onClick={() => resolveExtension(request.id, true, grantDate, grantHour)}
-                            disabled={isSaving || !grantDate}
-                            className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            Grant
-                          </button>
-                          <button
-                            onClick={() => resolveExtension(request.id, false)}
+                            onClick={() => removeExtensionRequest(request.id)}
                             disabled={isSaving}
-                            className="rounded-2xl bg-red-400/80 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                            title="Delete this extension request entirely"
+                            className="flex-shrink-0 rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            Deny
+                            Remove
                           </button>
                         </div>
+
+                        {request.status === "pending" && (
+                          <div className="mt-4 flex flex-wrap items-end gap-3">
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                              Grant until
+                              <input
+                                type="date"
+                                value={grantDate}
+                                onChange={(event) =>
+                                  setGrantDateInputs((current) => ({
+                                    ...current,
+                                    [request.id]: event.target.value,
+                                  }))
+                                }
+                                className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                              />
+                            </label>
+
+                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                              At
+                              <select
+                                value={grantHour}
+                                onChange={(event) =>
+                                  setGrantHourInputs((current) => ({
+                                    ...current,
+                                    [request.id]: Number(event.target.value),
+                                  }))
+                                }
+                                className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                              >
+                                {Array.from({ length: 24 }, (_, hour) => (
+                                  <option key={hour} value={hour}>
+                                    {formatHourLabel(hour)}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+
+                            <button
+                              onClick={() => resolveExtension(request.id, true, grantDate, grantHour)}
+                              disabled={isSaving || !grantDate}
+                              className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Grant
+                            </button>
+                            <button
+                              onClick={() => resolveExtension(request.id, false)}
+                              disabled={isSaving}
+                              className="rounded-2xl bg-red-400/80 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              Deny
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}

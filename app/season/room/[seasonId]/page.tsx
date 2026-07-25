@@ -9,6 +9,7 @@ import {
   advanceWindowStart,
   buildWeekSummary,
   DAY_LABELS,
+  extendAdvanceWindowToCover,
   formatAdvanceWindow,
   formatHourLabel,
   formatReminderDate,
@@ -697,23 +698,26 @@ export default function SeasonRoomPage() {
   ) {
     if (!seasonData) return;
 
-    await updateSeasonData((fresh) => ({
-      ...fresh,
-      extensionRequests: fresh.extensionRequests.map((request) => {
+    await updateSeasonData((fresh) => {
+      let nextAdvanceWindow = fresh.advanceWindow;
+
+      const extensionRequests = fresh.extensionRequests.map((request) => {
         if (request.id !== requestId) return request;
 
         let grantedUntil: string | undefined;
         if (approve && grantedUntilDate) {
+          const hour = grantedUntilHour ?? fresh.advanceWindow?.endHour ?? 20;
           const [year, month, day] = grantedUntilDate.split("-").map(Number);
-          grantedUntil = new Date(
-            year,
-            month - 1,
-            day,
-            grantedUntilHour ?? 20,
-            0,
-            0,
-            0
-          ).toISOString();
+          grantedUntil = new Date(year, month - 1, day, hour, 0, 0, 0).toISOString();
+
+          // The general "anticipated advance" window shouldn't claim
+          // everyone advances before this player's granted extension --
+          // push it out to cover the grant if it doesn't already.
+          nextAdvanceWindow = extendAdvanceWindowToCover(
+            fresh.advanceWindow,
+            grantedUntilDate,
+            hour
+          );
         }
 
         return {
@@ -722,8 +726,10 @@ export default function SeasonRoomPage() {
           resolvedAt: new Date().toISOString(),
           grantedUntil,
         };
-      }),
-    }));
+      });
+
+      return { ...fresh, extensionRequests, advanceWindow: nextAdvanceWindow };
+    });
     setMessage(approve ? "Extension granted." : "Extension denied.");
   }
 
@@ -1610,7 +1616,10 @@ export default function SeasonRoomPage() {
               </h3>
               <p className="mt-2 text-sm text-slate-400">
                 Grant, deny, remove, or manually add a request on behalf of
-                any player for {formatWeekLabel(currentWeek)}.
+                any player for {formatWeekLabel(currentWeek)}. Granting later
+                than the Anticipated Advance Time below pushes that window
+                out to match, so it never claims advancing before a granted
+                extension.
               </p>
 
               <div className="mt-4 flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-slate-900 p-4">
@@ -1669,7 +1678,8 @@ export default function SeasonRoomPage() {
                   {currentWeekExtensionRequests.map((request) => {
                     const player = players.find((p) => p.id === request.playerId);
                     const grantDate = grantDateInputs[request.id] ?? request.requestedUntilDate;
-                    const grantHour = grantHourInputs[request.id] ?? 20;
+                    const grantHour =
+                      grantHourInputs[request.id] ?? seasonData.advanceWindow?.endHour ?? 20;
 
                     const statusBorder =
                       request.status === "granted"

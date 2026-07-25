@@ -74,6 +74,11 @@ export default function SeasonRoomPage() {
   const [advanceDateInput, setAdvanceDateInput] = useState("");
   const [advanceStartHourInput, setAdvanceStartHourInput] = useState(19);
   const [advanceEndHourInput, setAdvanceEndHourInput] = useState(22);
+  const [manualWeekInput, setManualWeekInput] = useState("");
+  const [showAdvanceTimeModal, setShowAdvanceTimeModal] = useState(false);
+  const [advanceModalDate, setAdvanceModalDate] = useState("");
+  const [advanceModalStartHour, setAdvanceModalStartHour] = useState(19);
+  const [advanceModalEndHour, setAdvanceModalEndHour] = useState(22);
   const [extensionDate, setExtensionDate] = useState("");
   const [extensionReason, setExtensionReason] = useState("");
   const [isPostingToDiscord, setIsPostingToDiscord] = useState(false);
@@ -773,7 +778,12 @@ export default function SeasonRoomPage() {
     setMessage("Reminder removed.");
   }
 
-  async function advanceWeek() {
+  // Step 1: the existing "are you sure" check for outstanding players. If
+  // that's cleared, open the estimated-advance-time popup instead of
+  // advancing immediately -- the answer feeds directly into the Discord
+  // post announcing the new week, so it doesn't say "Not set" right after
+  // an advance.
+  function beginAdvanceWeek() {
     if (!seasonData || !season) return;
 
     const readyCount = readyPlayerIdsForWeek(seasonData, currentWeek).length;
@@ -786,6 +796,19 @@ export default function SeasonRoomPage() {
       if (!confirmed) return;
     }
 
+    setAdvanceModalDate("");
+    setAdvanceModalStartHour(19);
+    setAdvanceModalEndHour(22);
+    setShowAdvanceTimeModal(true);
+  }
+
+  // Step 2: actually advances the week, using whatever estimated advance
+  // time (or none, if skipped) came out of the popup.
+  async function confirmAdvanceWeek(nextAdvanceWindow: AdvanceWindow | null) {
+    if (!seasonData || !season) return;
+
+    setShowAdvanceTimeModal(false);
+
     const updated = await updateSeasonData((fresh) => {
       const freshNextWeek = fresh.currentWeek + 1;
       return {
@@ -796,7 +819,7 @@ export default function SeasonRoomPage() {
           [freshNextWeek]: fresh.readyPlayerIdsByWeek[freshNextWeek] ?? [],
         },
         periodLabel: null,
-        advanceWindow: null,
+        advanceWindow: nextAdvanceWindow,
       };
     });
 
@@ -822,6 +845,30 @@ export default function SeasonRoomPage() {
         ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.`
         : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post to Discord.`
     );
+  }
+
+  // Manual override for the current week -- e.g. correcting a mistake or
+  // skipping ahead -- without the confirm/notify/reset choreography of a
+  // normal advance.
+  async function setCurrentWeekManually() {
+    if (!seasonData) return;
+
+    const week = Number(manualWeekInput);
+    if (!Number.isFinite(week) || !Number.isInteger(week) || week < PRESEASON_WEEK) return;
+
+    const updated = await updateSeasonData((fresh) => ({
+      ...fresh,
+      currentWeek: week,
+      readyPlayerIdsByWeek: {
+        ...fresh.readyPlayerIdsByWeek,
+        [week]: fresh.readyPlayerIdsByWeek[week] ?? [],
+      },
+    }));
+
+    if (updated) {
+      setManualWeekInput("");
+      setMessage(`Current week set to ${formatWeekLabel(updated.currentWeek)}.`);
+    }
   }
 
   // Dev-only helper: seeds a realistic mix of ready/pending/granted/denied
@@ -1302,12 +1349,31 @@ export default function SeasonRoomPage() {
                   {readyPlayerIds.size}/{players.length} ready
                 </span>
                 <button
-                  onClick={advanceWeek}
+                  onClick={beginAdvanceWeek}
                   disabled={isSaving || players.length === 0}
                   className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Advance to {formatWeekLabel(currentWeek + 1)}
                 </button>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={PRESEASON_WEEK}
+                    value={manualWeekInput}
+                    onChange={(event) => setManualWeekInput(event.target.value)}
+                    placeholder="Week #"
+                    className="w-24 rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                  />
+                  <button
+                    onClick={setCurrentWeekManually}
+                    disabled={isSaving || manualWeekInput === ""}
+                    title="Manually set the current week to any value -- no confirmation prompt, no Discord post, no ready-list reset"
+                    className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Set Week
+                  </button>
+                </div>
 
                 <button
                   onClick={postSummaryToDiscord}
@@ -2125,6 +2191,92 @@ export default function SeasonRoomPage() {
           </div>
         </section>
       </section>
+
+      {showAdvanceTimeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <h3 className="text-lg font-black">Estimated Advance Time</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              Optional — set the anticipated advance window for{" "}
+              {formatWeekLabel(currentWeek + 1)} so it&apos;s included in the
+              Discord post announcing the new week.
+            </p>
+
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Date
+                <input
+                  type="date"
+                  value={advanceModalDate}
+                  onChange={(event) => setAdvanceModalDate(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                From
+                <select
+                  value={advanceModalStartHour}
+                  onChange={(event) => setAdvanceModalStartHour(Number(event.target.value))}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <option key={hour} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                To
+                <select
+                  value={advanceModalEndHour}
+                  onChange={(event) => setAdvanceModalEndHour(Number(event.target.value))}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <option key={hour} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                onClick={() => setShowAdvanceTimeModal(false)}
+                disabled={isSaving}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmAdvanceWeek(null)}
+                disabled={isSaving}
+                title="Advance without setting an estimated time"
+                className="rounded-2xl border border-white/10 bg-white/5 px-5 py-3 font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Skip
+              </button>
+              <button
+                onClick={() =>
+                  confirmAdvanceWeek({
+                    date: advanceModalDate,
+                    startHour: advanceModalStartHour,
+                    endHour: advanceModalEndHour,
+                  })
+                }
+                disabled={isSaving || !advanceModalDate}
+                className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Set &amp; Advance
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

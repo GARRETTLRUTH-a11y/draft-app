@@ -320,6 +320,50 @@ export default function SeasonListPage() {
           </section>
         )}
 
+        {userEmail && !isLoading && seasons.length > 0 && (
+          <section className="rounded-3xl border-2 border-cyan-400/40 bg-cyan-500/[0.08] p-6">
+            <div className="mb-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-300">
+              🏈 Daily Check-In
+            </div>
+            <h2 className="text-2xl font-black">Your Seasons</h2>
+
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {seasons.map((season) => (
+                <div
+                  key={season.id}
+                  className="rounded-3xl border border-cyan-400/20 bg-slate-950/40 p-6"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-lg font-black">{season.title}</h3>
+                      <p className="mt-2 text-xs text-slate-400">
+                        Updated {new Date(season.updated_at).toLocaleString()}
+                      </p>
+                    </div>
+
+                    <button
+                      onClick={() => deleteSeason(season.id)}
+                      title="Delete season"
+                      className="text-xs font-bold text-slate-500 transition hover:text-red-300"
+                    >
+                      ✕
+                    </button>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Link
+                      href={`/season/room/${season.id}`}
+                      className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+                    >
+                      Open Room
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         {userEmail && !isLoading && (
           <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
             <div className="flex items-start justify-between gap-3">
@@ -415,47 +459,6 @@ export default function SeasonListPage() {
               >
                 {isImportingCsv ? "Loading..." : "Load CSV & Create Season"}
               </button>
-            </div>
-          </section>
-        )}
-
-        {userEmail && !isLoading && seasons.length > 0 && (
-          <section>
-            <h2 className="text-2xl font-black">Existing Seasons</h2>
-
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {seasons.map((season) => (
-                <div
-                  key={season.id}
-                  className="rounded-3xl border border-white/10 bg-white/5 p-6"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="text-lg font-black">{season.title}</h3>
-                      <p className="mt-2 text-xs text-slate-400">
-                        Updated {new Date(season.updated_at).toLocaleString()}
-                      </p>
-                    </div>
-
-                    <button
-                      onClick={() => deleteSeason(season.id)}
-                      title="Delete season"
-                      className="text-xs font-bold text-slate-500 transition hover:text-red-300"
-                    >
-                      ✕
-                    </button>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap gap-2">
-                    <Link
-                      href={`/season/room/${season.id}`}
-                      className="rounded-2xl bg-cyan-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
-                    >
-                      Open Room
-                    </Link>
-                  </div>
-                </div>
-              ))}
             </div>
           </section>
         )}

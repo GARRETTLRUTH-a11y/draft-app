@@ -114,7 +114,7 @@ type DiscordInteraction = {
   };
 };
 
-type ResolvedPlayer = { seasonData: SeasonData; player: SeasonPlayer };
+type ResolvedPlayer = { seasonId: string; seasonData: SeasonData; player: SeasonPlayer };
 type ResolveError = { error: string; needsLink?: boolean };
 
 async function resolvePlayer(
@@ -165,11 +165,103 @@ async function resolvePlayer(
     return { error: "Couldn't match your claimed team to a player in this season." };
   }
 
-  return { seasonData, player };
+  return { seasonId, seasonData, player };
+}
+
+// Used by commands that aren't tied to a specific message/button (like
+// /rta), so there's no seasonId to read from a custom_id. Instead, finds
+// every season this Discord account's linked player has claimed a team in
+// and uses whichever one was updated most recently -- in practice this app
+// is run as one channel per active league, so that's the season currently
+// being checked into.
+async function resolveActiveSeasonForUser(
+  admin: SupabaseClient,
+  discordUserId: string
+): Promise<ResolvedPlayer | ResolveError> {
+  const { data: link } = await admin
+    .from("discord_links")
+    .select("user_id")
+    .eq("discord_user_id", discordUserId)
+    .maybeSingle();
+
+  if (!link) {
+    return {
+      error: "Your Discord account isn't linked yet. Click the button below to connect it, then try again.",
+      needsLink: true,
+    };
+  }
+
+  const { data: participants } = await admin
+    .from("season_participants")
+    .select("season_id, player_name")
+    .eq("user_id", link.user_id);
+
+  if (!participants || participants.length === 0) {
+    return { error: "You haven't claimed a team in any season yet -- do that on the site first." };
+  }
+
+  const { data: seasonRows, error: seasonError } = await admin
+    .from("seasons")
+    .select("id, season_data")
+    .in(
+      "id",
+      participants.map((p) => p.season_id)
+    )
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  const seasonRow = seasonRows?.[0];
+  if (seasonError || !seasonRow) {
+    return { error: "Couldn't find your season." };
+  }
+
+  const participant = participants.find((p) => p.season_id === seasonRow.id);
+  const seasonData = seasonRow.season_data as SeasonData;
+  const player = seasonData.players.find(
+    (p) => p.name.toLowerCase() === participant?.player_name.toLowerCase()
+  );
+
+  if (!player) {
+    return { error: "Couldn't match your claimed team to a player in this season." };
+  }
+
+  return { seasonId: seasonRow.id, seasonData, player };
 }
 
 function respondToResolveError(resolved: ResolveError) {
   return resolved.needsLink ? ephemeralNeedsLink(resolved.error) : ephemeral(resolved.error);
+}
+
+// Shared by the "I'm Ready" button and the /rta slash command.
+async function markPlayerReady(
+  admin: SupabaseClient,
+  seasonId: string,
+  seasonData: SeasonData,
+  player: SeasonPlayer
+) {
+  const week = seasonData.currentWeek;
+  const alreadyReady = (seasonData.readyPlayerIdsByWeek[week] ?? []).includes(player.id);
+
+  if (alreadyReady) {
+    return ephemeral(
+      `You're already marked ready for ${periodHeading(seasonData.periodLabel, week, seasonData.seasonYear)}.`
+    );
+  }
+
+  const nextSeasonData = withPlayerMarkedReady(seasonData, player.id, week);
+
+  const { error: updateError } = await admin
+    .from("seasons")
+    .update({ season_data: nextSeasonData, updated_at: new Date().toISOString() })
+    .eq("id", seasonId);
+
+  if (updateError) {
+    return ephemeral("Something went wrong saving your ready status. Try again.");
+  }
+
+  return ephemeral(
+    `✅ You're marked ready to advance for ${periodHeading(nextSeasonData.periodLabel, week, nextSeasonData.seasonYear)}.`
+  );
 }
 
 export async function POST(request: Request) {
@@ -210,6 +302,17 @@ export async function POST(request: Request) {
     return createLinkToken(admin, discordUserId, discordUsername);
   }
 
+  // Slash command: /rta -- same effect as clicking "I'm Ready", but doesn't
+  // require the message with the button to still be visible/scrolled to.
+  if (interaction.type === 2 && interaction.data?.name === "rta") {
+    if (!discordUserId) return ephemeral("Couldn't identify your Discord account.");
+
+    const resolved = await resolveActiveSeasonForUser(admin, discordUserId);
+    if ("error" in resolved) return respondToResolveError(resolved);
+
+    return markPlayerReady(admin, resolved.seasonId, resolved.seasonData, resolved.player);
+  }
+
   // Button click
   if (interaction.type === 3 && typeof interaction.data?.custom_id === "string") {
     const customId = interaction.data.custom_id;
@@ -225,30 +328,7 @@ export async function POST(request: Request) {
       const resolved = await resolvePlayer(admin, discordUserId, seasonId);
       if ("error" in resolved) return respondToResolveError(resolved);
 
-      const { seasonData, player } = resolved;
-      const week = seasonData.currentWeek;
-      const alreadyReady = (seasonData.readyPlayerIdsByWeek[week] ?? []).includes(player.id);
-
-      if (alreadyReady) {
-        return ephemeral(
-          `You're already marked ready for ${periodHeading(seasonData.periodLabel, week, seasonData.seasonYear)}.`
-        );
-      }
-
-      const nextSeasonData = withPlayerMarkedReady(seasonData, player.id, week);
-
-      const { error: updateError } = await admin
-        .from("seasons")
-        .update({ season_data: nextSeasonData, updated_at: new Date().toISOString() })
-        .eq("id", seasonId);
-
-      if (updateError) {
-        return ephemeral("Something went wrong saving your ready status. Try again.");
-      }
-
-      return ephemeral(
-        `✅ You're marked ready to advance for ${periodHeading(nextSeasonData.periodLabel, week, nextSeasonData.seasonYear)}.`
-      );
+      return markPlayerReady(admin, resolved.seasonId, resolved.seasonData, resolved.player);
     }
 
     if (customId.startsWith("extend:")) {

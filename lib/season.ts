@@ -128,37 +128,6 @@ export function advanceWindowEnd(window: AdvanceWindow | null | undefined): Date
   return new Date(year, month - 1, day, window.endHour, 0, 0, 0);
 }
 
-// Used when granting an extension: the season's general advance window
-// shouldn't claim everyone advances before the latest granted extension, so
-// granting later than the current window pushes it out to cover the grant.
-// If the grant is within (or earlier than) the current window, it's left
-// untouched.
-export function extendAdvanceWindowToCover(
-  current: AdvanceWindow | null | undefined,
-  date: string,
-  hour: number
-): AdvanceWindow {
-  if (!current) {
-    return { date, startHour: hour, endHour: hour };
-  }
-
-  const currentEnd = advanceWindowEnd(current);
-  const grantedEnd = advanceWindowEnd({ date, startHour: hour, endHour: hour });
-
-  if (!currentEnd || !grantedEnd || grantedEnd.getTime() <= currentEnd.getTime()) {
-    return current;
-  }
-
-  // Only carry over the existing start hour if the grant lands on the same
-  // day -- a later calendar day has no meaningful relationship to it.
-  const sameDay = current.date === date;
-  return {
-    date,
-    startHour: sameDay ? current.startHour : hour,
-    endHour: hour,
-  };
-}
-
 export function formatAdvanceWindow(window: AdvanceWindow | null | undefined): string {
   const start = advanceWindowStart(window);
   if (!window || !start) return "Not set";

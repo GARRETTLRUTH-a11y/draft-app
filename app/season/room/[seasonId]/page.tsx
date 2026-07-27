@@ -6,10 +6,10 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { teamColor } from "@/lib/cfbTeams";
 import {
+  advanceWindowEnd,
   advanceWindowStart,
   buildWeekSummary,
   DAY_LABELS,
-  extendAdvanceWindowToCover,
   formatAdvanceWindow,
   formatHourLabel,
   formatReminderDate,
@@ -85,8 +85,10 @@ export default function SeasonRoomPage() {
   const [isPostingToDiscord, setIsPostingToDiscord] = useState(false);
   const [isPostingNudge, setIsPostingNudge] = useState(false);
   const [isResyncingClaims, setIsResyncingClaims] = useState(false);
-  const [grantDateInputs, setGrantDateInputs] = useState<Record<string, string>>({});
-  const [grantHourInputs, setGrantHourInputs] = useState<Record<string, number>>({});
+  const [grantModalRequest, setGrantModalRequest] = useState<ExtensionRequest | null>(null);
+  const [grantModalDate, setGrantModalDate] = useState("");
+  const [grantModalStartHour, setGrantModalStartHour] = useState(19);
+  const [grantModalEndHour, setGrantModalEndHour] = useState(22);
   const [manualExtensionPlayerId, setManualExtensionPlayerId] = useState("");
   const [manualExtensionDate, setManualExtensionDate] = useState("");
   const [manualExtensionReason, setManualExtensionReason] = useState("");
@@ -688,49 +690,60 @@ export default function SeasonRoomPage() {
     });
   }
 
-  // On grant, the host picks the actual date + hour the extension runs
-  // until (defaulting to what the player asked for); deny needs no input.
-  async function resolveExtension(
-    requestId: string,
-    approve: boolean,
-    grantedUntilDate?: string,
-    grantedUntilHour?: number
-  ) {
+  // Opens the grant popup, prefilled from the current Anticipated Advance
+  // Time (or a sensible default if none is set yet) -- the commissioner
+  // adjusts it there rather than typing a date/hour inline on every row.
+  function beginGrantExtension(request: ExtensionRequest) {
+    const window = seasonData?.advanceWindow;
+    setGrantModalRequest(request);
+    setGrantModalDate(window?.date || request.requestedUntilDate);
+    setGrantModalStartHour(window?.startHour ?? 19);
+    setGrantModalEndHour(window?.endHour ?? 22);
+  }
+
+  // Grants a request and, in the same step, sets the season's general
+  // Anticipated Advance Time to whatever the commissioner picked in the
+  // grant popup -- that's now the real time everyone's expected to advance,
+  // since a player's extension was just built around it. Purely local:
+  // nothing gets posted to Discord here, that only happens when the
+  // commissioner manually uses one of the "Post to Discord" buttons.
+  async function grantExtension(requestId: string, advanceWindow: AdvanceWindow) {
     if (!seasonData) return;
 
-    await updateSeasonData((fresh) => {
-      let nextAdvanceWindow = fresh.advanceWindow;
+    setGrantModalRequest(null);
+    const grantedUntil = advanceWindowEnd(advanceWindow)?.toISOString();
 
-      const extensionRequests = fresh.extensionRequests.map((request) => {
-        if (request.id !== requestId) return request;
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      extensionRequests: fresh.extensionRequests.map((request) =>
+        request.id === requestId
+          ? {
+              ...request,
+              status: "granted" as const,
+              resolvedAt: new Date().toISOString(),
+              grantedUntil,
+            }
+          : request
+      ),
+      advanceWindow,
+    }));
 
-        let grantedUntil: string | undefined;
-        if (approve && grantedUntilDate) {
-          const hour = grantedUntilHour ?? fresh.advanceWindow?.endHour ?? 20;
-          const [year, month, day] = grantedUntilDate.split("-").map(Number);
-          grantedUntil = new Date(year, month - 1, day, hour, 0, 0, 0).toISOString();
+    setMessage("Extension granted and advance time updated.");
+  }
 
-          // The general "anticipated advance" window shouldn't claim
-          // everyone advances before this player's granted extension --
-          // push it out to cover the grant if it doesn't already.
-          nextAdvanceWindow = extendAdvanceWindowToCover(
-            fresh.advanceWindow,
-            grantedUntilDate,
-            hour
-          );
-        }
+  async function denyExtension(requestId: string) {
+    if (!seasonData) return;
 
-        return {
-          ...request,
-          status: approve ? ("granted" as const) : ("denied" as const),
-          resolvedAt: new Date().toISOString(),
-          grantedUntil,
-        };
-      });
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      extensionRequests: fresh.extensionRequests.map((request) =>
+        request.id === requestId
+          ? { ...request, status: "denied" as const, resolvedAt: new Date().toISOString() }
+          : request
+      ),
+    }));
 
-      return { ...fresh, extensionRequests, advanceWindow: nextAdvanceWindow };
-    });
-    setMessage(approve ? "Extension granted." : "Extension denied.");
+    setMessage("Extension denied.");
   }
 
   // Fully deletes a request (pending, granted, or denied) instead of just
@@ -1677,9 +1690,6 @@ export default function SeasonRoomPage() {
                 <div className="mt-4 flex flex-col gap-3">
                   {currentWeekExtensionRequests.map((request) => {
                     const player = players.find((p) => p.id === request.playerId);
-                    const grantDate = grantDateInputs[request.id] ?? request.requestedUntilDate;
-                    const grantHour =
-                      grantHourInputs[request.id] ?? seasonData.advanceWindow?.endHour ?? 20;
 
                     const statusBorder =
                       request.status === "granted"
@@ -1735,51 +1745,16 @@ export default function SeasonRoomPage() {
                         </div>
 
                         {request.status === "pending" && (
-                          <div className="mt-4 flex flex-wrap items-end gap-3">
-                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                              Grant until
-                              <input
-                                type="date"
-                                value={grantDate}
-                                onChange={(event) =>
-                                  setGrantDateInputs((current) => ({
-                                    ...current,
-                                    [request.id]: event.target.value,
-                                  }))
-                                }
-                                className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
-                              />
-                            </label>
-
-                            <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                              At
-                              <select
-                                value={grantHour}
-                                onChange={(event) =>
-                                  setGrantHourInputs((current) => ({
-                                    ...current,
-                                    [request.id]: Number(event.target.value),
-                                  }))
-                                }
-                                className="rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
-                              >
-                                {Array.from({ length: 24 }, (_, hour) => (
-                                  <option key={hour} value={hour}>
-                                    {formatHourLabel(hour)}
-                                  </option>
-                                ))}
-                              </select>
-                            </label>
-
+                          <div className="mt-4 flex flex-wrap gap-3">
                             <button
-                              onClick={() => resolveExtension(request.id, true, grantDate, grantHour)}
-                              disabled={isSaving || !grantDate}
+                              onClick={() => beginGrantExtension(request)}
+                              disabled={isSaving}
                               className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               Grant
                             </button>
                             <button
-                              onClick={() => resolveExtension(request.id, false)}
+                              onClick={() => denyExtension(request.id)}
                               disabled={isSaving}
                               className="rounded-2xl bg-red-400/80 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
                             >
@@ -2445,6 +2420,86 @@ export default function SeasonRoomPage() {
                 className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Set &amp; Advance
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {grantModalRequest && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-3xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+            <h3 className="text-lg font-black">Grant Extension</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              {players.find((p) => p.id === grantModalRequest.playerId)?.name || "This player"}{" "}
+              asked for until{" "}
+              {new Date(`${grantModalRequest.requestedUntilDate}T00:00:00`).toLocaleDateString()}.
+              Pick when advance should actually happen -- this becomes the
+              season&apos;s Anticipated Advance Time.
+            </p>
+
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Date
+                <input
+                  type="date"
+                  value={grantModalDate}
+                  onChange={(event) => setGrantModalDate(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                From
+                <select
+                  value={grantModalStartHour}
+                  onChange={(event) => setGrantModalStartHour(Number(event.target.value))}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <option key={hour} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                To
+                <select
+                  value={grantModalEndHour}
+                  onChange={(event) => setGrantModalEndHour(Number(event.target.value))}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                >
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <option key={hour} value={hour}>
+                      {formatHourLabel(hour)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                onClick={() => setGrantModalRequest(null)}
+                disabled={isSaving}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() =>
+                  grantExtension(grantModalRequest.id, {
+                    date: grantModalDate,
+                    startHour: grantModalStartHour,
+                    endHour: grantModalEndHour,
+                  })
+                }
+                disabled={isSaving || !grantModalDate}
+                className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Grant &amp; Update Advance Time
               </button>
             </div>
           </div>

@@ -2,7 +2,7 @@
 // host-triggered /api/discord/notify route and the background
 // /api/cron/season-reminders route, so both produce identical formatting.
 
-import { formatWeekLabel } from "@/lib/season";
+import { formatWeekLabel, REMINDER_TIMEZONE } from "@/lib/season";
 import type {
   DiscordExtensionSummary,
   DiscordGrantedSummary,
@@ -124,11 +124,21 @@ function statusFields(summary: DiscordWeekSummary) {
       (person) => `${personLine(person)} — until ${formatRequestedDate(person.requestedUntilDate)}`
     );
 
+  // This route always runs server-side (Vercel's UTC runtime), while the
+  // grant popup that produced `until` runs in the commissioner's browser --
+  // without pinning a timezone here, the same instant renders as a
+  // different wall-clock time than what was actually picked in the popup.
   const grantedLines = (list: DiscordGrantedSummary[]) =>
     list.map(
       (person) =>
         `${personLine(person)}${
-          person.until ? ` — until ${new Date(person.until).toLocaleString()}` : ""
+          person.until
+            ? ` — until ${new Date(person.until).toLocaleString(undefined, {
+                timeZone: REMINDER_TIMEZONE,
+                dateStyle: "short",
+                timeStyle: "short",
+              })}`
+            : ""
         }`
     );
 

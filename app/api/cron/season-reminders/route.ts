@@ -125,14 +125,31 @@ export async function GET(request: Request) {
         continue;
       }
 
-      const message = buildDiscordMessage({
-        type: "reminder",
-        seasonId: row.id,
-        periodHeading: periodHeading(seasonData.periodLabel, seasonData.currentWeek, seasonData.seasonYear),
-        summary: buildWeekSummary(seasonData, seasonData.currentWeek),
-        plannedAdvanceTime: formatAdvanceWindow(seasonData.advanceWindow),
-        pingEveryone: reminder.pingEveryone,
-      });
+      const message =
+        reminder.messageStyle === "limited"
+          ? buildDiscordMessage({
+              type: "nudge",
+              seasonId: row.id,
+              periodHeading: periodHeading(
+                seasonData.periodLabel,
+                seasonData.currentWeek,
+                seasonData.seasonYear
+              ),
+              plannedAdvanceTime: formatAdvanceWindow(seasonData.advanceWindow),
+              pingEveryone: reminder.pingEveryone,
+            })
+          : buildDiscordMessage({
+              type: "reminder",
+              seasonId: row.id,
+              periodHeading: periodHeading(
+                seasonData.periodLabel,
+                seasonData.currentWeek,
+                seasonData.seasonYear
+              ),
+              summary: buildWeekSummary(seasonData, seasonData.currentWeek),
+              plannedAdvanceTime: formatAdvanceWindow(seasonData.advanceWindow),
+              pingEveryone: reminder.pingEveryone,
+            });
 
       if (!message) {
         nextReminders.push(reminder);

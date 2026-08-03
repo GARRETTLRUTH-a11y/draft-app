@@ -43,6 +43,12 @@ export type ReminderSchedule = {
   // automatically, instead of recurring weekly on daysOfWeek.
   oneTime?: boolean;
   pingEveryone: boolean;
+  // "full" (default when unset) posts the whole ready/pending/granted/
+  // denied breakdown, same as the manual "Post to Discord" button.
+  // "limited" posts just the header + buttons, same as "Post Quick
+  // Reminder Link" -- for a lighter-weight nudge that doesn't call
+  // anyone out by name.
+  messageStyle?: "full" | "limited";
   enabled: boolean;
   // YYYY-MM-DD (in REMINDER_TIMEZONE) this reminder last fired on — guards
   // against sending twice for the same day when the cron job's check

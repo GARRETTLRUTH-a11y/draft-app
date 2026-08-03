@@ -253,11 +253,12 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     if (!payload.periodHeading || !payload.seasonId) return null;
 
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
+    const nudgeHeader = `# ${payload.periodHeading}\n## 🗓️ Planned advance: ${plannedAdvance}`;
 
     return {
-      content: `# ${payload.periodHeading}\n## 🗓️ Planned advance: ${plannedAdvance}`,
+      content: payload.pingEveryone ? `@everyone\n${nudgeHeader}` : nudgeHeader,
       embeds: [],
-      allowed_mentions: { parse: [] },
+      allowed_mentions: { parse: payload.pingEveryone ? ["everyone"] : [] },
       components: [actionButtonsRow(payload.seasonId)],
     };
   }

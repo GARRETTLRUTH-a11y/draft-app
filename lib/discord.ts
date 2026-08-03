@@ -68,4 +68,5 @@ export type DiscordNotifyPayload =
       seasonId: string;
       periodHeading: string;
       plannedAdvanceTime?: string | null;
+      pingEveryone?: boolean;
     };

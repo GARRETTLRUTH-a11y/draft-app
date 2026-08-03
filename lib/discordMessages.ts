@@ -12,8 +12,8 @@ import type {
 } from "@/lib/discord";
 
 const COLOR_READY = parseInt("4ade80", 16);
-const COLOR_PENDING = parseInt("f87171", 16);
 const COLOR_GOLD = parseInt("f5d273", 16);
+const COLOR_URGENT = parseInt("ED4245", 16);
 
 function personLine(person: DiscordPersonSummary) {
   return `**${person.team || person.name}** (${person.name})`;
@@ -188,16 +188,20 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     const reasonLine = payload.reason ? `\n> "${payload.reason}"` : "";
 
     return {
+      // "# " for the same big/bold treatment used elsewhere -- embeds
+      // can't control font size, so the attention-grabbing part has to
+      // live in the message content. @everyone since a pending request
+      // blocks the whole season from advancing until it's resolved.
+      content: `@everyone\n# 🚨 Extension Requested`,
       embeds: [
         {
-          title: "🕒 Extension Requested",
           description: `${personLine({ name: payload.playerName, team: payload.team })} requested an extension until ${formatRequestedDate(payload.requestedUntilDate)} for ${formatWeekLabel(payload.week)}.${reasonLine}`,
-          color: COLOR_PENDING,
+          color: COLOR_URGENT,
           footer: { text: payload.seasonTitle },
           timestamp: new Date().toISOString(),
         },
       ],
-      allowed_mentions: { parse: [] },
+      allowed_mentions: { parse: ["everyone"] },
     };
   }
 

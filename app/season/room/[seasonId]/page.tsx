@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { teamColor } from "@/lib/cfbTeams";
 import {
@@ -86,6 +86,8 @@ export default function SeasonRoomPage() {
   const [isPostingNudge, setIsPostingNudge] = useState(false);
   const [isResyncingClaims, setIsResyncingClaims] = useState(false);
   const [grantModalRequest, setGrantModalRequest] = useState<ExtensionRequest | null>(null);
+  const [showPendingExtensionAlert, setShowPendingExtensionAlert] = useState(false);
+  const hasShownPendingExtensionAlertRef = useRef(false);
   const [grantModalDate, setGrantModalDate] = useState("");
   const [grantModalStartHour, setGrantModalStartHour] = useState(19);
   const [grantModalEndHour, setGrantModalEndHour] = useState(22);
@@ -217,6 +219,20 @@ export default function SeasonRoomPage() {
     () => (seasonData ? pendingExtensionRequests(seasonData) : []),
     [seasonData]
   );
+
+  // Surface pending extension requests the moment the host lands on the
+  // page, instead of relying on them to notice the badge/list further
+  // down -- fires once per page load, not on every subsequent update
+  // (e.g. after they resolve one but others remain).
+  useEffect(() => {
+    if (isLoading || !isOwner || hasShownPendingExtensionAlertRef.current) return;
+    if (pendingRequests.length > 0) {
+      // One-shot reveal on page load, not a sync loop (guarded by the ref above).
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setShowPendingExtensionAlert(true);
+      hasShownPendingExtensionAlertRef.current = true;
+    }
+  }, [isLoading, isOwner, pendingRequests.length]);
 
   // Every extension request (pending, granted, or denied) for the current
   // week -- unlike pendingRequests, this includes resolved ones so the host
@@ -884,6 +900,18 @@ export default function SeasonRoomPage() {
   // an advance.
   function beginAdvanceWeek() {
     if (!seasonData || !season) return;
+
+    // Hard stop, not a confirm-and-override -- a pending extension means
+    // someone's explicitly asked for more time, so advancing out from
+    // under them isn't a call the "advance anyway?" confirm below should
+    // be able to make.
+    if (pendingRequests.length > 0) {
+      setShowPendingExtensionAlert(true);
+      window.alert(
+        `${pendingRequests.length} extension request(s) still need a Grant or Deny before you can advance.`
+      );
+      return;
+    }
 
     const readyCount = readyPlayerIdsForWeek(seasonData, currentWeek).length;
     const outstanding = players.length - readyCount;
@@ -2344,6 +2372,73 @@ export default function SeasonRoomPage() {
           </div>
         </section>
       </section>
+
+      {showPendingExtensionAlert && pendingRequests.length > 0 && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-3xl border-2 border-red-400/40 bg-slate-900 p-6 shadow-2xl">
+            <h3 className="text-lg font-black text-red-300">
+              🚨 {pendingRequests.length} Extension Request
+              {pendingRequests.length === 1 ? "" : "s"} Waiting
+            </h3>
+            <p className="mt-2 text-sm text-slate-400">
+              You can&apos;t advance the week until every request below is
+              granted or denied.
+            </p>
+
+            <div className="mt-4 flex flex-col gap-3">
+              {pendingRequests.map((request) => {
+                const player = players.find((p) => p.id === request.playerId);
+                return (
+                  <div
+                    key={request.id}
+                    className="rounded-2xl border border-red-400/20 bg-slate-950 p-4"
+                  >
+                    <p className="font-black">
+                      {player?.team || player?.name || "Unknown player"}{" "}
+                      <span className="font-normal text-slate-400">
+                        — {formatWeekLabel(request.week)}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-sm text-slate-400">
+                      Requested until{" "}
+                      {new Date(`${request.requestedUntilDate}T00:00:00`).toLocaleDateString()}
+                      {request.reason ? ` — "${request.reason}"` : ""}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-3">
+                      <button
+                        onClick={() => {
+                          setShowPendingExtensionAlert(false);
+                          beginGrantExtension(request);
+                        }}
+                        disabled={isSaving}
+                        className="rounded-2xl bg-green-400 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Grant
+                      </button>
+                      <button
+                        onClick={() => denyExtension(request.id)}
+                        disabled={isSaving}
+                        className="rounded-2xl bg-red-400/80 px-4 py-2 text-sm font-bold text-slate-950 transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowPendingExtensionAlert(false)}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15"
+              >
+                Review Later
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdvanceTimeModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

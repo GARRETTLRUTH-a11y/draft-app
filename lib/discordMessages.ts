@@ -251,7 +251,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
 
     return {
-      content: `# ${payload.periodHeading}\n-# 🗓️ Planned advance: ${plannedAdvance}`,
+      content: `# ${payload.periodHeading}\n## 🗓️ Planned advance: ${plannedAdvance}`,
       embeds: [],
       allowed_mentions: { parse: [] },
       components: [actionButtonsRow(payload.seasonId)],

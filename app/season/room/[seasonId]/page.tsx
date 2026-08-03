@@ -917,6 +917,10 @@ export default function SeasonRoomPage() {
           ...fresh.readyPlayerIdsByWeek,
           [freshNextWeek]: fresh.readyPlayerIdsByWeek[freshNextWeek] ?? [],
         },
+        // Every extension request -- pending, granted, or denied -- was
+        // for the week we're leaving, so none of it carries forward.
+        // Each week starts fresh.
+        extensionRequests: [],
         periodLabel: null,
         advanceWindow: nextAdvanceWindow,
       };
@@ -931,11 +935,12 @@ export default function SeasonRoomPage() {
 
     // Auto-post so everyone gets a fresh "I'm Ready" prompt for the new
     // week immediately, instead of waiting on the next scheduled reminder.
+    // Just the header + buttons -- nobody's had a chance to be not-ready
+    // yet for a week that just started, so there's no list worth posting.
     const posted = await notifyDiscord({
-      type: "summary",
+      type: "nudge",
       seasonId: season.id,
       periodHeading: periodHeading(updated.periodLabel, updated.currentWeek, updated.seasonYear),
-      summary: buildWeekSummary(updated, updated.currentWeek),
       plannedAdvanceTime: formatAdvanceWindow(updated.advanceWindow),
     });
 

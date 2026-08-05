@@ -42,6 +42,15 @@ export type DiscordNotifyPayload =
       reason?: string;
     }
   | {
+      type: "extension_granted";
+      seasonTitle: string;
+      week: number;
+      playerName: string;
+      team?: string;
+      // Pre-formatted display string, e.g. "Wednesday, 8/6/2026, 7:00 PM – 10:00 PM".
+      newTime: string;
+    }
+  | {
       type: "summary";
       seasonId: string;
       // The big header text, e.g. "Preseason 2026" or "Week 3 2026".

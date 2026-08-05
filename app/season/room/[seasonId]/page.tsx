@@ -723,16 +723,14 @@ export default function SeasonRoomPage() {
   // Grants a request and, in the same step, sets the season's general
   // Anticipated Advance Time to whatever the commissioner picked in the
   // grant popup -- that's now the real time everyone's expected to advance,
-  // since a player's extension was just built around it. Purely local:
-  // nothing gets posted to Discord here, that only happens when the
-  // commissioner manually uses one of the "Post to Discord" buttons.
+  // since a player's extension was just built around it.
   async function grantExtension(requestId: string, advanceWindow: AdvanceWindow) {
     if (!seasonData) return;
 
     setGrantModalRequest(null);
     const grantedUntil = advanceWindowEnd(advanceWindow)?.toISOString();
 
-    await updateSeasonData((fresh) => ({
+    const updated = await updateSeasonData((fresh) => ({
       ...fresh,
       extensionRequests: fresh.extensionRequests.map((request) =>
         request.id === requestId
@@ -748,6 +746,21 @@ export default function SeasonRoomPage() {
     }));
 
     setMessage("Extension granted and advance time updated.");
+
+    if (!updated) return;
+
+    const grantedRequest = updated.extensionRequests.find((request) => request.id === requestId);
+    const player = grantedRequest && updated.players.find((p) => p.id === grantedRequest.playerId);
+    if (!player) return;
+
+    notifyDiscord({
+      type: "extension_granted",
+      seasonTitle: updated.seasonTitle,
+      week: grantedRequest.week,
+      playerName: player.name,
+      team: player.team,
+      newTime: formatAdvanceWindow(advanceWindow),
+    });
   }
 
   async function denyExtension(requestId: string) {

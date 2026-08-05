@@ -205,6 +205,26 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     };
   }
 
+  if (payload.type === "extension_granted") {
+    if (!payload.playerName || !payload.seasonTitle || !payload.newTime) return null;
+
+    return {
+      // Same big/bold + red + @everyone treatment as the request alert --
+      // a granted extension moves the season's advance time, so everyone
+      // needs to see the new time, not just whoever asked.
+      content: `@everyone\n# 🔴 Extension Granted`,
+      embeds: [
+        {
+          description: `${personLine({ name: payload.playerName, team: payload.team })}'s extension for ${formatWeekLabel(payload.week)} was granted.\n**New advance time: ${payload.newTime}**`,
+          color: COLOR_URGENT,
+          footer: { text: payload.seasonTitle },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      allowed_mentions: { parse: ["everyone"] },
+    };
+  }
+
   if (payload.type === "summary") {
     if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 

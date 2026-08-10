@@ -6,20 +6,13 @@ import type { DiscordMessage } from "@/lib/discordMessages";
 export type DiscordSendResult = { ok: true } | { ok: false; error: string };
 
 export async function sendDiscordMessage(message: DiscordMessage): Promise<DiscordSendResult> {
-  // Buttons only work when the bot sends the message -- Discord routes a
-  // component interaction back to whichever Application owns the message,
-  // and a plain incoming webhook doesn't own one.
-  if (message.components && message.components.length > 0) {
-    const botToken = process.env.DISCORD_BOT_TOKEN;
-    const channelId = process.env.DISCORD_CHANNEL_ID;
+  // Prefer the bot whenever it's configured, so every message -- not just
+  // ones with buttons -- posts as the actual "RTA Tool" bot identity
+  // instead of a plain incoming webhook's generic name/avatar.
+  const botToken = process.env.DISCORD_BOT_TOKEN;
+  const channelId = process.env.DISCORD_CHANNEL_ID;
 
-    if (!botToken || !channelId) {
-      return {
-        ok: false,
-        error: "DISCORD_BOT_TOKEN/DISCORD_CHANNEL_ID are not configured on the server.",
-      };
-    }
-
+  if (botToken && channelId) {
     const response = await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
       method: "POST",
       headers: {
@@ -35,6 +28,16 @@ export async function sendDiscordMessage(message: DiscordMessage): Promise<Disco
     }
 
     return { ok: true };
+  }
+
+  // Buttons only work when the bot sends the message -- Discord routes a
+  // component interaction back to whichever Application owns the message,
+  // and a plain incoming webhook doesn't own one.
+  if (message.components && message.components.length > 0) {
+    return {
+      ok: false,
+      error: "DISCORD_BOT_TOKEN/DISCORD_CHANNEL_ID are not configured on the server.",
+    };
   }
 
   const webhookUrl = process.env.DISCORD_WEBHOOK_URL;

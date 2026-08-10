@@ -209,13 +209,13 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     if (!payload.playerName || !payload.seasonTitle || !payload.newTime) return null;
 
     return {
-      // Same big/bold + red + @everyone treatment as the request alert --
-      // a granted extension moves the season's advance time, so everyone
-      // needs to see the new time, not just whoever asked.
-      content: `@everyone\n# 🔴 Extension Granted`,
+      // Same big/bold + red + @everyone treatment as the request alert,
+      // and the new time gets the same "## " header size/placement as
+      // Planned Advance elsewhere instead of being buried in the embed.
+      content: `@everyone\n# 🔴 Extension Granted\n## 🕒 New Advance Time: ${payload.newTime}`,
       embeds: [
         {
-          description: `${personLine({ name: payload.playerName, team: payload.team })}'s extension for ${formatWeekLabel(payload.week)} was granted.\n**New advance time: ${payload.newTime}**`,
+          description: `${personLine({ name: payload.playerName, team: payload.team })}'s extension for ${formatWeekLabel(payload.week)} was granted.`,
           color: COLOR_URGENT,
           footer: { text: payload.seasonTitle },
           timestamp: new Date().toISOString(),

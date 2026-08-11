@@ -988,6 +988,7 @@ export default function SeasonRoomPage() {
       seasonId: season.id,
       periodHeading: periodHeading(updated.periodLabel, updated.currentWeek, updated.seasonYear),
       plannedAdvanceTime: formatAdvanceWindow(updated.advanceWindow),
+      pingEveryone: true,
     });
 
     setMessage(

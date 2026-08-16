@@ -188,14 +188,13 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     const reasonLine = payload.reason ? `\n> "${payload.reason}"` : "";
 
     return {
-      // "# " for the same big/bold treatment used elsewhere -- embeds
-      // can't control font size, so the attention-grabbing part has to
-      // live in the message content. @everyone since a pending request
-      // blocks the whole season from advancing until it's resolved.
-      content: `@everyone\n# 🚨 Extension Requested`,
+      // Same big/bold + red + @everyone treatment as the granted alert --
+      // the requested-until date gets its own "## " header line instead
+      // of being buried in the embed, same as New Advance Time does below.
+      content: `@everyone\n# ⏸️ Extension Requested\n## 🕒 Requested Until: ${formatRequestedDate(payload.requestedUntilDate)}`,
       embeds: [
         {
-          description: `${personLine({ name: payload.playerName, team: payload.team })} requested an extension until ${formatRequestedDate(payload.requestedUntilDate)} for ${formatWeekLabel(payload.week)}.${reasonLine}`,
+          description: `${personLine({ name: payload.playerName, team: payload.team })} requested an extension for ${formatWeekLabel(payload.week)}.${reasonLine}`,
           color: COLOR_URGENT,
           footer: { text: payload.seasonTitle },
           timestamp: new Date().toISOString(),
@@ -212,7 +211,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
       // Same big/bold + red + @everyone treatment as the request alert,
       // and the new time gets the same "## " header size/placement as
       // Planned Advance elsewhere instead of being buried in the embed.
-      content: `@everyone\n# 🔴 Extension Granted\n## 🕒 New Advance Time: ${payload.newTime}`,
+      content: `@everyone\n# ✅ Extension Granted\n## 🕒 New Advance Time: ${payload.newTime}`,
       embeds: [
         {
           description: `${personLine({ name: payload.playerName, team: payload.team })}'s extension for ${formatWeekLabel(payload.week)} was granted.`,

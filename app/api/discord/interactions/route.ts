@@ -8,6 +8,8 @@ import {
   type SeasonData,
   type SeasonPlayer,
 } from "@/lib/season";
+import { buildDiscordMessage } from "@/lib/discordMessages";
+import { sendDiscordMessage } from "@/lib/discordSend";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
 // Discord's raw 32-byte hex public key into a format Node's crypto module
@@ -449,6 +451,22 @@ export async function POST(request: Request) {
 
       if (updateError) {
         return ephemeral("Something went wrong saving your extension request. Try again.");
+      }
+
+      // The modal reply above is ephemeral (only the requester sees it) --
+      // this is the public @everyone alert, same as the website's "Request
+      // Extension" button posts.
+      const publicMessage = buildDiscordMessage({
+        type: "extension_requested",
+        seasonTitle: seasonData.seasonTitle,
+        week,
+        playerName: player.name,
+        team: player.team,
+        requestedUntilDate,
+        reason,
+      });
+      if (publicMessage) {
+        await sendDiscordMessage(publicMessage);
       }
 
       return ephemeral(

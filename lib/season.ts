@@ -26,6 +26,11 @@ export type AdvanceWindow = {
   date: string; // YYYY-MM-DD
   startHour: number; // 0-23
   endHour: number; // 0-23
+  // Free-text override, e.g. "After the Colorado game completes" -- when
+  // set, this is shown everywhere instead of the date/hour range, and
+  // there's no concrete Date to count down to, so advanceWindowStart/End
+  // just return null.
+  customText?: string | null;
 };
 
 // A recurring automatic Discord reminder, sent by a background cron job
@@ -165,20 +170,23 @@ export function formatHourLabel(hour: number): string {
 }
 
 export function advanceWindowStart(window: AdvanceWindow | null | undefined): Date | null {
-  if (!window) return null;
+  if (!window || window.customText?.trim()) return null;
   const [year, month, day] = window.date.split("-").map(Number);
   if (!year || !month || !day) return null;
   return new Date(year, month - 1, day, window.startHour, 0, 0, 0);
 }
 
 export function advanceWindowEnd(window: AdvanceWindow | null | undefined): Date | null {
-  if (!window) return null;
+  if (!window || window.customText?.trim()) return null;
   const [year, month, day] = window.date.split("-").map(Number);
   if (!year || !month || !day) return null;
   return new Date(year, month - 1, day, window.endHour, 0, 0, 0);
 }
 
 export function formatAdvanceWindow(window: AdvanceWindow | null | undefined): string {
+  const customText = window?.customText?.trim();
+  if (customText) return customText;
+
   const start = advanceWindowStart(window);
   if (!window || !start) return "Not set";
   const dayName = start.toLocaleDateString(undefined, { weekday: "long" });

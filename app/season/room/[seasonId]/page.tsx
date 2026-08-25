@@ -76,11 +76,13 @@ export default function SeasonRoomPage() {
   const [advanceDateInput, setAdvanceDateInput] = useState("");
   const [advanceStartHourInput, setAdvanceStartHourInput] = useState(19);
   const [advanceEndHourInput, setAdvanceEndHourInput] = useState(22);
+  const [advanceCustomText, setAdvanceCustomText] = useState("");
   const [manualWeekInput, setManualWeekInput] = useState("");
   const [showAdvanceTimeModal, setShowAdvanceTimeModal] = useState(false);
   const [advanceModalDate, setAdvanceModalDate] = useState("");
   const [advanceModalStartHour, setAdvanceModalStartHour] = useState(19);
   const [advanceModalEndHour, setAdvanceModalEndHour] = useState(22);
+  const [advanceModalCustomText, setAdvanceModalCustomText] = useState("");
   const [extensionDate, setExtensionDate] = useState("");
   const [extensionReason, setExtensionReason] = useState("");
   const [isPostingToDiscord, setIsPostingToDiscord] = useState(false);
@@ -92,6 +94,7 @@ export default function SeasonRoomPage() {
   const [grantModalDate, setGrantModalDate] = useState("");
   const [grantModalStartHour, setGrantModalStartHour] = useState(19);
   const [grantModalEndHour, setGrantModalEndHour] = useState(22);
+  const [grantModalCustomText, setGrantModalCustomText] = useState("");
   const [manualExtensionPlayerId, setManualExtensionPlayerId] = useState("");
   const [manualExtensionDate, setManualExtensionDate] = useState("");
   const [manualExtensionReason, setManualExtensionReason] = useState("");
@@ -719,6 +722,7 @@ export default function SeasonRoomPage() {
     setGrantModalDate(window?.date || request.requestedUntilDate);
     setGrantModalStartHour(window?.startHour ?? 19);
     setGrantModalEndHour(window?.endHour ?? 22);
+    setGrantModalCustomText(window?.customText || "");
   }
 
   // Grants a request and, in the same step, sets the season's general
@@ -945,6 +949,7 @@ export default function SeasonRoomPage() {
     setAdvanceModalDate("");
     setAdvanceModalStartHour(19);
     setAdvanceModalEndHour(22);
+    setAdvanceModalCustomText("");
     setShowAdvanceTimeModal(true);
   }
 
@@ -1603,7 +1608,9 @@ export default function SeasonRoomPage() {
               <h3 className="text-lg font-black">Anticipated Advance Time</h3>
               <p className="mt-2 text-sm text-slate-400">
                 A rough window for when you plan to advance — hour precision
-                only, e.g. 7:00 PM – 10:00 PM.
+                only, e.g. 7:00 PM – 10:00 PM. Or skip the date/time below and
+                type a custom message instead, e.g. &quot;After the Colorado
+                game completes&quot;.
               </p>
 
               <div className="mt-4 flex flex-wrap items-end gap-3">
@@ -1647,15 +1654,27 @@ export default function SeasonRoomPage() {
                   </select>
                 </label>
 
+                <label className="flex flex-1 flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Or a custom message
+                  <input
+                    type="text"
+                    value={advanceCustomText}
+                    onChange={(event) => setAdvanceCustomText(event.target.value)}
+                    placeholder='e.g. "After the Colorado game completes"'
+                    className="min-w-[16rem] rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                  />
+                </label>
+
                 <button
                   onClick={() =>
                     setAdvanceWindow({
                       date: advanceDateInput,
                       startHour: advanceStartHourInput,
                       endHour: advanceEndHourInput,
+                      customText: advanceCustomText.trim() || null,
                     })
                   }
-                  disabled={isSaving || !advanceDateInput}
+                  disabled={isSaving || (!advanceDateInput && !advanceCustomText.trim())}
                   className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Set Advance Time
@@ -2153,21 +2172,19 @@ export default function SeasonRoomPage() {
                   )}
                 </div>
 
-                {seasonData.advanceWindow && (
+                {seasonData.advanceWindow && remainingSeconds != null && (
                   <p
                     className={`mt-3 text-lg font-black ${
                       isAdvanceWindowPassed
                         ? "text-red-400"
-                        : remainingSeconds != null && remainingSeconds <= 3600
+                        : remainingSeconds <= 3600
                           ? "text-yellow-300"
                           : "text-cyan-300"
                     }`}
                   >
                     {isAdvanceWindowPassed
                       ? "Advance window has started"
-                      : remainingSeconds != null
-                        ? `${formatClock(remainingSeconds)} until advance window`
-                        : null}
+                      : `${formatClock(remainingSeconds)} until advance window`}
                   </p>
                 )}
 
@@ -2543,6 +2560,17 @@ export default function SeasonRoomPage() {
               </label>
             </div>
 
+            <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-slate-400">
+              Or a custom message (overrides the date/time above)
+              <input
+                type="text"
+                value={advanceModalCustomText}
+                onChange={(event) => setAdvanceModalCustomText(event.target.value)}
+                placeholder='e.g. "After the Colorado game completes"'
+                className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+              />
+            </label>
+
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button
                 onClick={() => setShowAdvanceTimeModal(false)}
@@ -2565,9 +2593,10 @@ export default function SeasonRoomPage() {
                     date: advanceModalDate,
                     startHour: advanceModalStartHour,
                     endHour: advanceModalEndHour,
+                    customText: advanceModalCustomText.trim() || null,
                   })
                 }
-                disabled={isSaving || !advanceModalDate}
+                disabled={isSaving || (!advanceModalDate && !advanceModalCustomText.trim())}
                 className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Set &amp; Advance
@@ -2631,6 +2660,17 @@ export default function SeasonRoomPage() {
               </label>
             </div>
 
+            <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-slate-400">
+              Or a custom message (overrides the date/time above)
+              <input
+                type="text"
+                value={grantModalCustomText}
+                onChange={(event) => setGrantModalCustomText(event.target.value)}
+                placeholder='e.g. "After the Colorado game completes"'
+                className="rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-white outline-none focus:border-cyan-300"
+              />
+            </label>
+
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button
                 onClick={() => setGrantModalRequest(null)}
@@ -2645,9 +2685,10 @@ export default function SeasonRoomPage() {
                     date: grantModalDate,
                     startHour: grantModalStartHour,
                     endHour: grantModalEndHour,
+                    customText: grantModalCustomText.trim() || null,
                   })
                 }
-                disabled={isSaving || !grantModalDate}
+                disabled={isSaving || (!grantModalDate && !grantModalCustomText.trim())}
                 className="rounded-2xl bg-green-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Grant &amp; Update Advance Time

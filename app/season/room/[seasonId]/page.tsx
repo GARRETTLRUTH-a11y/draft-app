@@ -2465,6 +2465,14 @@ export default function SeasonRoomPage() {
                       >
                         Deny
                       </button>
+                      <button
+                        onClick={() => removeExtensionRequest(request.id)}
+                        disabled={isSaving}
+                        title="Deletes the request with no grant/deny action taken"
+                        className="rounded-2xl border border-white/10 bg-white/5 px-4 py-2 text-sm font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Clear
+                      </button>
                     </div>
                   </div>
                 );

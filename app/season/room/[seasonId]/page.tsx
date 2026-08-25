@@ -87,6 +87,7 @@ export default function SeasonRoomPage() {
   const [extensionReason, setExtensionReason] = useState("");
   const [isPostingToDiscord, setIsPostingToDiscord] = useState(false);
   const [isPostingNudge, setIsPostingNudge] = useState(false);
+  const [postPingEveryone, setPostPingEveryone] = useState(false);
   const [isResyncingClaims, setIsResyncingClaims] = useState(false);
   const [grantModalRequest, setGrantModalRequest] = useState<ExtensionRequest | null>(null);
   const [showPendingExtensionAlert, setShowPendingExtensionAlert] = useState(false);
@@ -442,6 +443,7 @@ export default function SeasonRoomPage() {
       periodHeading: periodHeading(fresh.periodLabel, freshWeek, fresh.seasonYear),
       summary: buildWeekSummary(fresh, freshWeek),
       plannedAdvanceTime: formatAdvanceWindow(fresh.advanceWindow),
+      pingEveryone: postPingEveryone,
     });
 
     setSeason((current) => (current ? { ...current, season_data: fresh } : current));
@@ -468,6 +470,7 @@ export default function SeasonRoomPage() {
       seasonId: season.id,
       periodHeading: periodHeading(fresh.periodLabel, fresh.currentWeek, fresh.seasonYear),
       plannedAdvanceTime: formatAdvanceWindow(fresh.advanceWindow),
+      pingEveryone: postPingEveryone,
     });
 
     setSeason((current) => (current ? { ...current, season_data: fresh } : current));
@@ -1553,6 +1556,16 @@ export default function SeasonRoomPage() {
                 >
                   {isPostingNudge ? "Posting..." : "Post Quick Reminder Link"}
                 </button>
+
+                <label className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+                  <input
+                    type="checkbox"
+                    checked={postPingEveryone}
+                    onChange={(event) => setPostPingEveryone(event.target.checked)}
+                    className="h-4 w-4 accent-red-400"
+                  />
+                  Ping @everyone
+                </label>
 
                 {process.env.NODE_ENV !== "production" && (
                   <button

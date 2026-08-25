@@ -228,13 +228,14 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 
     const plannedAdvance = payload.plannedAdvanceTime || "Not set";
+    // "# " and "## " are Discord's native header markdown — the only way to
+    // get bigger text, since embeds don't support custom font sizes.
+    // Planned Advance Time lives here (not as an embed field) so it's
+    // actually readable at a glance instead of small embed text.
+    const summaryHeader = `# ${payload.periodHeading}\n## 🗓️ Planned Advance: ${plannedAdvance}`;
 
     return {
-      // "# " and "## " are Discord's native header markdown — the only
-      // way to get bigger text, since embeds don't support custom font
-      // sizes. Planned Advance Time lives here (not as an embed field) so
-      // it's actually readable at a glance instead of small embed text.
-      content: `# ${payload.periodHeading}\n## 🗓️ Planned Advance: ${plannedAdvance}`,
+      content: payload.pingEveryone ? `@everyone\n${summaryHeader}` : summaryHeader,
       embeds: [
         {
           color: COLOR_GOLD,
@@ -242,7 +243,7 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
           timestamp: new Date().toISOString(),
         },
       ],
-      allowed_mentions: { parse: [] },
+      allowed_mentions: { parse: payload.pingEveryone ? ["everyone"] : [] },
       components: [actionButtonsRow(payload.seasonId)],
     };
   }

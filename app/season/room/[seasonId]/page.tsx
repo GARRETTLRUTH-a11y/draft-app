@@ -20,6 +20,7 @@ import {
   periodHeading,
   readyPlayerIdsForWeek,
   PRESEASON_WEEK,
+  SEASON_STAGE_LABELS,
   type AdvanceWindow,
   type ExtensionRequest,
   type ReminderSchedule,
@@ -1508,21 +1509,25 @@ export default function SeasonRoomPage() {
                 </button>
 
                 <div className="flex items-center gap-2">
-                  <input
-                    type="number"
-                    min={PRESEASON_WEEK}
+                  <select
                     value={manualWeekInput}
                     onChange={(event) => setManualWeekInput(event.target.value)}
-                    placeholder="Week #"
-                    className="w-24 rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
-                  />
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                  >
+                    <option value="">Jump to stage…</option>
+                    {SEASON_STAGE_LABELS.map((label, week) => (
+                      <option key={week} value={week}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     onClick={setCurrentWeekManually}
                     disabled={isSaving || manualWeekInput === ""}
                     title="Manually set the current week to any value -- no confirmation prompt, no Discord post, no ready-list reset"
                     className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    Set Week
+                    Set Stage
                   </button>
                 </div>
 

@@ -98,8 +98,52 @@ export function formatReminderDays(daysOfWeek: number[]): string {
 // begin. Week 1 and onward are the actual regular-season weeks.
 export const PRESEASON_WEEK = 0;
 
+// The full season -> playoffs -> offseason progression "Advance" steps
+// through, in order. `currentWeek` is just an index into this list -- kept
+// as a plain number (not the stage name) so readyPlayerIdsByWeek and
+// extensionRequests, which are keyed by week, don't need to change.
+export const SEASON_STAGE_LABELS: string[] = [
+  "Preseason",
+  "Week 0",
+  "Week 1",
+  "Week 2",
+  "Week 3",
+  "Week 4",
+  "Week 5",
+  "Week 6",
+  "Week 7",
+  "Week 8",
+  "Week 9",
+  "Week 10",
+  "Week 11",
+  "Week 12",
+  "Week 13",
+  "Week 14",
+  "Week 15",
+  "Conference Championships",
+  "CFP First Round",
+  "CFP Quarterfinals",
+  "CFP Semifinals",
+  "CFP National Championship",
+  "End of Season",
+  "Players Leaving",
+  "Transfer Portal / Recruiting — Week 1",
+  "Transfer Portal / Recruiting — Week 2",
+  "Transfer Portal / Recruiting — Week 3",
+  "Transfer Portal / Recruiting — Week 4",
+  "National Signing Day",
+  "Position Changes",
+  "Training Results",
+  "Encourage Transfers",
+  "Set Up Recruiting Board / Preseason",
+  "Next Season Preseason",
+];
+
 export function formatWeekLabel(week: number): string {
-  return week <= PRESEASON_WEEK ? "Preseason" : `Week ${week}`;
+  // Falls back to a generic label past the end of the list (or for any
+  // legacy data with a week number this scheme doesn't cover) instead of
+  // breaking -- the host can always retitle via the Current Week override.
+  return SEASON_STAGE_LABELS[week] ?? `Week ${week}`;
 }
 
 // The big display heading: the (possibly custom) period label plus the

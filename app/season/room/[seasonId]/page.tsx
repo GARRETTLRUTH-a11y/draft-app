@@ -2109,7 +2109,7 @@ export default function SeasonRoomPage() {
                       />
 
                       <span
-                        className={`flex-shrink-0 text-xs font-bold ${
+                        className={`w-20 flex-shrink-0 text-center text-xs font-bold ${
                           participant ? "text-cyan-300" : "text-slate-500"
                         }`}
                       >
@@ -2120,7 +2120,7 @@ export default function SeasonRoomPage() {
                         onClick={() => hostSetPlayerReady(player, !readyPlayerIds.has(player.id))}
                         disabled={isSaving}
                         title="Toggle this player's ready status for the current week"
-                        className={`flex-shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                        className={`w-24 flex-shrink-0 rounded-xl border px-3 py-1.5 text-center text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                           readyPlayerIds.has(player.id)
                             ? "border-green-400/40 bg-green-400/20 text-green-200 hover:bg-green-400/30"
                             : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
@@ -2129,36 +2129,40 @@ export default function SeasonRoomPage() {
                         {readyPlayerIds.has(player.id) ? "✓ Ready" : "Mark Ready"}
                       </button>
 
-                      {participant && (
-                        <button
-                          onClick={() => toggleCoAdmin(participant)}
-                          disabled={isSaving}
-                          title="Co-admins can only mark players ready/not ready -- no other admin controls"
-                          className={`flex-shrink-0 rounded-xl border px-3 py-1.5 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                            participant.is_co_admin
+                      <button
+                        onClick={() => participant && toggleCoAdmin(participant)}
+                        disabled={isSaving || !participant}
+                        title={
+                          participant
+                            ? "Co-admins can only mark players ready/not ready -- no other admin controls"
+                            : "Only a claimed player can be made a co-admin"
+                        }
+                        className={`w-32 flex-shrink-0 rounded-xl border px-3 py-1.5 text-center text-xs font-bold transition disabled:cursor-not-allowed ${
+                          !participant
+                            ? "invisible"
+                            : participant.is_co_admin
                               ? "border-purple-400/40 bg-purple-400/20 text-purple-200 hover:bg-purple-400/30"
                               : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
-                          }`}
-                        >
-                          {participant.is_co_admin ? "🛡️ Co-Admin" : "Make Co-Admin"}
-                        </button>
-                      )}
+                        }`}
+                      >
+                        {participant?.is_co_admin ? "🛡️ Co-Admin" : "Make Co-Admin"}
+                      </button>
 
-                      {participant && (
-                        <button
-                          onClick={() => removeClaim(participant)}
-                          disabled={isSaving}
-                          title="Release this claim so someone can select this team again, without removing the player"
-                          className="flex-shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
-                        >
-                          Release Claim
-                        </button>
-                      )}
+                      <button
+                        onClick={() => participant && removeClaim(participant)}
+                        disabled={isSaving || !participant}
+                        title="Release this claim so someone can select this team again, without removing the player"
+                        className={`w-32 flex-shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-center text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40 ${
+                          !participant ? "invisible" : ""
+                        }`}
+                      >
+                        Release Claim
+                      </button>
 
                       <button
                         onClick={() => removePlayer(player)}
                         disabled={isSaving}
-                        className="flex-shrink-0 rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-xs font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="w-24 flex-shrink-0 rounded-xl border border-red-400/30 bg-red-400/10 px-3 py-1.5 text-center text-xs font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Remove
                       </button>

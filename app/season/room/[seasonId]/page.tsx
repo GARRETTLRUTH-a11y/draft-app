@@ -656,37 +656,6 @@ export default function SeasonRoomPage() {
     if (updated) setMessage(`Added ${teamName} to the season.`);
   }
 
-  // Full Universe's narrower sibling to Manage Players' Remove -- only
-  // works on a team nobody has claimed yet, so it never needs the
-  // claimed-player confirm/cleanup dance removePlayer() does.
-  async function removeUnclaimedTeam(player: SeasonPlayer) {
-    if (!seasonData) return;
-
-    const participant = participantByName.get(player.name.toLowerCase());
-    if (participant) {
-      setMessage("That team's already claimed -- remove it from Manage Players instead.");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Remove ${player.team || player.name} from the season? Nobody has claimed it yet.`
-    );
-    if (!confirmed) return;
-
-    await updateSeasonData((fresh) => ({
-      ...fresh,
-      players: fresh.players.filter((p) => p.id !== player.id),
-      readyPlayerIdsByWeek: Object.fromEntries(
-        Object.entries(fresh.readyPlayerIdsByWeek).map(([week, ids]) => [
-          week,
-          ids.filter((id) => id !== player.id),
-        ])
-      ),
-      extensionRequests: fresh.extensionRequests.filter((request) => request.playerId !== player.id),
-    }));
-    setMessage(`Removed ${player.team || player.name} from the season.`);
-  }
-
   async function renamePlayer(player: SeasonPlayer, rawNewName: string) {
     if (!seasonData || !season) return;
 
@@ -2233,14 +2202,6 @@ export default function SeasonRoomPage() {
                         className="min-w-0 flex-1 rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
                       />
 
-                      <span
-                        className={`w-20 flex-shrink-0 text-center text-xs font-bold ${
-                          participant ? "text-cyan-300" : "text-slate-500"
-                        }`}
-                      >
-                        {participant ? "Claimed" : "Unclaimed"}
-                      </span>
-
                       <button
                         onClick={() => hostSetPlayerReady(player, !readyPlayerIds.has(player.id))}
                         disabled={isSaving}
@@ -2297,26 +2258,6 @@ export default function SeasonRoomPage() {
                         }`}
                       >
                         {participant?.is_co_admin ? "🛡️ Co-Admin" : "Make Co-Admin"}
-                      </button>
-
-                      <button
-                        onClick={() => participant && removeClaim(participant)}
-                        disabled={isSaving || !participant}
-                        title="Release this claim so someone can select this team again, without removing the player"
-                        className={`w-32 flex-shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-center text-xs font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40 ${
-                          !participant ? "invisible" : ""
-                        }`}
-                      >
-                        Release Claim
-                      </button>
-
-                      <button
-                        onClick={() => removePlayer(player)}
-                        disabled={isSaving}
-                        title="Remove this player from the season"
-                        className="ml-auto flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg border border-red-400/20 text-red-400/70 transition hover:border-red-400/40 hover:bg-red-400/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
-                      >
-                        🗑️
                       </button>
                     </div>
                   );
@@ -2757,24 +2698,37 @@ export default function SeasonRoomPage() {
                           </td>
                           {isOwner && (
                             <td className="py-2 pr-4">
-                              {!inSeason && (
-                                <button
-                                  onClick={() => addTeamToSeason(team.name)}
-                                  disabled={isSaving}
-                                  className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                                >
-                                  + Add
-                                </button>
-                              )}
-                              {inSeason && !isClaimed && (
-                                <button
-                                  onClick={() => removeUnclaimedTeam(player!)}
-                                  disabled={isSaving}
-                                  className="rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                                >
-                                  Remove
-                                </button>
-                              )}
+                              <div className="flex flex-wrap gap-2">
+                                {!inSeason && (
+                                  <button
+                                    onClick={() => addTeamToSeason(team.name)}
+                                    disabled={isSaving}
+                                    className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    + Add
+                                  </button>
+                                )}
+                                {isClaimed && participant && (
+                                  <button
+                                    onClick={() => removeClaim(participant)}
+                                    disabled={isSaving}
+                                    title="Release this claim so someone can select this team again, without removing the player"
+                                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-bold text-slate-300 transition hover:bg-white/15 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Release Claim
+                                  </button>
+                                )}
+                                {inSeason && (
+                                  <button
+                                    onClick={() => removePlayer(player!)}
+                                    disabled={isSaving}
+                                    title="Remove this player/team from the season"
+                                    className="rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+                              </div>
                             </td>
                           )}
                         </tr>

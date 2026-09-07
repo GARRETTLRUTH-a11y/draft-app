@@ -140,6 +140,7 @@ export default function SeasonRoomPage() {
   // looking at. Lets a host who's also a player flip over and see exactly
   // what everyone else sees, then flip straight back.
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
+  const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -232,22 +233,25 @@ export default function SeasonRoomPage() {
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
 
-  // Custom team order (falling back to alphabetical-by-team, then the
-  // player's own name for players who haven't picked a team yet), for the
-  // Manage Players list specifically -- other views (Teams board, claim
-  // grid) keep the original draft order.
+  // Host-toggleable sort for the Manage Players list specifically -- other
+  // views (Teams board, claim grid) keep the original draft order.
+  // "genesis" is the custom team order; unlisted teams (or players with no
+  // team yet) fall back to alphabetical-by-team among themselves either way.
   const playersByManageOrder = useMemo(
     () =>
       [...players].sort((a, b) => {
         const aTeam = a.team || a.name;
         const bTeam = b.team || b.name;
-        const aIndex = a.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(a.team) : -1;
-        const bIndex = b.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(b.team) : -1;
-        const aRank = aIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : aIndex;
-        const bRank = bIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : bIndex;
-        return aRank - bRank || aTeam.localeCompare(bTeam, undefined, { sensitivity: "base" });
+        if (manageListOrder === "genesis") {
+          const aIndex = a.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(a.team) : -1;
+          const bIndex = b.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(b.team) : -1;
+          const aRank = aIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : aIndex;
+          const bRank = bIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : bIndex;
+          if (aRank !== bRank) return aRank - bRank;
+        }
+        return aTeam.localeCompare(bTeam, undefined, { sensitivity: "base" });
       }),
-    [players]
+    [players, manageListOrder]
   );
 
   const readyPlayerIds = useMemo(
@@ -2045,7 +2049,31 @@ export default function SeasonRoomPage() {
             </div>
 
             <div className="mt-6 border-t border-white/10 pt-6">
-              <h3 className="text-lg font-black">Manage Players</h3>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h3 className="text-lg font-black">Manage Players</h3>
+                <div className="inline-flex rounded-xl border border-white/10 bg-slate-900 p-1">
+                  <button
+                    onClick={() => setManageListOrder("alphabetical")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      manageListOrder === "alphabetical"
+                        ? "bg-cyan-400 text-slate-950"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    List Alphabetically
+                  </button>
+                  <button
+                    onClick={() => setManageListOrder("genesis")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      manageListOrder === "genesis"
+                        ? "bg-cyan-400 text-slate-950"
+                        : "text-slate-400 hover:text-white"
+                    }`}
+                  >
+                    List By Genesis
+                  </button>
+                </div>
+              </div>
               <p className="mt-2 text-sm text-slate-400">
                 Rename a player (their claimed slot moves with them), remove
                 someone who&apos;s dropped out mid-season, override their

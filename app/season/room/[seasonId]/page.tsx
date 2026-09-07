@@ -2175,7 +2175,7 @@ export default function SeasonRoomPage() {
                 only mark players ready/not ready -- nothing else).
               </p>
 
-              <div className="mt-4 flex flex-col gap-2">
+              <div className="mt-4 flex flex-col gap-1.5">
                 {playersByManageOrder.map((player) => {
                   const participant = participantByName.get(player.name.toLowerCase());
                   const color = teamColor(player.team);
@@ -2183,7 +2183,7 @@ export default function SeasonRoomPage() {
                   return (
                     <div
                       key={player.id}
-                      className="flex flex-wrap items-center gap-3 rounded-2xl border border-white/10 bg-slate-900 p-3"
+                      className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-slate-900 px-3 py-1.5"
                     >
                       <span
                         className="h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"

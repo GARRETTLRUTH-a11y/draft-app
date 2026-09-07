@@ -151,6 +151,7 @@ export default function SeasonRoomPage() {
   // what everyone else sees, then flip straight back.
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
   const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
+  const [teamPoolView, setTeamPoolView] = useState<"claimed" | "manage">("claimed");
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -285,27 +286,6 @@ export default function SeasonRoomPage() {
     })).filter((group) => group.teams.length > 0);
   }, [players]);
 
-  // Same tier/conference-column board the draft's own "Draft Board" uses --
-  // every team currently in the season, read-only, grouped exactly the
-  // same way (Power Conferences / Group of Five / Independents).
-  const seasonBoardTiers = useMemo(() => {
-    const picks = players
-      .filter((player) => player.team)
-      .map((player) => ({
-        pickNumber: player.id,
-        drafter: player.name,
-        item: {
-          id: player.id,
-          name: player.team!,
-          category: teamConference(player.team) ?? "Other",
-          description: "",
-          color: teamColor(player.team),
-        } satisfies DraftItemLike,
-      }));
-    const { groups } = groupItemsByConference([], picks, CONFERENCE_ORDER);
-    return buildTiers(groups, CONFERENCE_TIERS, TIER_ORDER);
-  }, [players]);
-
   const readyPlayerIds = useMemo(
     () => new Set(seasonData ? readyPlayerIdsForWeek(seasonData, currentWeek) : []),
     [seasonData, currentWeek]
@@ -368,6 +348,28 @@ export default function SeasonRoomPage() {
     );
     return map;
   }, [participants]);
+
+  // Same tier/conference-column board the draft's own "Draft Board" uses --
+  // claimed teams only (unclaimed ones are omitted entirely, not just
+  // grayed out), grouped exactly the same way (Power Conferences / Group
+  // of Five / Independents), all conferences visible at once, no tabbing.
+  const seasonBoardTiers = useMemo(() => {
+    const picks = players
+      .filter((player) => player.team && participantByName.has(player.name.toLowerCase()))
+      .map((player) => ({
+        pickNumber: player.id,
+        drafter: player.name,
+        item: {
+          id: player.id,
+          name: player.team!,
+          category: teamConference(player.team) ?? "Other",
+          description: "",
+          color: teamColor(player.team),
+        } satisfies DraftItemLike,
+      }));
+    const { groups } = groupItemsByConference([], picks, CONFERENCE_ORDER);
+    return buildTiers(groups, CONFERENCE_TIERS, TIER_ORDER);
+  }, [players, participantByName]);
 
   const myParticipant = useMemo(() => {
     if (!currentUserId) return undefined;
@@ -2660,39 +2662,55 @@ export default function SeasonRoomPage() {
         </section>
 
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
-          <div>
-            <h2 className="text-2xl font-black">Team Pool by Conference</h2>
-            <p className="mt-2 text-sm text-slate-400">
-              Every team currently in the season, organized by conference.
-            </p>
+          <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">Team Pool by Conference</h2>
+              <p className="mt-2 text-sm text-slate-400">
+                {teamPoolView === "claimed"
+                  ? "Who's got which team, by conference."
+                  : isOwner
+                    ? "Add a team to the season, or remove one nobody's claimed yet."
+                    : "Every CFB team, grouped by conference, whether or not it's in this season."}
+              </p>
+            </div>
+            <div className="inline-flex rounded-xl border border-white/10 bg-slate-900 p-1">
+              <button
+                onClick={() => setTeamPoolView("claimed")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                  teamPoolView === "claimed"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                By Conference
+              </button>
+              <button
+                onClick={() => setTeamPoolView("manage")}
+                className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                  teamPoolView === "manage"
+                    ? "bg-cyan-400 text-slate-950"
+                    : "text-slate-400 hover:text-white"
+                }`}
+              >
+                Unclaimed / Add / Remove
+              </button>
+            </div>
           </div>
 
-          <div className="mt-4">
-            <CompactDraftBoard
-              tiers={seasonBoardTiers}
-              getStatus={(item) => {
-                const player = players.find((p) => p.id === item.id);
-                const participant = player
-                  ? participantByName.get(player.name.toLowerCase())
-                  : undefined;
-                return participant
-                  ? { variant: "taken", badge: player!.name }
-                  : { variant: "available" };
-              }}
-              strikethroughOnTaken={false}
-              takenStyle="plain"
-              emptyMessage="No teams yet."
-            />
-          </div>
-
-          <div className="mt-8 border-t border-white/10 pt-6">
-            <h3 className="text-lg font-black">All Teams</h3>
-            <p className="mt-2 text-sm text-slate-400">
-              {isOwner
-                ? "Add a team to the season, or remove one nobody's claimed yet."
-                : "Every CFB team, grouped by conference, whether or not it's in this season."}
-            </p>
-
+          {teamPoolView === "claimed" ? (
+            <div className="mt-4">
+              <CompactDraftBoard
+                tiers={seasonBoardTiers}
+                getStatus={(item) => {
+                  const player = players.find((p) => p.id === item.id);
+                  return { variant: "taken", badge: player?.name };
+                }}
+                strikethroughOnTaken={false}
+                takenStyle="plain"
+                emptyMessage="No teams claimed yet."
+              />
+            </div>
+          ) : (
             <div className="mt-4 overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -2766,7 +2784,7 @@ export default function SeasonRoomPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          )}
         </section>
       </section>
 

@@ -4,7 +4,16 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { CFB_TEAMS, CONFERENCE_ORDER, teamColor } from "@/lib/cfbTeams";
+import {
+  CFB_TEAMS,
+  CONFERENCE_ORDER,
+  CONFERENCE_TIERS,
+  TIER_ORDER,
+  teamColor,
+  teamConference,
+} from "@/lib/cfbTeams";
+import { groupItemsByConference, buildTiers, type DraftItemLike } from "@/lib/draftBoard";
+import { CompactDraftBoard } from "@/components/CompactDraftBoard";
 import {
   advanceWindowEnd,
   advanceWindowStart,
@@ -142,7 +151,6 @@ export default function SeasonRoomPage() {
   // what everyone else sees, then flip straight back.
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
   const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
-  const [teamPoolConference, setTeamPoolConference] = useState(CONFERENCE_ORDER[0]);
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -275,6 +283,27 @@ export default function SeasonRoomPage() {
       conference,
       teams: byConference.get(conference) ?? [],
     })).filter((group) => group.teams.length > 0);
+  }, [players]);
+
+  // Same tier/conference-column board the draft's own "Draft Board" uses --
+  // every team currently in the season, read-only, grouped exactly the
+  // same way (Power Conferences / Group of Five / Independents).
+  const seasonBoardTiers = useMemo(() => {
+    const picks = players
+      .filter((player) => player.team)
+      .map((player) => ({
+        pickNumber: player.id,
+        drafter: player.name,
+        item: {
+          id: player.id,
+          name: player.team!,
+          category: teamConference(player.team) ?? "Other",
+          description: "",
+          color: teamColor(player.team),
+        } satisfies DraftItemLike,
+      }));
+    const { groups } = groupItemsByConference([], picks, CONFERENCE_ORDER);
+    return buildTiers(groups, CONFERENCE_TIERS, TIER_ORDER);
   }, [players]);
 
   const readyPlayerIds = useMemo(
@@ -2634,85 +2663,109 @@ export default function SeasonRoomPage() {
           <div>
             <h2 className="text-2xl font-black">Team Pool by Conference</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Every CFB team, one conference at a time.{" "}
-              {isOwner
-                ? "Add a team to the season, or remove one nobody's claimed yet."
-                : "Browse who's claimed what across the whole league."}
+              Every team currently in the season, organized by conference.
             </p>
           </div>
 
-          <div className="mt-4 flex flex-wrap gap-2">
-            {fullUniverseByConference.map((group) => (
-              <button
-                key={group.conference}
-                onClick={() => setTeamPoolConference(group.conference)}
-                className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
-                  teamPoolConference === group.conference
-                    ? "border-cyan-400/40 bg-cyan-400/20 text-cyan-200"
-                    : "border-white/10 bg-slate-900 text-slate-400 hover:text-white"
-                }`}
-              >
-                {group.conference}
-              </button>
-            ))}
+          <div className="mt-4">
+            <CompactDraftBoard
+              tiers={seasonBoardTiers}
+              getStatus={(item) => {
+                const player = players.find((p) => p.id === item.id);
+                const participant = player
+                  ? participantByName.get(player.name.toLowerCase())
+                  : undefined;
+                return participant
+                  ? { variant: "taken", badge: player!.name }
+                  : { variant: "available" };
+              }}
+              strikethroughOnTaken={false}
+              takenStyle="plain"
+              emptyMessage="No teams yet."
+            />
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-2">
-            {(
-              fullUniverseByConference.find((group) => group.conference === teamPoolConference)
-                ?.teams ?? []
-            ).map(({ team, player }) => {
-              const participant = player
-                ? participantByName.get(player.name.toLowerCase())
-                : undefined;
-              const isClaimed = Boolean(participant);
-              const inSeason = Boolean(player);
+          <div className="mt-8 border-t border-white/10 pt-6">
+            <h3 className="text-lg font-black">All Teams</h3>
+            <p className="mt-2 text-sm text-slate-400">
+              {isOwner
+                ? "Add a team to the season, or remove one nobody's claimed yet."
+                : "Every CFB team, grouped by conference, whether or not it's in this season."}
+            </p>
 
-              return (
-                <div
-                  key={team.name}
-                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
-                    !inSeason
-                      ? "border-white/5 bg-slate-900/40 text-slate-500"
-                      : isClaimed
-                        ? "border-white/10 bg-slate-900 text-slate-200"
-                        : "border-cyan-400/30 bg-cyan-400/10 text-cyan-200"
-                  }`}
-                >
-                  <span
-                    className="h-2.5 w-2.5 flex-shrink-0 rounded-full ring-1 ring-white/20"
-                    style={{ backgroundColor: team.color }}
-                  />
-                  <span className="font-bold">{team.name}</span>
-                  <span className="text-[10px] font-normal opacity-80">
-                    {!inSeason
-                      ? "Not in season"
-                      : isClaimed
-                        ? `Claimed by ${player!.name}`
-                        : "Unclaimed"}
-                  </span>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-xs font-black uppercase tracking-wide text-slate-500">
+                    <th className="py-2 pr-4">Conference</th>
+                    <th className="py-2 pr-4">Team</th>
+                    <th className="py-2 pr-4">Status</th>
+                    {isOwner && <th className="py-2 pr-4">Action</th>}
+                  </tr>
+                </thead>
+                <tbody>
+                  {fullUniverseByConference.flatMap((group) =>
+                    group.teams.map(({ team, player }) => {
+                      const participant = player
+                        ? participantByName.get(player.name.toLowerCase())
+                        : undefined;
+                      const isClaimed = Boolean(participant);
+                      const inSeason = Boolean(player);
 
-                  {isOwner && !inSeason && (
-                    <button
-                      onClick={() => addTeamToSeason(team.name)}
-                      disabled={isSaving}
-                      className="ml-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      + Add
-                    </button>
+                      return (
+                        <tr key={team.name} className="border-b border-white/5">
+                          <td className="py-2 pr-4 text-slate-400">{group.conference}</td>
+                          <td className="py-2 pr-4 font-bold">
+                            <span
+                              className="mr-2 inline-block h-2.5 w-2.5 rounded-full ring-1 ring-white/20 align-middle"
+                              style={{ backgroundColor: team.color }}
+                            />
+                            {team.name}
+                          </td>
+                          <td
+                            className={`py-2 pr-4 ${
+                              !inSeason
+                                ? "text-slate-500"
+                                : isClaimed
+                                  ? "text-slate-300"
+                                  : "text-cyan-300"
+                            }`}
+                          >
+                            {!inSeason
+                              ? "Not in season"
+                              : isClaimed
+                                ? `Claimed by ${player!.name}`
+                                : "Unclaimed"}
+                          </td>
+                          {isOwner && (
+                            <td className="py-2 pr-4">
+                              {!inSeason && (
+                                <button
+                                  onClick={() => addTeamToSeason(team.name)}
+                                  disabled={isSaving}
+                                  className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  + Add
+                                </button>
+                              )}
+                              {inSeason && !isClaimed && (
+                                <button
+                                  onClick={() => removeUnclaimedTeam(player!)}
+                                  disabled={isSaving}
+                                  className="rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  Remove
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })
                   )}
-                  {isOwner && inSeason && !isClaimed && (
-                    <button
-                      onClick={() => removeUnclaimedTeam(player!)}
-                      disabled={isSaving}
-                      className="ml-1 rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                    >
-                      Remove
-                    </button>
-                  )}
-                </div>
-              );
-            })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </section>
       </section>

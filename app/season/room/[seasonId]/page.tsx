@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
-import { CFB_TEAMS, CONFERENCE_ORDER, teamColor, teamConference } from "@/lib/cfbTeams";
+import { CFB_TEAMS, CONFERENCE_ORDER, teamColor } from "@/lib/cfbTeams";
 import {
   advanceWindowEnd,
   advanceWindowStart,
@@ -142,7 +142,7 @@ export default function SeasonRoomPage() {
   // what everyone else sees, then flip straight back.
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
   const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
-  const [teamsViewTab, setTeamsViewTab] = useState<"in-league" | "full-universe">("in-league");
+  const [teamPoolConference, setTeamPoolConference] = useState(CONFERENCE_ORDER[0]);
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -256,27 +256,10 @@ export default function SeasonRoomPage() {
     [players, manageListOrder]
   );
 
-  // Teams board grouped by conference (unlike playersByManageOrder above,
-  // there's no per-team custom order here -- just CONFERENCE_ORDER, with an
-  // "Other" bucket for any team text that doesn't match a known school).
-  const playersByConference = useMemo(() => {
-    const byConference = new Map<string, SeasonPlayer[]>();
-    for (const player of players) {
-      const conference = teamConference(player.team) ?? "Other";
-      const group = byConference.get(conference) ?? [];
-      group.push(player);
-      byConference.set(conference, group);
-    }
-    const order = [...CONFERENCE_ORDER, "Other"];
-    return order
-      .map((conference) => ({ conference, players: byConference.get(conference) ?? [] }))
-      .filter((group) => group.players.length > 0);
-  }, [players]);
-
   // The full CFB_TEAMS universe grouped by conference, each team paired
-  // with its season player-slot (if any) -- backs the "Full Universe" tab
-  // the host uses to add teams to, or remove unclaimed teams from, the
-  // season.
+  // with its season player-slot (if any) -- backs the separate "Team Pool
+  // by Conference" section the host uses to add teams to, or remove
+  // unclaimed teams from, the season.
   const fullUniverseByConference = useMemo(() => {
     const playerByTeam = new Map(
       players.filter((p) => p.team).map((p) => [p.team!.toLowerCase(), p])
@@ -2494,260 +2477,243 @@ export default function SeasonRoomPage() {
             <div>
               <h2 className="text-2xl font-black">Teams — {formatWeekLabel(currentWeek)}</h2>
               <p className="mt-2 text-sm text-slate-400">
-                {teamsViewTab === "full-universe"
-                  ? "Every CFB team, by conference. Host can add a team to the season, or remove one nobody's claimed yet."
-                  : !myParticipant
-                    ? "Click the team you drafted to select it."
-                    : "Every team, publicly visible, with ready and extension status."}
+                {!myParticipant
+                  ? "Click the team you drafted to select it."
+                  : "Every team, publicly visible, with ready and extension status."}
               </p>
             </div>
-            <div className="flex items-center gap-3">
-              <div className="inline-flex rounded-xl border border-white/10 bg-slate-900 p-1">
-                <button
-                  onClick={() => setTeamsViewTab("in-league")}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                    teamsViewTab === "in-league"
-                      ? "bg-cyan-400 text-slate-950"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  In League
-                </button>
-                <button
-                  onClick={() => setTeamsViewTab("full-universe")}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${
-                    teamsViewTab === "full-universe"
-                      ? "bg-cyan-400 text-slate-950"
-                      : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  Full Universe
-                </button>
-              </div>
-              <button
-                onClick={() => loadParticipants()}
-                className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
-              >
-                Refresh
-              </button>
-            </div>
+            <button
+              onClick={() => loadParticipants()}
+              className="rounded-2xl bg-white/10 px-4 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+            >
+              Refresh
+            </button>
           </div>
 
-          {teamsViewTab === "in-league" ? (
-            <div className="mt-5 flex flex-col gap-6">
-              {playersByConference.map((group) => (
-                <div key={group.conference}>
-                  <h3 className="mb-3 text-xs font-black uppercase tracking-[0.15em] text-slate-500">
-                    {group.conference}
-                  </h3>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-2 md:grid-cols-3">
-                    {group.players.map((player) => {
-                      const participant = participantByName.get(player.name.toLowerCase());
-                      const isClaimed = Boolean(participant);
-                      const isReady = readyPlayerIds.has(player.id);
-                      const isMe = myParticipant?.player_name === player.name;
-                      const canClaim = !myParticipant && !isClaimed;
-                      const extensionForWeek = seasonData.extensionRequests.find(
-                        (request) =>
-                          request.playerId === player.id && request.week === currentWeek
-                      );
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-2 md:grid-cols-3">
+            {players.map((player) => {
+              const participant = participantByName.get(player.name.toLowerCase());
+              const isClaimed = Boolean(participant);
+              const isReady = readyPlayerIds.has(player.id);
+              const isMe = myParticipant?.player_name === player.name;
+              const canClaim = !myParticipant && !isClaimed;
+              const extensionForWeek = seasonData.extensionRequests.find(
+                (request) =>
+                  request.playerId === player.id && request.week === currentWeek
+              );
 
-                      // Ready (locked in) always wins. Otherwise an
-                      // extension request colors the card: red while
-                      // pending or denied, blue once granted.
-                      const cardState = isReady
-                        ? "ready"
-                        : extensionForWeek?.status === "granted"
-                          ? "granted"
-                          : extensionForWeek?.status === "denied"
-                            ? "denied"
-                            : extensionForWeek?.status === "pending"
-                              ? "pending"
-                              : isClaimed
-                                ? "claimed"
-                                : "unclaimed";
+              // Ready (locked in) always wins. Otherwise an extension
+              // request colors the card: red while pending or denied, blue
+              // once granted.
+              const cardState = isReady
+                ? "ready"
+                : extensionForWeek?.status === "granted"
+                  ? "granted"
+                  : extensionForWeek?.status === "denied"
+                    ? "denied"
+                    : extensionForWeek?.status === "pending"
+                      ? "pending"
+                      : isClaimed
+                        ? "claimed"
+                        : "unclaimed";
 
-                      const cardClasses: Record<string, string> = {
-                        ready: "border-green-400/40 bg-green-400/20",
-                        granted: "border-blue-400/40 bg-blue-400/15",
-                        denied: "border-red-400/40 bg-red-400/10",
-                        pending: "border-red-400/40 bg-red-400/15",
-                        claimed: "border-white/10 bg-slate-900",
-                        unclaimed: "border-white/10 bg-slate-900/60",
-                      };
+              const cardClasses: Record<string, string> = {
+                ready: "border-green-400/40 bg-green-400/20",
+                granted: "border-blue-400/40 bg-blue-400/15",
+                denied: "border-red-400/40 bg-red-400/10",
+                pending: "border-red-400/40 bg-red-400/15",
+                claimed: "border-white/10 bg-slate-900",
+                unclaimed: "border-white/10 bg-slate-900/60",
+              };
 
-                      const color = teamColor(player.team);
+              const color = teamColor(player.team);
 
-                      return (
-                        <div
-                          key={player.id}
-                          role={canClaim ? "button" : undefined}
-                          tabIndex={canClaim ? 0 : undefined}
-                          onClick={() => canClaim && claimPlayer(player)}
-                          onKeyDown={(event) => {
-                            if (canClaim && (event.key === "Enter" || event.key === " ")) {
-                              event.preventDefault();
-                              claimPlayer(player);
-                            }
-                          }}
-                          title={
-                            canClaim
-                              ? `Click to select ${player.team || player.name}`
-                              : isClaimed
-                                ? "Already selected"
-                                : undefined
-                          }
-                          className={`relative flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
-                            cardClasses[cardState]
-                          } ${isMe ? "ring-2 ring-cyan-300/60" : ""} ${
-                            canClaim ? "cursor-pointer hover:brightness-125" : ""
-                          }`}
+              return (
+                <div
+                  key={player.id}
+                  role={canClaim ? "button" : undefined}
+                  tabIndex={canClaim ? 0 : undefined}
+                  onClick={() => canClaim && claimPlayer(player)}
+                  onKeyDown={(event) => {
+                    if (canClaim && (event.key === "Enter" || event.key === " ")) {
+                      event.preventDefault();
+                      claimPlayer(player);
+                    }
+                  }}
+                  title={
+                    canClaim
+                      ? `Click to select ${player.team || player.name}`
+                      : isClaimed
+                        ? "Already selected"
+                        : undefined
+                  }
+                  className={`relative flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
+                    cardClasses[cardState]
+                  } ${isMe ? "ring-2 ring-cyan-300/60" : ""} ${
+                    canClaim ? "cursor-pointer hover:brightness-125" : ""
+                  }`}
+                >
+                  {cardState === "denied" && (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden rounded-xl">
+                      <span className="text-5xl font-black text-red-500/80">✕</span>
+                    </div>
+                  )}
+
+                  <span
+                    className="relative mt-1.5 h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
+                    style={{ backgroundColor: color || "#64748b" }}
+                  />
+
+                  <div className="relative min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">
+                        <span
+                          className={`font-bold ${isReady ? "text-green-200" : ""}`}
                         >
-                          {cardState === "denied" && (
-                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center overflow-hidden rounded-xl">
-                              <span className="text-5xl font-black text-red-500/80">✕</span>
-                            </div>
+                          {player.team || player.name}
+                          {isMe && (
+                            <span className="ml-1 text-xs font-normal text-slate-400">(you)</span>
                           )}
+                        </span>
+                        <span className="block truncate text-xs font-normal text-slate-400">
+                          {player.name}
+                        </span>
+                      </span>
+                    </div>
 
-                          <span
-                            className="relative mt-1.5 h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
-                            style={{ backgroundColor: color || "#64748b" }}
-                          />
+                    <span
+                      className={`text-[10px] font-bold ${
+                        isReady
+                          ? "text-green-300"
+                          : isClaimed
+                            ? "text-slate-400"
+                            : "text-slate-500"
+                      }`}
+                    >
+                      {isReady ? "Ready" : isClaimed ? "Not ready yet" : "Unclaimed"}
+                    </span>
 
-                          <div className="relative min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="min-w-0 flex-1 truncate">
-                                <span
-                                  className={`font-bold ${isReady ? "text-green-200" : ""}`}
-                                >
-                                  {player.team || player.name}
-                                  {isMe && (
-                                    <span className="ml-1 text-xs font-normal text-slate-400">
-                                      (you)
-                                    </span>
-                                  )}
-                                </span>
-                                <span className="block truncate text-xs font-normal text-slate-400">
-                                  {player.name}
-                                </span>
-                              </span>
-                            </div>
-
-                            <span
-                              className={`text-[10px] font-bold ${
-                                isReady
-                                  ? "text-green-300"
-                                  : isClaimed
-                                    ? "text-slate-400"
-                                    : "text-slate-500"
-                              }`}
-                            >
-                              {isReady ? "Ready" : isClaimed ? "Not ready yet" : "Unclaimed"}
-                            </span>
-
-                            {extensionForWeek && !isReady && (
-                              <span
-                                className={`block text-[10px] font-bold ${
-                                  extensionForWeek.status === "granted"
-                                    ? "text-blue-300"
-                                    : extensionForWeek.status === "denied"
-                                      ? "text-red-300"
-                                      : "text-red-300"
-                                }`}
-                              >
-                                {extensionForWeek.status === "granted" &&
-                                  `Extension granted${
-                                    extensionForWeek.grantedUntil
-                                      ? ` until ${new Date(extensionForWeek.grantedUntil).toLocaleString()}`
-                                      : ""
-                                  }`}
-                                {extensionForWeek.status === "denied" && "Extension denied"}
-                                {extensionForWeek.status === "pending" &&
-                                  `Extension requested (until ${new Date(
-                                    `${extensionForWeek.requestedUntilDate}T00:00:00`
-                                  ).toLocaleDateString()})`}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {extensionForWeek && !isReady && (
+                      <span
+                        className={`block text-[10px] font-bold ${
+                          extensionForWeek.status === "granted"
+                            ? "text-blue-300"
+                            : extensionForWeek.status === "denied"
+                              ? "text-red-300"
+                              : "text-red-300"
+                        }`}
+                      >
+                        {extensionForWeek.status === "granted" &&
+                          `Extension granted${
+                            extensionForWeek.grantedUntil
+                              ? ` until ${new Date(extensionForWeek.grantedUntil).toLocaleString()}`
+                              : ""
+                          }`}
+                        {extensionForWeek.status === "denied" && "Extension denied"}
+                        {extensionForWeek.status === "pending" &&
+                          `Extension requested (until ${new Date(
+                            `${extensionForWeek.requestedUntilDate}T00:00:00`
+                          ).toLocaleDateString()})`}
+                      </span>
+                    )}
                   </div>
                 </div>
-              ))}
+              );
+            })}
 
-              {players.length === 0 && (
-                <p className="text-sm text-slate-500">
-                  No teams yet — import a draft or load a CSV from the Seasons
-                  page.
-                </p>
-              )}
-            </div>
-          ) : (
-            <div className="mt-5 flex flex-col gap-6">
-              {fullUniverseByConference.map((group) => (
-                <div key={group.conference}>
-                  <h3 className="mb-3 text-xs font-black uppercase tracking-[0.15em] text-slate-500">
-                    {group.conference}
-                  </h3>
-                  <div className="flex flex-wrap gap-2">
-                    {group.teams.map(({ team, player }) => {
-                      const participant = player
-                        ? participantByName.get(player.name.toLowerCase())
-                        : undefined;
-                      const isClaimed = Boolean(participant);
-                      const inSeason = Boolean(player);
+            {players.length === 0 && (
+              <p className="text-sm text-slate-500">
+                No teams yet — import a draft or load a CSV from the Seasons
+                page.
+              </p>
+            )}
+          </div>
+        </section>
 
-                      return (
-                        <div
-                          key={team.name}
-                          className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
-                            !inSeason
-                              ? "border-white/5 bg-slate-900/40 text-slate-500"
-                              : isClaimed
-                                ? "border-white/10 bg-slate-900 text-slate-200"
-                                : "border-cyan-400/30 bg-cyan-400/10 text-cyan-200"
-                          }`}
-                        >
-                          <span
-                            className="h-2.5 w-2.5 flex-shrink-0 rounded-full ring-1 ring-white/20"
-                            style={{ backgroundColor: team.color }}
-                          />
-                          <span className="font-bold">{team.name}</span>
-                          <span className="text-[10px] font-normal opacity-80">
-                            {!inSeason
-                              ? "Not in season"
-                              : isClaimed
-                                ? `Claimed by ${player!.name}`
-                                : "Unclaimed"}
-                          </span>
+        <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
+          <div>
+            <h2 className="text-2xl font-black">Team Pool by Conference</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Every CFB team, one conference at a time.{" "}
+              {isOwner
+                ? "Add a team to the season, or remove one nobody's claimed yet."
+                : "Browse who's claimed what across the whole league."}
+            </p>
+          </div>
 
-                          {isOwner && !inSeason && (
-                            <button
-                              onClick={() => addTeamToSeason(team.name)}
-                              disabled={isSaving}
-                              className="ml-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              + Add
-                            </button>
-                          )}
-                          {isOwner && inSeason && !isClaimed && (
-                            <button
-                              onClick={() => removeUnclaimedTeam(player!)}
-                              disabled={isSaving}
-                              className="ml-1 rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              Remove
-                            </button>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {fullUniverseByConference.map((group) => (
+              <button
+                key={group.conference}
+                onClick={() => setTeamPoolConference(group.conference)}
+                className={`rounded-xl border px-3 py-1.5 text-xs font-bold transition ${
+                  teamPoolConference === group.conference
+                    ? "border-cyan-400/40 bg-cyan-400/20 text-cyan-200"
+                    : "border-white/10 bg-slate-900 text-slate-400 hover:text-white"
+                }`}
+              >
+                {group.conference}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            {(
+              fullUniverseByConference.find((group) => group.conference === teamPoolConference)
+                ?.teams ?? []
+            ).map(({ team, player }) => {
+              const participant = player
+                ? participantByName.get(player.name.toLowerCase())
+                : undefined;
+              const isClaimed = Boolean(participant);
+              const inSeason = Boolean(player);
+
+              return (
+                <div
+                  key={team.name}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+                    !inSeason
+                      ? "border-white/5 bg-slate-900/40 text-slate-500"
+                      : isClaimed
+                        ? "border-white/10 bg-slate-900 text-slate-200"
+                        : "border-cyan-400/30 bg-cyan-400/10 text-cyan-200"
+                  }`}
+                >
+                  <span
+                    className="h-2.5 w-2.5 flex-shrink-0 rounded-full ring-1 ring-white/20"
+                    style={{ backgroundColor: team.color }}
+                  />
+                  <span className="font-bold">{team.name}</span>
+                  <span className="text-[10px] font-normal opacity-80">
+                    {!inSeason
+                      ? "Not in season"
+                      : isClaimed
+                        ? `Claimed by ${player!.name}`
+                        : "Unclaimed"}
+                  </span>
+
+                  {isOwner && !inSeason && (
+                    <button
+                      onClick={() => addTeamToSeason(team.name)}
+                      disabled={isSaving}
+                      className="ml-1 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      + Add
+                    </button>
+                  )}
+                  {isOwner && inSeason && !isClaimed && (
+                    <button
+                      onClick={() => removeUnclaimedTeam(player!)}
+                      disabled={isSaving}
+                      className="ml-1 rounded-lg border border-red-400/30 bg-red-400/10 px-2 py-0.5 text-[10px] font-bold text-red-300 transition hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </section>
       </section>
 

@@ -384,15 +384,3 @@ export function teamColor(name: string | undefined | null): string | undefined {
   if (!name) return undefined;
   return TEAM_COLOR_BY_NAME[name.toLowerCase()];
 }
-
-const TEAM_CONFERENCE_BY_NAME: Record<string, string> = Object.fromEntries(
-  CFB_TEAMS.map((team) => [team.name.toLowerCase(), team.conference])
-);
-
-// Looks up a team's conference by name (case-insensitive), same pattern as
-// teamColor -- for grouping a roster of team names by conference outside
-// the draft flow (which already has `category` on its own item shape).
-export function teamConference(name: string | undefined | null): string | undefined {
-  if (!name) return undefined;
-  return TEAM_CONFERENCE_BY_NAME[name.toLowerCase()];
-}

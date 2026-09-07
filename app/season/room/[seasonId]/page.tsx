@@ -16,6 +16,7 @@ import {
   formatReminderDays,
   formatReminderTime,
   formatWeekLabel,
+  isPlayerAccountedFor,
   pendingExtensionRequests,
   periodHeading,
   readyPlayerIdsForWeek,
@@ -257,6 +258,14 @@ export default function SeasonRoomPage() {
   const readyPlayerIds = useMemo(
     () => new Set(seasonData ? readyPlayerIdsForWeek(seasonData, currentWeek) : []),
     [seasonData, currentWeek]
+  );
+
+  // Ready count for display/gating purposes -- vacation and no-response
+  // flags count as accounted-for even though the player never clicked
+  // ready, so the badge/advance gate don't wait on them.
+  const effectiveReadyCount = useMemo(
+    () => players.filter((player) => isPlayerAccountedFor(player, readyPlayerIds)).length,
+    [players, readyPlayerIds]
   );
 
   const pendingRequests = useMemo(
@@ -641,6 +650,24 @@ export default function SeasonRoomPage() {
     setMessage(ready ? `Marked ${player.name} ready.` : `Marked ${player.name} not ready.`);
   }
 
+  // Toggles a purely informational status flag on a player -- doesn't
+  // affect ready/advance/extension logic, just flags them for the host.
+  async function togglePlayerFlag(player: SeasonPlayer, flag: "noResponse24h" | "onVacation") {
+    if (!seasonData) return;
+
+    const next = !player[flag];
+
+    await updateSeasonData((fresh) => ({
+      ...fresh,
+      players: fresh.players.map((p) => (p.id === player.id ? { ...p, [flag]: next } : p)),
+    }));
+
+    const label = flag === "noResponse24h" ? "No Response >24H" : "Vacation";
+    setMessage(
+      next ? `Flagged ${player.name} as ${label}.` : `Cleared ${label} flag for ${player.name}.`
+    );
+  }
+
   async function toggleCoAdmin(participant: Participant) {
     if (!season) return;
 
@@ -975,8 +1002,7 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    const readyCount = readyPlayerIdsForWeek(seasonData, currentWeek).length;
-    const outstanding = players.length - readyCount;
+    const outstanding = players.length - effectiveReadyCount;
 
     if (outstanding > 0) {
       const confirmed = window.confirm(
@@ -1542,7 +1568,7 @@ export default function SeasonRoomPage() {
                   {formatWeekLabel(currentWeek)}
                 </span>
                 <span className="text-sm font-semibold text-slate-400">
-                  {readyPlayerIds.size}/{players.length} ready
+                  {effectiveReadyCount}/{players.length} ready
                 </span>
                 <button
                   onClick={beginAdvanceWeek}
@@ -2130,6 +2156,32 @@ export default function SeasonRoomPage() {
                       </button>
 
                       <button
+                        onClick={() => togglePlayerFlag(player, "noResponse24h")}
+                        disabled={isSaving}
+                        title="Flag this player as unresponsive for 24+ hours"
+                        className={`w-36 flex-shrink-0 rounded-xl border px-3 py-1.5 text-center text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          player.noResponse24h
+                            ? "border-red-400/40 bg-red-400/20 text-red-200 hover:bg-red-400/30"
+                            : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
+                        }`}
+                      >
+                        No Response &gt;24H
+                      </button>
+
+                      <button
+                        onClick={() => togglePlayerFlag(player, "onVacation")}
+                        disabled={isSaving}
+                        title="Flag this player as on vacation"
+                        className={`w-24 flex-shrink-0 rounded-xl border px-3 py-1.5 text-center text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          player.onVacation
+                            ? "border-blue-400/40 bg-blue-400/20 text-blue-200 hover:bg-blue-400/30"
+                            : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/15"
+                        }`}
+                      >
+                        Vacation
+                      </button>
+
+                      <button
                         onClick={() => participant && toggleCoAdmin(participant)}
                         disabled={isSaving || !participant}
                         title={
@@ -2184,7 +2236,7 @@ export default function SeasonRoomPage() {
             <div className="mt-1 text-sm text-slate-400">Players</div>
           </div>
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">
-            <div className="text-3xl font-black">{readyPlayerIds.size}</div>
+            <div className="text-3xl font-black">{effectiveReadyCount}</div>
             <div className="mt-1 text-sm text-slate-400">Ready This Week</div>
           </div>
           <div className="rounded-3xl border border-white/10 bg-white/5 p-6">

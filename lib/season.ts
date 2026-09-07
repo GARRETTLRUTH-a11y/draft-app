@@ -4,6 +4,10 @@ export type SeasonPlayer = {
   id: number;
   name: string;
   team?: string;
+  // Host-set status flags shown in Manage Players -- purely informational,
+  // don't affect ready/advance/extension logic.
+  noResponse24h?: boolean;
+  onVacation?: boolean;
 };
 
 export type ExtensionStatus = "pending" | "granted" | "denied";
@@ -339,6 +343,16 @@ export function readyPlayerIdsForWeek(
   return seasonData.readyPlayerIdsByWeek[week] ?? [];
 }
 
+// A player is "accounted for" if they've actually clicked ready, or the
+// host has flagged them as on vacation / unresponsive -- either way,
+// nothing is waiting on them, so advancing doesn't need to hold for them.
+export function isPlayerAccountedFor(
+  player: SeasonPlayer,
+  readyIds: Set<number>
+): boolean {
+  return readyIds.has(player.id) || Boolean(player.onVacation) || Boolean(player.noResponse24h);
+}
+
 // Pure "mark this player ready for this week" transform, shared by the
 // room page's markReady() and the Discord button-click handler so both
 // produce identical results from identical fresh data.
@@ -377,6 +391,8 @@ export function buildWeekSummary(
 
   const summary: DiscordWeekSummary = {
     ready: [],
+    vacation: [],
+    noResponse: [],
     pending: [],
     granted: [],
     denied: [],
@@ -388,6 +404,18 @@ export function buildWeekSummary(
 
     if (readyIds.has(player.id)) {
       summary.ready.push(person);
+      return;
+    }
+
+    // Counts as ready for advancing, but shown as its own section rather
+    // than lumped into "Ready" so the league can see who's actually out.
+    if (player.onVacation) {
+      summary.vacation.push(person);
+      return;
+    }
+
+    if (player.noResponse24h) {
+      summary.noResponse.push(person);
       return;
     }
 

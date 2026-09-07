@@ -117,7 +117,7 @@ function actionButtonsRow(seasonId: string): DiscordActionRow {
 }
 
 function statusFields(summary: DiscordWeekSummary) {
-  const { ready, pending, granted, denied, notReady } = summary;
+  const { ready, vacation, noResponse, pending, granted, denied, notReady } = summary;
 
   const pendingLines = (list: DiscordExtensionSummary[]) =>
     list.map(
@@ -147,6 +147,14 @@ function statusFields(summary: DiscordWeekSummary) {
   // doesn't get cluttered with sections nobody's in.
   const sections = [
     ready.length > 0 && { name: `✅ Ready (${ready.length})`, value: fieldValue(ready.map(personLine)) },
+    vacation.length > 0 && {
+      name: `🏖️ Vacation (${vacation.length})`,
+      value: fieldValue(vacation.map(personLine)),
+    },
+    noResponse.length > 0 && {
+      name: `🔴 No Response >24H (${noResponse.length})`,
+      value: fieldValue(noResponse.map(personLine)),
+    },
     pending.length > 0 && {
       name: `🕒 Pending Extension (${pending.length})`,
       value: fieldValue(pendingLines(pending)),

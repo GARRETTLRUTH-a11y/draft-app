@@ -17,6 +17,8 @@ export type DiscordGrantedSummary = DiscordPersonSummary & {
 
 export type DiscordWeekSummary = {
   ready: DiscordPersonSummary[];
+  vacation: DiscordPersonSummary[];
+  noResponse: DiscordPersonSummary[];
   pending: DiscordExtensionSummary[];
   granted: DiscordGrantedSummary[];
   denied: DiscordPersonSummary[];

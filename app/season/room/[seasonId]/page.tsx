@@ -29,6 +29,34 @@ import {
 } from "@/lib/season";
 import type { DiscordNotifyPayload } from "@/lib/discord";
 
+// Host-requested custom ordering for the Manage Players list, in place of
+// alphabetical. Teams not on this list (or players with no team yet) sort
+// after all of these, alphabetically among themselves.
+const MANAGE_PLAYERS_TEAM_ORDER = [
+  "Colorado",
+  "NC State",
+  "Rutgers",
+  "Missouri",
+  "Boise State",
+  "South Carolina",
+  "Virginia Tech",
+  "SMU",
+  "Maryland",
+  "Baylor",
+  "Houston",
+  "Arizona State",
+  "Mississippi State",
+  "Vanderbilt",
+  "Kentucky",
+  "Northwestern",
+  "Louisville",
+  "Oklahoma State",
+  "Pittsburgh",
+  "Cincinnati",
+  "North Carolina",
+  "Wisconsin",
+];
+
 function formatClock(totalSeconds: number) {
   const clamped = Math.max(0, totalSeconds);
   const hours = Math.floor(clamped / 3600);
@@ -204,17 +232,21 @@ export default function SeasonRoomPage() {
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
 
-  // True alphabetical order by team name (falling back to the player's own
-  // name for players who haven't picked a team), for the Manage Players
-  // list specifically -- other views (Teams board, claim grid) keep the
-  // original draft order.
-  const playersByTeamName = useMemo(
+  // Custom team order (falling back to alphabetical-by-team, then the
+  // player's own name for players who haven't picked a team yet), for the
+  // Manage Players list specifically -- other views (Teams board, claim
+  // grid) keep the original draft order.
+  const playersByManageOrder = useMemo(
     () =>
-      [...players].sort((a, b) =>
-        (a.team || a.name).localeCompare(b.team || b.name, undefined, {
-          sensitivity: "base",
-        })
-      ),
+      [...players].sort((a, b) => {
+        const aTeam = a.team || a.name;
+        const bTeam = b.team || b.name;
+        const aIndex = a.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(a.team) : -1;
+        const bIndex = b.team ? MANAGE_PLAYERS_TEAM_ORDER.indexOf(b.team) : -1;
+        const aRank = aIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : aIndex;
+        const bRank = bIndex === -1 ? MANAGE_PLAYERS_TEAM_ORDER.length : bIndex;
+        return aRank - bRank || aTeam.localeCompare(bTeam, undefined, { sensitivity: "base" });
+      }),
     [players]
   );
 
@@ -1733,7 +1765,7 @@ export default function SeasonRoomPage() {
                     className="min-w-[10rem] rounded-xl border border-white/10 bg-slate-800 px-3 py-2 text-white outline-none focus:border-cyan-300"
                   >
                     <option value="">Select a player...</option>
-                    {playersByTeamName.map((player) => (
+                    {playersByManageOrder.map((player) => (
                       <option key={player.id} value={player.id}>
                         {player.team ? `${player.team} — ${player.name}` : player.name}
                       </option>
@@ -2022,7 +2054,7 @@ export default function SeasonRoomPage() {
               </p>
 
               <div className="mt-4 flex flex-col gap-2">
-                {playersByTeamName.map((player) => {
+                {playersByManageOrder.map((player) => {
                   const participant = participantByName.get(player.name.toLowerCase());
                   const color = teamColor(player.team);
 

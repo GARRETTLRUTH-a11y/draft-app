@@ -10,15 +10,13 @@ import {
 } from "@/lib/season";
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
+import { createGenesisPvpThread, PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
 // Discord's raw 32-byte hex public key into a format Node's crypto module
 // can import, without pulling in an extra dependency just for this.
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
-const GENESIS_ROLE_ID = "1394487095317368863";
-const PVP_PARENT_CHANNEL_ID = "1393365326145523742";
-const DISCORD_API_BASE = "https://discord.com/api/v10";
 const PERMISSION_ADMINISTRATOR = BigInt("8");
 const PERMISSION_MANAGE_THREADS = BigInt("17179869184");
 
@@ -31,79 +29,6 @@ function hasThreadManagementPermission(permissions: string | undefined) {
     return false;
   }
 }
-
-async function discordApi(path: string, init: RequestInit = {}) {
-  const botToken = process.env.DISCORD_BOT_TOKEN;
-  if (!botToken) throw new Error("DISCORD_BOT_TOKEN is not configured.");
-
-  return fetch(`${DISCORD_API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bot ${botToken}`,
-      ...(init.headers || {}),
-    },
-  });
-}
-
-async function createGenesisPvpThread(guildId: string, threadName: string) {
-  const createResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}/threads`, {
-    method: "POST",
-    body: JSON.stringify({
-      name: threadName.slice(0, 100),
-      type: 11, // PUBLIC_THREAD
-      auto_archive_duration: 10080, // 7 days
-    }),
-  });
-
-  if (!createResponse.ok) {
-    const body = await createResponse.text();
-    throw new Error(`Could not create thread: ${body || createResponse.statusText}`);
-  }
-
-  const thread = (await createResponse.json()) as { id: string; name?: string };
-
-  const genesisUserIds: string[] = [];
-  let after: string | undefined;
-
-  do {
-    const params = new URLSearchParams({ limit: "1000" });
-    if (after) params.set("after", after);
-
-    const membersResponse = await discordApi(`/guilds/${guildId}/members?${params.toString()}`);
-    if (!membersResponse.ok) {
-      const body = await membersResponse.text();
-      throw new Error(`Could not read @genesis members: ${body || membersResponse.statusText}`);
-    }
-
-    const members = (await membersResponse.json()) as {
-      user?: { id?: string; bot?: boolean };
-      roles?: string[];
-    }[];
-
-    for (const member of members) {
-      const userId = member.user?.id;
-      if (userId && !member.user?.bot && member.roles?.includes(GENESIS_ROLE_ID)) {
-        genesisUserIds.push(userId);
-      }
-    }
-
-    after = members.length === 1000 ? members[members.length - 1]?.user?.id : undefined;
-  } while (after);
-
-  let added = 0;
-  let failed = 0;
-  for (const userId of genesisUserIds) {
-    const addResponse = await discordApi(`/channels/${thread.id}/thread-members/${userId}`, {
-      method: "PUT",
-    });
-    if (addResponse.ok || addResponse.status === 204) added++;
-    else failed++;
-  }
-
-  return { thread, added, total: genesisUserIds.length, failed };
-}
-
 function verifyDiscordSignature(
   publicKeyHex: string,
   signatureHex: string,
@@ -532,10 +457,7 @@ export async function POST(request: Request) {
       if (!threadName) return ephemeral("Give the PvP thread a name.");
 
       try {
-        const result = await createGenesisPvpThread(
-          interaction.guild_id,
-          threadName
-        );
+        const result = await createGenesisPvpThread(threadName);
         const membershipNote =
           result.failed > 0
             ? " Added " + result.added + "/" + result.total + " @genesis members (" + result.failed + " failed)."

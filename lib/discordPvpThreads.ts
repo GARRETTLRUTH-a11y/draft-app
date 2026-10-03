@@ -20,11 +20,63 @@ async function discordApi(path: string, init: RequestInit = {}) {
   });
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function addThreadMemberWithRetry(threadId: string, userId: string) {
+  const maxAttempts = 5;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const response = await discordApi("/channels/" + threadId + "/thread-members/" + userId, {
+      method: "PUT",
+    });
+
+    if (response.ok || response.status === 204) {
+      return { ok: true as const };
+    }
+
+    const body = await response.text();
+
+    if (response.status !== 429 || attempt === maxAttempts) {
+      return {
+        ok: false as const,
+        error: body || response.statusText || "HTTP " + response.status,
+      };
+    }
+
+    let retryAfterSeconds = Number(response.headers.get("retry-after"));
+
+    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+      try {
+        const parsed = JSON.parse(body) as { retry_after?: number };
+        retryAfterSeconds = Number(parsed.retry_after);
+      } catch {
+        retryAfterSeconds = NaN;
+      }
+    }
+
+    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+      retryAfterSeconds = Number(response.headers.get("x-ratelimit-reset-after"));
+    }
+
+    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
+      retryAfterSeconds = 1;
+    }
+
+    await sleep(Math.ceil(retryAfterSeconds * 1000) + 100);
+  }
+
+  return { ok: false as const, error: "Discord rate limit retry exhausted." };
+}
+
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
   added: number;
   total: number;
   failed: number;
+  failedMembers: string[];
+  reportedRoleCount?: number;
 };
 
 export async function createGenesisPvpThread(
@@ -89,7 +141,7 @@ export async function createGenesisPvpThread(
 
   const thread = (await createResponse.json()) as { id: string; name?: string };
 
-  const genesisUserIds: string[] = [];
+  const genesisMembers: { id: string; label: string }[] = [];
   let after: string | undefined;
 
   do {
@@ -105,31 +157,67 @@ export async function createGenesisPvpThread(
     }
 
     const members = (await membersResponse.json()) as {
-      user?: { id?: string; bot?: boolean };
+      user?: {
+        id?: string;
+        bot?: boolean;
+        username?: string;
+        global_name?: string | null;
+      };
+      nick?: string | null;
       roles?: string[];
     }[];
 
     for (const member of members) {
       const userId = member.user?.id;
       if (userId && !member.user?.bot && member.roles?.includes(GENESIS_ROLE_ID)) {
-        genesisUserIds.push(userId);
+        genesisMembers.push({
+          id: userId,
+          label:
+            member.nick ||
+            member.user?.global_name ||
+            member.user?.username ||
+            userId,
+        });
       }
     }
 
     after = members.length === 1000 ? members[members.length - 1]?.user?.id : undefined;
   } while (after);
 
-  let added = 0;
-  let failed = 0;
-
-  for (const userId of genesisUserIds) {
-    const addResponse = await discordApi(`/channels/${thread.id}/thread-members/${userId}`, {
-      method: "PUT",
-    });
-
-    if (addResponse.ok || addResponse.status === 204) added++;
-    else failed++;
+  let reportedRoleCount: number | undefined;
+  const roleCountResponse = await discordApi(
+    "/guilds/" + parent.guild_id + "/roles/member-counts"
+  );
+  if (roleCountResponse.ok) {
+    const roleCounts = (await roleCountResponse.json()) as Record<string, number>;
+    const count = roleCounts[GENESIS_ROLE_ID];
+    if (typeof count === "number") reportedRoleCount = count;
   }
 
-  return { thread, added, total: genesisUserIds.length, failed };
+  let added = 0;
+  const failedMembers: string[] = [];
+
+  for (let index = 0; index < genesisMembers.length; index++) {
+    const member = genesisMembers[index];
+    const result = await addThreadMemberWithRetry(thread.id, member.id);
+
+    if (result.ok) {
+      added++;
+    } else {
+      failedMembers.push(member.label);
+    }
+
+    if (index < genesisMembers.length - 1) {
+      await sleep(250);
+    }
+  }
+
+  return {
+    thread,
+    added,
+    total: genesisMembers.length,
+    failed: failedMembers.length,
+    failedMembers,
+    reportedRoleCount,
+  };
 }

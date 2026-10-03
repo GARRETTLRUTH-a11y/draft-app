@@ -614,6 +614,8 @@ export default function SeasonRoomPage() {
         added?: number;
         total?: number;
         failed?: number;
+        failedMembers?: string[];
+        reportedRoleCount?: number;
       };
 
       if (!response.ok) {
@@ -624,11 +626,19 @@ export default function SeasonRoomPage() {
       const added = result.added ?? 0;
       const total = result.total ?? added;
       const failed = result.failed ?? 0;
-      setPvpCreateStatus(
+      const reportedRoleCount = result.reportedRoleCount;
+      const failedNames = result.failedMembers ?? [];
+
+      let status =
         failed > 0
-          ? `✅ Created "${result.threadName || pvpThreadTitle}". Added ${added}/${total} @genesis members; ${failed} failed.`
-          : `✅ Created "${result.threadName || pvpThreadTitle}" and added all ${added} @genesis members.`
-      );
+          ? `✅ Created "${result.threadName || pvpThreadTitle}". Added ${added}/${total} @genesis members; ${failed} failed${failedNames.length ? `: ${failedNames.join(", ")}` : "."}`
+          : `✅ Created "${result.threadName || pvpThreadTitle}" and added all ${added} @genesis members.`;
+
+      if (typeof reportedRoleCount === "number" && reportedRoleCount > total) {
+        status += ` Discord reports ${reportedRoleCount} accounts with @genesis, but the member-list API returned only ${total} non-bot members with that role. Re-check Server Members Intent if that difference is unexpected.`;
+      }
+
+      setPvpCreateStatus(status);
 
       setPvpAwayTeam("");
       setPvpHomeTeam("");

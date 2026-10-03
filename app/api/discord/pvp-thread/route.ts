@@ -69,6 +69,8 @@ export async function POST(request: Request) {
       added: result.added,
       total: result.total,
       failed: result.failed,
+      failedMembers: result.failedMembers,
+      reportedRoleCount: result.reportedRoleCount,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

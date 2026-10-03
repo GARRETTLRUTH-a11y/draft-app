@@ -4,6 +4,10 @@ export type SeasonPlayer = {
   id: number;
   name: string;
   team?: string;
+  // EA team ratings used by the commissioner-facing matchup/line tools.
+  overallRating?: number;
+  offenseRating?: number;
+  defenseRating?: number;
   // Host-set status flags shown in Manage Players -- purely informational,
   // don't affect ready/advance/extension logic.
   noResponse24h?: boolean;

@@ -152,6 +152,13 @@ export default function SeasonRoomPage() {
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
   const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
   const [teamPoolView, setTeamPoolView] = useState<"claimed" | "manage">("claimed");
+  const [pvpAwayTeam, setPvpAwayTeam] = useState("");
+  const [pvpHomeTeam, setPvpHomeTeam] = useState("");
+  const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
+  const [pvpStageLabel, setPvpStageLabel] = useState("");
+  const [pvpYear, setPvpYear] = useState("");
+  const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
+  const [pvpCreateStatus, setPvpCreateStatus] = useState("");
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -243,6 +250,40 @@ export default function SeasonRoomPage() {
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
+
+  const leagueTeamNames = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          players
+            .map((player) => player.team)
+            .filter((team): team is string => Boolean(team))
+        )
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [players]
+  );
+
+  useEffect(() => {
+    if (!seasonData) return;
+    setPvpStageLabel(seasonData.periodLabel?.trim() || formatWeekLabel(currentWeek));
+    setPvpYear(String(seasonData.seasonYear));
+  }, [currentWeek, seasonData?.periodLabel, seasonData?.seasonYear]);
+
+  const pvpThreadTitle = useMemo(() => {
+    const away = pvpAwayTeam || "X Team";
+    const home = pvpHomeTeam || "Y Team";
+    const stage = pvpStageLabel.trim() || formatWeekLabel(currentWeek);
+    const year = pvpYear.trim() || String(seasonData?.seasonYear ?? new Date().getFullYear());
+    return `${away} ${pvpSeparator} ${home} (${stage}, ${year})`;
+  }, [
+    pvpAwayTeam,
+    pvpHomeTeam,
+    pvpSeparator,
+    pvpStageLabel,
+    pvpYear,
+    currentWeek,
+    seasonData?.seasonYear,
+  ]);
 
   // Host-toggleable sort for the Manage Players list specifically -- other
   // views (Teams board, claim grid) keep the original draft order.
@@ -521,6 +562,81 @@ export default function SeasonRoomPage() {
       return response.ok;
     } catch {
       return false;
+    }
+  }
+
+  async function createPvpThread() {
+    if (!season || !pvpAwayTeam || !pvpHomeTeam) return;
+
+    if (pvpAwayTeam === pvpHomeTeam) {
+      setPvpCreateStatus("Choose two different teams.");
+      return;
+    }
+
+    const stage = pvpStageLabel.trim();
+    const year = pvpYear.trim();
+    if (!stage || !year) {
+      setPvpCreateStatus("Stage/bowl and year are required.");
+      return;
+    }
+
+    if (pvpThreadTitle.length > 100) {
+      setPvpCreateStatus("Discord thread names must be 100 characters or fewer.");
+      return;
+    }
+
+    setIsCreatingPvpThread(true);
+    setPvpCreateStatus("");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setPvpCreateStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/discord/pvp-thread", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          threadName: pvpThreadTitle,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        threadName?: string;
+        added?: number;
+        total?: number;
+        failed?: number;
+      };
+
+      if (!response.ok) {
+        setPvpCreateStatus(result.error || "Could not create the PvP thread.");
+        return;
+      }
+
+      const added = result.added ?? 0;
+      const total = result.total ?? added;
+      const failed = result.failed ?? 0;
+      setPvpCreateStatus(
+        failed > 0
+          ? `✅ Created "${result.threadName || pvpThreadTitle}". Added ${added}/${total} @genesis members; ${failed} failed.`
+          : `✅ Created "${result.threadName || pvpThreadTitle}" and added all ${added} @genesis members.`
+      );
+
+      setPvpAwayTeam("");
+      setPvpHomeTeam("");
+      setPvpSeparator("@");
+    } catch {
+      setPvpCreateStatus("Could not create the PvP thread. Try again.");
+    } finally {
+      setIsCreatingPvpThread(false);
     }
   }
 
@@ -1602,6 +1718,127 @@ export default function SeasonRoomPage() {
 
               {players.length === 0 && (
                 <p className="text-sm text-slate-500">No players in this season yet.</p>
+              )}
+            </div>
+          </section>
+        )}
+
+        {showCommissionerControls && (
+          <section className="rounded-3xl border-2 border-cyan-400/30 bg-cyan-500/[0.05] p-6">
+            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-300">
+              🏈 PvP Channels
+              <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-cyan-200">
+                Only you can see this
+              </span>
+            </div>
+
+            <h2 className="text-xl font-black">Create Weekly Matchup Thread</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Pick two teams in the league. The current stage and season year fill in automatically,
+              but you can edit the stage for a bowl, playoff game, or other custom matchup. Threads
+              are created under the configured PvP parent channel and every @genesis member is added
+              without pinging the role.
+            </p>
+
+            <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                X Team
+                <select
+                  value={pvpAwayTeam}
+                  onChange={(event) => setPvpAwayTeam(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                >
+                  <option value="">Select X team...</option>
+                  {leagueTeamNames.map((team) => (
+                    <option key={team} value={team} disabled={team === pvpHomeTeam}>
+                      {team}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Site
+                <select
+                  value={pvpSeparator}
+                  onChange={(event) => setPvpSeparator(event.target.value as "@" | "vs.")}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-center text-white outline-none focus:border-cyan-300"
+                >
+                  <option value="@">@</option>
+                  <option value="vs.">vs.</option>
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Y Team
+                <select
+                  value={pvpHomeTeam}
+                  onChange={(event) => setPvpHomeTeam(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                >
+                  <option value="">Select Y team...</option>
+                  {leagueTeamNames.map((team) => (
+                    <option key={team} value={team} disabled={team === pvpAwayTeam}>
+                      {team}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-end gap-3">
+              <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-semibold text-slate-400">
+                Week / Stage / Bowl
+                <input
+                  value={pvpStageLabel}
+                  onChange={(event) => setPvpStageLabel(event.target.value)}
+                  placeholder="Week 11 or Cotton Bowl"
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Year
+                <input
+                  type="number"
+                  value={pvpYear}
+                  onChange={(event) => setPvpYear(event.target.value)}
+                  className="w-28 rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Thread preview</p>
+              <p className="mt-1 break-words text-lg font-black text-white">{pvpThreadTitle}</p>
+              <p className="mt-1 text-xs text-slate-500">{pvpThreadTitle.length}/100 characters</p>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              <button
+                onClick={createPvpThread}
+                disabled={
+                  isCreatingPvpThread ||
+                  !pvpAwayTeam ||
+                  !pvpHomeTeam ||
+                  pvpAwayTeam === pvpHomeTeam ||
+                  !pvpStageLabel.trim() ||
+                  !pvpYear.trim() ||
+                  pvpThreadTitle.length > 100
+                }
+                className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isCreatingPvpThread ? "Creating..." : "Create PvP Thread"}
+              </button>
+
+              {pvpCreateStatus && (
+                <span
+                  className={`text-sm font-semibold ${
+                    pvpCreateStatus.startsWith("✅") ? "text-green-300" : "text-red-300"
+                  }`}
+                >
+                  {pvpCreateStatus}
+                </span>
               )}
             </div>
           </section>

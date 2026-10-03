@@ -36,18 +36,50 @@ export async function createGenesisPvpThread(
     throw new Error(`Could not read PvP parent channel: ${body || parentResponse.statusText}`);
   }
 
-  const parent = (await parentResponse.json()) as { guild_id?: string };
+  const parent = (await parentResponse.json()) as {
+    guild_id?: string;
+    type?: number;
+    flags?: number;
+    available_tags?: { id: string; name: string }[];
+  };
   if (!parent.guild_id) {
     throw new Error("The configured PvP parent channel is not inside a Discord server.");
   }
 
+  const isForumOrMedia = parent.type === 15 || parent.type === 16;
+  const requiresTag = Boolean((parent.flags ?? 0) & (1 << 4));
+  const pvpTag = parent.available_tags?.find(
+    (tag) => tag.name.trim().toLowerCase() === "pvp"
+  );
+
+  if (requiresTag && !pvpTag) {
+    const available = parent.available_tags?.map((tag) => tag.name).join(", ");
+    throw new Error(
+      available
+        ? `This forum requires a tag. Add a tag named "PvP" to the parent channel, or make tags optional. Available tags: ${available}`
+        : 'This forum requires a tag. Add a tag named "PvP" to the parent channel, or make tags optional.'
+    );
+  }
+
+  const threadPayload = isForumOrMedia
+    ? {
+        name: threadName.slice(0, 100),
+        auto_archive_duration: 10080,
+        message: {
+          content: `🏈 **${threadName}**`,
+          allowed_mentions: { parse: [] as string[] },
+        },
+        ...(pvpTag ? { applied_tags: [pvpTag.id] } : {}),
+      }
+    : {
+        name: threadName.slice(0, 100),
+        type: 11, // PUBLIC_THREAD
+        auto_archive_duration: 10080, // 7 days
+      };
+
   const createResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}/threads`, {
     method: "POST",
-    body: JSON.stringify({
-      name: threadName.slice(0, 100),
-      type: 11, // PUBLIC_THREAD
-      auto_archive_duration: 10080, // 7 days
-    }),
+    body: JSON.stringify(threadPayload),
   });
 
   if (!createResponse.ok) {

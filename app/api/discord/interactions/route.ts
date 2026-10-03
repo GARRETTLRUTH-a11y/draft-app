@@ -17,6 +17,7 @@ import { sendDiscordMessage } from "@/lib/discordSend";
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 const GENESIS_ROLE_ID = "1394487095317368863";
+const PVP_PARENT_CHANNEL_ID = "1393365326145523742";
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const PERMISSION_ADMINISTRATOR = BigInt("8");
 const PERMISSION_MANAGE_THREADS = BigInt("17179869184");
@@ -45,8 +46,8 @@ async function discordApi(path: string, init: RequestInit = {}) {
   });
 }
 
-async function createGenesisPvpThread(guildId: string, channelId: string, threadName: string) {
-  const createResponse = await discordApi(`/channels/${channelId}/threads`, {
+async function createGenesisPvpThread(guildId: string, threadName: string) {
+  const createResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}/threads`, {
     method: "POST",
     body: JSON.stringify({
       name: threadName.slice(0, 100),
@@ -416,7 +417,7 @@ export async function POST(request: Request) {
     }
 
     if (customId === "create_pvp_thread") {
-      if (!interaction.guild_id || !interaction.channel_id) {
+      if (!interaction.guild_id) {
         return ephemeral("PvP threads can only be created inside the server.");
       }
       if (!hasThreadManagementPermission(interaction.member?.permissions)) {
@@ -440,7 +441,7 @@ export async function POST(request: Request) {
                   required: true,
                   min_length: 1,
                   max_length: 100,
-                  placeholder: "Week 7 — Clemson vs Miami",
+                  placeholder: "Colorado @ Houston (Week 11, 2027)",
                 },
               ],
             },
@@ -511,7 +512,7 @@ export async function POST(request: Request) {
     const customId = interaction.data.custom_id;
 
     if (customId === "create_pvp_thread_modal") {
-      if (!interaction.guild_id || !interaction.channel_id) {
+      if (!interaction.guild_id) {
         return ephemeral("PvP threads can only be created inside the server.");
       }
       if (!hasThreadManagementPermission(interaction.member?.permissions)) {
@@ -533,14 +534,13 @@ export async function POST(request: Request) {
       try {
         const result = await createGenesisPvpThread(
           interaction.guild_id,
-          interaction.channel_id,
           threadName
         );
         const membershipNote =
           result.failed > 0
             ? " Added " + result.added + "/" + result.total + " @genesis members (" + result.failed + " failed)."
             : " Added all " + result.added + " @genesis members.";
-        return ephemeral("✅ Created <#" + result.thread.id + ">." + membershipNote);
+        return ephemeral("✅ Created <#" + result.thread.id + "> under <#" + PVP_PARENT_CHANNEL_ID + ">." + membershipNote);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown Discord error.";
         return ephemeral("Couldn't create the PvP thread: " + message);

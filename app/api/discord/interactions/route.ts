@@ -18,8 +18,8 @@ const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 const GENESIS_ROLE_ID = "1394487095317368863";
 const DISCORD_API_BASE = "https://discord.com/api/v10";
-const PERMISSION_ADMINISTRATOR = 1n << 3n;
-const PERMISSION_MANAGE_THREADS = 1n << 34n;
+const PERMISSION_ADMINISTRATOR = BigInt("8");
+const PERMISSION_MANAGE_THREADS = BigInt("17179869184");
 
 function hasThreadManagementPermission(permissions: string | undefined) {
   if (!permissions) return false;

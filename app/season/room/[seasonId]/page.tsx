@@ -159,6 +159,11 @@ export default function SeasonRoomPage() {
   const [pvpYear, setPvpYear] = useState("");
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
+  const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
+  const [ratingOverallInput, setRatingOverallInput] = useState("");
+  const [ratingOffenseInput, setRatingOffenseInput] = useState("");
+  const [ratingDefenseInput, setRatingDefenseInput] = useState("");
+  const [ratingEditorError, setRatingEditorError] = useState("");
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -438,6 +443,14 @@ export default function SeasonRoomPage() {
   const isCoAdmin = Boolean(myParticipant?.is_co_admin);
   const showCoAdminControls = isCoAdmin && !isOwner;
 
+  const ratingEditorPlayer = useMemo(
+    () =>
+      ratingEditorPlayerId == null
+        ? undefined
+        : players.find((player) => player.id === ratingEditorPlayerId),
+    [players, ratingEditorPlayerId]
+  );
+
   const myPendingOrGrantedRequest = useMemo(() => {
     if (!myPlayer || !seasonData) return undefined;
     return seasonData.extensionRequests.find(
@@ -542,6 +555,66 @@ export default function SeasonRoomPage() {
     const nextSeasonData = mutate(fresh);
     const saved = await saveRoomSeason(nextSeasonData);
     return saved ? nextSeasonData : null;
+  }
+
+  function openTeamRatings(player: SeasonPlayer) {
+    setRatingEditorPlayerId(player.id);
+    setRatingOverallInput(
+      typeof player.overallRating === "number" ? String(player.overallRating) : ""
+    );
+    setRatingOffenseInput(
+      typeof player.offenseRating === "number" ? String(player.offenseRating) : ""
+    );
+    setRatingDefenseInput(
+      typeof player.defenseRating === "number" ? String(player.defenseRating) : ""
+    );
+    setRatingEditorError("");
+  }
+
+  function parseTeamRating(raw: string): number | undefined | null {
+    if (!raw.trim()) return undefined;
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 0 || value > 99) return null;
+    return value;
+  }
+
+  async function saveTeamRatings() {
+    if (ratingEditorPlayerId == null) return;
+
+    const overallRating = parseTeamRating(ratingOverallInput);
+    const offenseRating = parseTeamRating(ratingOffenseInput);
+    const defenseRating = parseTeamRating(ratingDefenseInput);
+
+    if (
+      overallRating === null ||
+      offenseRating === null ||
+      defenseRating === null
+    ) {
+      setRatingEditorError("Ratings must be whole numbers from 0 to 99.");
+      return;
+    }
+
+    const saved = await updateSeasonData((fresh) => ({
+      ...fresh,
+      players: fresh.players.map((player) =>
+        player.id === ratingEditorPlayerId
+          ? {
+              ...player,
+              overallRating,
+              offenseRating,
+              defenseRating,
+            }
+          : player
+      ),
+    }));
+
+    if (!saved) {
+      setRatingEditorError("Could not save the ratings. Try again.");
+      return;
+    }
+
+    setRatingEditorPlayerId(null);
+    setRatingEditorError("");
   }
 
   async function notifyDiscord(payload: DiscordNotifyPayload): Promise<boolean> {
@@ -2696,9 +2769,11 @@ export default function SeasonRoomPage() {
             <div>
               <h2 className="text-2xl font-black">Teams — {formatWeekLabel(currentWeek)}</h2>
               <p className="mt-2 text-sm text-slate-400">
-                {!myParticipant
-                  ? "Click the team you drafted to select it."
-                  : "Every team, publicly visible, with ready and extension status."}
+                {showCommissionerControls
+                  ? "Click any team to quickly edit its OVR / OFF / DEF ratings."
+                  : !myParticipant
+                    ? "Click the team you drafted to select it."
+                    : "Every team, publicly visible, with ready and extension status."}
               </p>
             </div>
             <button
@@ -2716,6 +2791,11 @@ export default function SeasonRoomPage() {
               const isReady = readyPlayerIds.has(player.id);
               const isMe = myParticipant?.player_name === player.name;
               const canClaim = !myParticipant && !isClaimed;
+              const canEditRatings = showCommissionerControls;
+              const hasRatings =
+                typeof player.overallRating === "number" ||
+                typeof player.offenseRating === "number" ||
+                typeof player.defenseRating === "number";
               const extensionForWeek = seasonData.extensionRequests.find(
                 (request) =>
                   request.playerId === player.id && request.week === currentWeek
@@ -2750,26 +2830,35 @@ export default function SeasonRoomPage() {
               return (
                 <div
                   key={player.id}
-                  role={canClaim ? "button" : undefined}
-                  tabIndex={canClaim ? 0 : undefined}
-                  onClick={() => canClaim && claimPlayer(player)}
+                  role={canClaim || canEditRatings ? "button" : undefined}
+                  tabIndex={canClaim || canEditRatings ? 0 : undefined}
+                  onClick={() => {
+                    if (canEditRatings) openTeamRatings(player);
+                    else if (canClaim) claimPlayer(player);
+                  }}
                   onKeyDown={(event) => {
-                    if (canClaim && (event.key === "Enter" || event.key === " ")) {
+                    if (
+                      (canClaim || canEditRatings) &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
                       event.preventDefault();
-                      claimPlayer(player);
+                      if (canEditRatings) openTeamRatings(player);
+                      else if (canClaim) claimPlayer(player);
                     }
                   }}
                   title={
-                    canClaim
-                      ? `Click to select ${player.team || player.name}`
-                      : isClaimed
-                        ? "Already selected"
-                        : undefined
+                    canEditRatings
+                      ? `Edit ratings for ${player.team || player.name}`
+                      : canClaim
+                        ? `Click to select ${player.team || player.name}`
+                        : isClaimed
+                          ? "Already selected"
+                          : undefined
                   }
                   className={`relative flex items-start gap-2.5 rounded-xl border px-3 py-2.5 text-sm transition ${
                     cardClasses[cardState]
                   } ${isMe ? "ring-2 ring-cyan-300/60" : ""} ${
-                    canClaim ? "cursor-pointer hover:brightness-125" : ""
+                    canClaim || canEditRatings ? "cursor-pointer hover:brightness-125" : ""
                   }`}
                 >
                   {cardState === "denied" && (
@@ -2778,12 +2867,34 @@ export default function SeasonRoomPage() {
                     </div>
                   )}
 
+                  {(hasRatings || canEditRatings) && (
+                    <div className="absolute right-2 top-2 z-10">
+                      {hasRatings ? (
+                        <div className="flex gap-1 rounded-lg border border-white/10 bg-slate-950/80 px-1.5 py-1 text-[9px] font-black leading-none text-slate-300 shadow-sm backdrop-blur">
+                          <span>
+                            OVR <span className="text-white">{player.overallRating ?? "—"}</span>
+                          </span>
+                          <span>
+                            OFF <span className="text-white">{player.offenseRating ?? "—"}</span>
+                          </span>
+                          <span>
+                            DEF <span className="text-white">{player.defenseRating ?? "—"}</span>
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="rounded-lg border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-[9px] font-bold text-cyan-200">
+                          + Ratings
+                        </span>
+                      )}
+                    </div>
+                  )}
+
                   <span
                     className="relative mt-1.5 h-3 w-3 flex-shrink-0 rounded-full ring-1 ring-white/20"
                     style={{ backgroundColor: color || "#64748b" }}
                   />
 
-                  <div className="relative min-w-0 flex-1">
+                  <div className={`relative min-w-0 flex-1 ${hasRatings || canEditRatings ? "pr-28" : ""}`}>
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate">
                         <span
@@ -2988,6 +3099,98 @@ export default function SeasonRoomPage() {
           )}
         </section>
       </section>
+
+      {ratingEditorPlayer && showCommissionerControls && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md rounded-3xl border-2 border-cyan-400/30 bg-slate-900 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">
+                  Team Ratings
+                </p>
+                <h3 className="mt-1 text-2xl font-black">
+                  {ratingEditorPlayer.team || ratingEditorPlayer.name}
+                </h3>
+                <p className="mt-1 text-sm text-slate-400">
+                  Enter the current EA team ratings. Leave a field blank to clear it.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRatingEditorPlayerId(null)}
+                className="rounded-xl bg-white/10 px-3 py-2 text-sm font-bold text-white transition hover:bg-white/15"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                OVR
+                <input
+                  autoFocus
+                  type="number"
+                  min={0}
+                  max={99}
+                  inputMode="numeric"
+                  value={ratingOverallInput}
+                  onChange={(event) => setRatingOverallInput(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-center text-xl font-black text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                OFF
+                <input
+                  type="number"
+                  min={0}
+                  max={99}
+                  inputMode="numeric"
+                  value={ratingOffenseInput}
+                  onChange={(event) => setRatingOffenseInput(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-center text-xl font-black text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                DEF
+                <input
+                  type="number"
+                  min={0}
+                  max={99}
+                  inputMode="numeric"
+                  value={ratingDefenseInput}
+                  onChange={(event) => setRatingDefenseInput(event.target.value)}
+                  className="rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-center text-xl font-black text-white outline-none focus:border-cyan-300"
+                />
+              </label>
+            </div>
+
+            {ratingEditorError && (
+              <p className="mt-3 text-sm font-semibold text-red-300">{ratingEditorError}</p>
+            )}
+
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setRatingEditorPlayerId(null)}
+                disabled={isSaving}
+                className="rounded-2xl bg-white/10 px-5 py-3 font-bold text-white transition hover:bg-white/15 disabled:opacity-40"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveTeamRatings}
+                disabled={isSaving}
+                className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:opacity-40"
+              >
+                {isSaving ? "Saving..." : "Save Ratings"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {showPendingExtensionAlert && pendingRequests.length > 0 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">

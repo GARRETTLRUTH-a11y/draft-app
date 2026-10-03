@@ -112,6 +112,12 @@ function actionButtonsRow(seasonId: string): DiscordActionRow {
         label: "🌐 Open Season Page",
         url: `${process.env.NEXT_PUBLIC_SITE_URL || "https://cfb-draft.vercel.app"}/season/room/${seasonId}`,
       },
+      {
+        type: 2,
+        style: 1, // PRIMARY (blurple)
+        label: "🏈 Create PvP Thread",
+        custom_id: "create_pvp_thread",
+      },
     ],
   };
 }

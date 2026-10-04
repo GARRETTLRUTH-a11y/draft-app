@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
 import { buildGenesisLine, genesisStarterMessage } from "@/lib/genesisLines";
@@ -18,7 +18,7 @@ function normalizeTeam(value: string) {
 }
 
 async function resolveMatchupDiscordUserIds(
-  admin: ReturnType<typeof createClient>,
+  admin: SupabaseClient,
   seasonId: string,
   seasonData: SeasonData,
   awayTeam?: string,

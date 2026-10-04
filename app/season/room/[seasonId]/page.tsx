@@ -96,6 +96,24 @@ type Participant = {
   is_co_admin: boolean;
 };
 
+type GenesisLinePreview = {
+  awayTeam: string;
+  homeTeam: string;
+  neutral: boolean;
+  favorite: string | null;
+  spread: number;
+  displayLine: string;
+  projectedAwayScore: number;
+  projectedHomeScore: number;
+  confidence: "Low" | "Medium" | "High";
+  confidenceScore: number;
+  historyGamesUsed: number;
+  ratingMargin: number;
+  historyAdjustment: number;
+  homeFieldAdjustment: number;
+  notes: string[];
+};
+
 export default function SeasonRoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -159,6 +177,10 @@ export default function SeasonRoomPage() {
   const [pvpYear, setPvpYear] = useState("");
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
+  const [genesisLine, setGenesisLine] = useState<GenesisLinePreview | null>(null);
+  const [isGeneratingGenesisLine, setIsGeneratingGenesisLine] = useState(false);
+  const [isSyncingGenesisHistory, setIsSyncingGenesisHistory] = useState(false);
+  const [genesisHistoryStatus, setGenesisHistoryStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
   const [ratingOffenseInput, setRatingOffenseInput] = useState("");
@@ -273,6 +295,10 @@ export default function SeasonRoomPage() {
     setPvpStageLabel(seasonData.periodLabel?.trim() || formatWeekLabel(currentWeek));
     setPvpYear(String(seasonData.seasonYear));
   }, [currentWeek, seasonData?.periodLabel, seasonData?.seasonYear]);
+
+  useEffect(() => {
+    setGenesisLine(null);
+  }, [pvpAwayTeam, pvpHomeTeam, pvpSeparator]);
 
   const pvpThreadTitle = useMemo(() => {
     const away = pvpAwayTeam || "X Team";
@@ -638,6 +664,101 @@ export default function SeasonRoomPage() {
     }
   }
 
+  async function syncGenesisHistory() {
+    if (!season) return;
+
+    setIsSyncingGenesisHistory(true);
+    setGenesisHistoryStatus("Reading Discord history and parsing completed games...");
+    setGenesisLine(null);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisHistoryStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/history-sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ seasonId: season.id }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        games?: number;
+        messagesScanned?: number;
+        lastSyncedAt?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisHistoryStatus(result.error || "Could not sync Genesis history.");
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisHistoryStatus(
+        `✅ History synced: ${result.games ?? 0} games parsed from ${result.messagesScanned ?? 0} Discord messages.`
+      );
+    } catch {
+      setGenesisHistoryStatus("Could not sync Genesis history. Try again.");
+    } finally {
+      setIsSyncingGenesisHistory(false);
+    }
+  }
+
+  async function generateGenesisLine() {
+    if (!season || !pvpAwayTeam || !pvpHomeTeam) return null;
+
+    setIsGeneratingGenesisLine(true);
+    setPvpCreateStatus("");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setPvpCreateStatus("Your session expired. Refresh and sign in again.");
+        return null;
+      }
+
+      const response = await fetch("/api/genesis/line", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          awayTeam: pvpAwayTeam,
+          homeTeam: pvpHomeTeam,
+          neutral: pvpSeparator === "vs.",
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        line?: GenesisLinePreview;
+      };
+
+      if (!response.ok || !result.line) {
+        setPvpCreateStatus(result.error || "Could not generate Genesis line.");
+        return null;
+      }
+
+      setGenesisLine(result.line);
+      return result.line;
+    } catch {
+      setPvpCreateStatus("Could not generate Genesis line. Try again.");
+      return null;
+    } finally {
+      setIsGeneratingGenesisLine(false);
+    }
+  }
+
   async function createPvpThread() {
     if (!season || !pvpAwayTeam || !pvpHomeTeam) return;
 
@@ -678,6 +799,9 @@ export default function SeasonRoomPage() {
         body: JSON.stringify({
           seasonId: season.id,
           threadName: pvpThreadTitle,
+          awayTeam: pvpAwayTeam,
+          homeTeam: pvpHomeTeam,
+          neutral: pvpSeparator === "vs.",
         }),
       });
 
@@ -689,6 +813,7 @@ export default function SeasonRoomPage() {
         failed?: number;
         failedMembers?: string[];
         reportedRoleCount?: number;
+        line?: GenesisLinePreview;
       };
 
       if (!response.ok) {
@@ -709,6 +834,11 @@ export default function SeasonRoomPage() {
 
       if (typeof reportedRoleCount === "number" && reportedRoleCount > total) {
         status += ` Discord reports ${reportedRoleCount} accounts with @genesis, but the member-list API returned only ${total} non-bot members with that role. Re-check Server Members Intent if that difference is unexpected.`;
+      }
+
+      if (result.line) {
+        setGenesisLine(result.line);
+        status += ` Genesis Line: ${result.line.displayLine}.`;
       }
 
       setPvpCreateStatus(status);
@@ -1895,6 +2025,94 @@ export default function SeasonRoomPage() {
               <p className="text-xs font-black uppercase tracking-wide text-slate-500">Thread preview</p>
               <p className="mt-1 break-words text-lg font-black text-white">{pvpThreadTitle}</p>
               <p className="mt-1 text-xs text-slate-500">{pvpThreadTitle.length}/100 characters</p>
+            </div>
+
+            <div className="mt-4 rounded-2xl border border-fuchsia-400/20 bg-fuchsia-400/[0.05] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-fuchsia-300">
+                    📈 Genesis Lines
+                  </p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    {seasonData.genesisHistory
+                      ? `${seasonData.genesisHistory.games.length} historical games stored · last synced ${new Date(
+                          seasonData.genesisHistory.lastSyncedAt
+                        ).toLocaleString()}`
+                      : "No Discord history synced yet."}
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={syncGenesisHistory}
+                    disabled={isSyncingGenesisHistory}
+                    className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-400/10 px-3 py-2 text-xs font-bold text-fuchsia-200 transition hover:bg-fuchsia-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isSyncingGenesisHistory ? "Syncing History..." : "Sync Discord History"}
+                  </button>
+                  <button
+                    onClick={generateGenesisLine}
+                    disabled={
+                      isGeneratingGenesisLine ||
+                      !pvpAwayTeam ||
+                      !pvpHomeTeam ||
+                      pvpAwayTeam === pvpHomeTeam
+                    }
+                    className="rounded-xl bg-fuchsia-300 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-fuchsia-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isGeneratingGenesisLine ? "Generating..." : "Generate Line"}
+                  </button>
+                </div>
+              </div>
+
+              {genesisHistoryStatus && (
+                <p
+                  className={`mt-3 text-xs font-semibold ${
+                    genesisHistoryStatus.startsWith("✅")
+                      ? "text-green-300"
+                      : "text-slate-300"
+                  }`}
+                >
+                  {genesisHistoryStatus}
+                </p>
+              )}
+
+              {genesisLine && (
+                <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/70 p-4">
+                  <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                        Genesis Line
+                      </p>
+                      <p className="mt-1 text-2xl font-black text-white">
+                        {genesisLine.displayLine}
+                      </p>
+                      <p className="mt-1 text-sm font-semibold text-slate-300">
+                        Projected: {genesisLine.awayTeam} {genesisLine.projectedAwayScore} –{" "}
+                        {genesisLine.homeTeam} {genesisLine.projectedHomeScore}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs font-black uppercase tracking-wide text-slate-500">
+                        Confidence
+                      </p>
+                      <p className="text-lg font-black text-fuchsia-200">
+                        {genesisLine.confidence} · {genesisLine.confidenceScore}%
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {genesisLine.historyGamesUsed} relevant history games
+                      </p>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-400">
+                    Rating edge {genesisLine.ratingMargin >= 0 ? "+" : ""}
+                    {genesisLine.ratingMargin.toFixed(1)} to {genesisLine.awayTeam}; history adjustment{" "}
+                    {genesisLine.historyAdjustment >= 0 ? "+" : ""}
+                    {genesisLine.historyAdjustment.toFixed(1)}; home field{" "}
+                    {genesisLine.homeFieldAdjustment.toFixed(1)} from the away-team perspective.
+                  </p>
+                </div>
+              )}
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">

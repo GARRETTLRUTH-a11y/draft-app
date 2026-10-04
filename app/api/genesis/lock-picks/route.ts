@@ -111,6 +111,13 @@ export async function POST(request: Request) {
     );
   }
 
+  if (matchup.status === "voided") {
+    return NextResponse.json(
+      { error: "That Genesis matchup was voided for an Auto Sim or Force Win." },
+      { status: 409 }
+    );
+  }
+
   if (matchup.status === "locked") {
     return NextResponse.json({
       ok: true,

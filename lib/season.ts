@@ -64,6 +64,46 @@ export type GenesisHistory = {
   lastSyncMode?: "full" | "incremental";
 };
 
+export type GenesisPickSide = "away" | "home";
+
+export type GenesisPick = {
+  discordUserId: string;
+  discordUsername: string;
+  side: GenesisPickSide;
+  pickedAt: string;
+};
+
+export type GenesisPickMatchup = {
+  id: string;
+  threadId: string;
+  threadName: string;
+  createdAt: string;
+  seasonYear: number;
+  stage?: string;
+  awayTeam: string;
+  homeTeam: string;
+  neutral: boolean;
+  displayLine: string;
+  favorite: string | null;
+  spread: number;
+  // Signed from the away team's perspective: -4.5 means away -4.5,
+  // +4.5 means away +4.5, 0 means pick'em.
+  awayLine: number;
+  status: "open" | "settled";
+  picks: Record<string, GenesisPick>;
+  finalAwayScore?: number;
+  finalHomeScore?: number;
+  atsWinner?: GenesisPickSide | "push";
+  settledAt?: string;
+  sourceGameId?: string;
+};
+
+export type GenesisPicksState = {
+  matchups: GenesisPickMatchup[];
+  leaderboardChannelId?: string;
+  leaderboardMessageId?: string;
+};
+
 export type ExtensionStatus = "pending" | "granted" | "denied";
 
 export type ExtensionRequest = {
@@ -137,6 +177,8 @@ export type SeasonData = {
   reminders?: ReminderSchedule[];
   // Parsed Discord results used by the Genesis Lines model.
   genesisHistory?: GenesisHistory;
+  // Social ATS picks and the persistent Discord leaderboard.
+  genesisPicks?: GenesisPicksState;
 };
 
 // The timezone reminder times are entered/interpreted in.

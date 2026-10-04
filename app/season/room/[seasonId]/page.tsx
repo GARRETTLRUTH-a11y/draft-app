@@ -2691,7 +2691,7 @@ export default function SeasonRoomPage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
-              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Thread preview</p>
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Game 1 thread preview</p>
               <p className="mt-1 break-words text-lg font-black text-white">{pvpThreadTitle}</p>
               <p className="mt-1 text-xs text-slate-500">{pvpThreadTitle.length}/100 characters</p>
             </div>
@@ -2808,16 +2808,17 @@ export default function SeasonRoomPage() {
                 onClick={createPvpThread}
                 disabled={
                   isCreatingPvpThread ||
-                  !pvpAwayTeam ||
-                  !pvpHomeTeam ||
-                  pvpAwayTeam === pvpHomeTeam ||
+                  !allPvpGamesReady ||
                   !pvpStageLabel.trim() ||
-                  !pvpYear.trim() ||
-                  pvpThreadTitle.length > 100
+                  !pvpYear.trim()
                 }
                 className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {isCreatingPvpThread ? "Creating..." : "Create PvP Thread"}
+                {isCreatingPvpThread
+                  ? "Creating..."
+                  : pvpGamesToCreate.length > 1
+                    ? `Create All PvP Threads (${pvpGamesToCreate.length})`
+                    : "Create PvP Thread"}
               </button>
 
               {pvpCreateStatus && (
@@ -2856,8 +2857,23 @@ export default function SeasonRoomPage() {
                     return (
                       <div
                         key={matchup.id}
-                        className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+                        className="relative rounded-2xl border border-white/10 bg-slate-950/60 p-4 pr-12"
                       >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            deleteGenesisMatchup(
+                              matchup.id,
+                              `${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}`
+                            )
+                          }
+                          disabled={deletingGenesisMatchupId === matchup.id}
+                          title="Delete this game and Discord thread"
+                          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-red-300/20 bg-red-300/5 text-base font-black text-red-300 transition hover:bg-red-300/15 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {deletingGenesisMatchupId === matchup.id ? "…" : "×"}
+                        </button>
+
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-black text-white">

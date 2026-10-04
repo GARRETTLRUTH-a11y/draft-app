@@ -4,6 +4,7 @@ import type {
   GenesisPickMatchup,
   GenesisPickSide,
   GenesisPicksState,
+  GenesisVoidReason,
   SeasonData,
 } from "@/lib/season";
 import type { GenesisLineResult } from "@/lib/genesisLines";
@@ -151,6 +152,9 @@ export function settleGenesisMatchupByScore(
   if (matchup.status === "settled") {
     return { error: "That Genesis matchup is already finalized." } as const;
   }
+  if (matchup.status === "voided") {
+    return { error: "That Genesis matchup was voided and cannot be graded." } as const;
+  }
 
   const atsValue = awayScore - homeScore + matchup.awayLine;
   const atsWinner: GenesisPickSide | "push" =
@@ -184,6 +188,76 @@ export function settleGenesisMatchupByScore(
     matchup,
     atsWinner,
   } as const;
+}
+
+export function voidGenesisMatchup(
+  seasonData: SeasonData,
+  matchupId: string,
+  reason: GenesisVoidReason,
+  voidedAt = new Date().toISOString()
+):
+  | { error: string }
+  | { seasonData: SeasonData; matchup: GenesisPickMatchup } {
+  const state = seasonData.genesisPicks;
+  const matchup = state?.matchups.find((item) => item.id === matchupId);
+
+  if (!state || !matchup) {
+    return { error: "Genesis matchup not found." };
+  }
+  if (matchup.status === "settled") {
+    return { error: "That Genesis matchup is already finalized." };
+  }
+  if (matchup.status === "voided") {
+    return { error: "That Genesis matchup is already voided." };
+  }
+
+  const matchups: GenesisPickMatchup[] = state.matchups.map((item) =>
+    item.id === matchupId
+      ? {
+          ...item,
+          status: "voided",
+          voidReason: reason,
+          voidedAt,
+        }
+      : item
+  );
+
+  return {
+    seasonData: {
+      ...seasonData,
+      genesisPicks: {
+        ...state,
+        matchups,
+      },
+    },
+    matchup,
+  };
+}
+
+export async function postGenesisVoidToThread(input: {
+  matchup: GenesisPickMatchup;
+  reason: GenesisVoidReason;
+}) {
+  const reasonLabel =
+    input.reason === "auto_sim" ? "Auto Sim" : "Force Win";
+
+  const response = await discordApi(
+    `/channels/${input.matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: [
+          "🚫 **GENESIS LINE VOIDED**",
+          `Reason: **${reasonLabel}**`,
+          "All picks for this matchup are canceled.",
+          "This game will not count toward Genesis pick accuracy or future Genesis line performance history.",
+        ].join("\n"),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return response.ok;
 }
 
 export async function postGenesisFinalScorePrompt(
@@ -273,6 +347,9 @@ export function saveGenesisPick(
   if (matchup.status === "settled") {
     return { error: "Picks are closed because this matchup is already final." } as const;
   }
+  if (matchup.status === "voided") {
+    return { error: "This Genesis line was voided, so picks no longer count." } as const;
+  }
 
   const previous = matchup.picks[pick.discordUserId];
 
@@ -347,7 +424,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
   let settledCount = 0;
 
   const matchups = state.matchups.map((matchup) => {
-    if (matchup.status === "settled") return matchup;
+    if (matchup.status === "settled" || matchup.status === "voided") return matchup;
 
     const game = matchingFinalGame(seasonData.genesisHistory!.games, matchup);
     if (!game) return matchup;
@@ -455,6 +532,9 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   const lockedCount = state.matchups.filter(
     (matchup) => matchup.status === "locked"
   ).length;
+  const voidedCount = state.matchups.filter(
+    (matchup) => matchup.status === "voided"
+  ).length;
 
   const lines = [
     "🏆 **GENESIS PICKS LEADERBOARD**",
@@ -475,7 +555,7 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
 
   lines.push(
     "",
-    `Settled matchups: **${settledCount}** · Locked/in progress: **${lockedCount}** · Open picks: **${openCount}**`,
+    `Settled: **${settledCount}** · Voided: **${voidedCount}** · Locked/in progress: **${lockedCount}** · Open picks: **${openCount}**`,
     "Pushes do not count toward accuracy."
   );
 

@@ -1,6 +1,8 @@
 import type {
   GenesisHistoricalGame,
   GenesisHistory,
+  GenesisPostseasonAchievement,
+  GenesisPostseasonAchievementType,
   SeasonData,
   SeasonPlayer,
 } from "@/lib/season";
@@ -35,6 +37,24 @@ type ParsedGame = {
   gameType: "pvp" | "cpu" | "unknown";
   playerA: string | null;
   playerB: string | null;
+};
+
+type ParsedPostseasonAchievement = {
+  sourceMessageId: string;
+  seasonYear: number | null;
+  team: string | null;
+  player: string | null;
+  type:
+    | "playoff_appearance"
+    | "semifinal_appearance"
+    | "championship_appearance"
+    | "championship";
+  label: string | null;
+};
+
+type ParsedHistoryChunk = {
+  games: ParsedGame[];
+  postseasonAchievements: ParsedPostseasonAchievement[];
 };
 
 export type GenesisLineResult = {
@@ -239,7 +259,7 @@ async function parseMessageChunk(
   messages: DiscordMessage[],
   sourceChannelId: string,
   seasonData: SeasonData
-): Promise<ParsedGame[]> {
+): Promise<ParsedHistoryChunk> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
 
@@ -250,14 +270,18 @@ async function parseMessageChunk(
   }));
 
   const instructions = [
-    "You extract completed EA Sports College Football dynasty game results from Discord history.",
-    "Return ONLY actual completed games with both teams and both final scores.",
+    "You extract completed EA Sports College Football dynasty results and postseason accomplishments from Discord history.",
+    "For games, return ONLY actual completed games with both teams and both final scores.",
     "Do not treat rankings, records, polls, betting lines, projected scores, schedules, or future matchups as completed games.",
     "One Discord message may contain many completed games.",
     "Preserve the exact sourceMessageId supplied with each extracted game.",
     "Use seasonYear and stage only when they are stated or can be unambiguously inferred from the local message context; otherwise return null.",
     "gameType is pvp only when both sides are human-controlled league teams/users, cpu when exactly one side is human-controlled and the opponent is CPU, otherwise unknown.",
     "Do not invent player names. Use playerA/playerB only when the message identifies them or when the result clearly belongs to the current-season roster mapping and current season year.",
+    "Also extract explicit postseason accomplishments when stated: playoff appearance, semifinal appearance, national championship appearance, and national championship.",
+    "Do not infer a postseason accomplishment merely from rankings or a strong record. It must be explicit in the Discord text or unambiguous from a postseason result.",
+    "For a national champion, emit type championship. Do not also emit championship_appearance for the same player/team/season unless the source separately states it.",
+    "For a championship-game loser, emit championship_appearance. For a semifinal participant that did not reach the title game, emit semifinal_appearance. For other playoff qualifiers, emit playoff_appearance.",
     `Current dynasty season year: ${seasonData.seasonYear}.`,
     `Current human team mapping: ${buildRosterHint(seasonData) || "none supplied"}.`,
   ].join(" ");
@@ -278,7 +302,7 @@ async function parseMessageChunk(
       text: {
         format: {
           type: "json_schema",
-          name: "genesis_history_games",
+          name: "genesis_history",
           strict: true,
           schema: {
             type: "object",
@@ -318,8 +342,39 @@ async function parseMessageChunk(
                   ],
                 },
               },
+              postseasonAchievements: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    sourceMessageId: { type: "string" },
+                    seasonYear: { type: ["integer", "null"] },
+                    team: { type: ["string", "null"] },
+                    player: { type: ["string", "null"] },
+                    type: {
+                      type: "string",
+                      enum: [
+                        "playoff_appearance",
+                        "semifinal_appearance",
+                        "championship_appearance",
+                        "championship"
+                      ],
+                    },
+                    label: { type: ["string", "null"] },
+                  },
+                  required: [
+                    "sourceMessageId",
+                    "seasonYear",
+                    "team",
+                    "player",
+                    "type",
+                    "label"
+                  ],
+                },
+              },
             },
-            required: ["games"],
+            required: ["games", "postseasonAchievements"],
           },
         },
       },
@@ -338,8 +393,11 @@ async function parseMessageChunk(
   const outputText = outputTextFromResponse(payload);
   if (!outputText) throw new Error("OpenAI returned no parsed history output.");
 
-  const parsed = JSON.parse(outputText) as { games?: ParsedGame[] };
-  return parsed.games || [];
+  const parsed = JSON.parse(outputText) as Partial<ParsedHistoryChunk>;
+  return {
+    games: parsed.games || [],
+    postseasonAchievements: parsed.postseasonAchievements || [],
+  };
 }
 
 function gameFingerprint(game: {
@@ -403,6 +461,7 @@ export async function syncGenesisHistory(
   );
 
   const extracted: GenesisHistoricalGame[] = [];
+  const extractedAchievements: GenesisPostseasonAchievement[] = [];
 
   for (const source of fetched) {
     const chunks: DiscordMessage[][] = [];
@@ -421,8 +480,8 @@ export async function syncGenesisHistory(
           )
       );
 
-      for (const parsedGames of parsedGroups) {
-        for (const game of parsedGames) {
+      for (const parsedGroup of parsedGroups) {
+        for (const game of parsedGroup.games) {
           const sourceMessage = source.messages.find(
             (message) => message.id === game.sourceMessageId
           );
@@ -454,6 +513,37 @@ export async function syncGenesisHistory(
             playerB: game.playerB?.trim() || undefined,
           });
         }
+
+        for (const achievement of parsedGroup.postseasonAchievements) {
+          const sourceMessage = source.messages.find(
+            (message) => message.id === achievement.sourceMessageId
+          );
+          if (!sourceMessage) continue;
+          if (!achievement.team?.trim() && !achievement.player?.trim()) continue;
+
+          const seasonPart = achievement.seasonYear ?? "?";
+          const identityPart = normalize(
+            achievement.player?.trim() || achievement.team?.trim() || "unknown"
+          );
+          const id = [
+            "postseason",
+            seasonPart,
+            achievement.type,
+            identityPart,
+          ].join("|");
+
+          extractedAchievements.push({
+            id,
+            sourceChannelId: source.sourceChannelId,
+            sourceMessageId: achievement.sourceMessageId,
+            sourceTimestamp: sourceMessage.timestamp,
+            seasonYear: achievement.seasonYear ?? undefined,
+            team: achievement.team?.trim() || undefined,
+            player: achievement.player?.trim() || undefined,
+            type: achievement.type,
+            label: achievement.label?.trim() || undefined,
+          });
+        }
       }
     }
   }
@@ -474,8 +564,21 @@ export async function syncGenesisHistory(
     return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
   });
 
+  const achievementMap = new Map<string, GenesisPostseasonAchievement>();
+  for (const existing of seasonData.genesisHistory?.postseasonAchievements || []) {
+    achievementMap.set(existing.id, existing);
+  }
+  for (const achievement of extractedAchievements) {
+    achievementMap.set(achievement.id, achievement);
+  }
+
   return {
     games,
+    postseasonAchievements: [...achievementMap.values()].sort((a, b) => {
+      const yearDiff = (a.seasonYear || 0) - (b.seasonYear || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
+    }),
     lastSyncedAt: new Date().toISOString(),
     messagesScanned: fetched.reduce(
       (sum, source) => sum + source.messages.length,

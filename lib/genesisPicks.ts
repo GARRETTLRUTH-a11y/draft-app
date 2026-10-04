@@ -134,7 +134,13 @@ export function settleGenesisMatchupByScore(
   awayScore: number,
   homeScore: number,
   settledAt = new Date().toISOString()
-) {
+):
+  | { error: string }
+  | {
+      seasonData: SeasonData;
+      matchup: GenesisPickMatchup;
+      atsWinner: GenesisPickSide | "push";
+    } {
   const state = seasonData.genesisPicks;
   const matchup = state?.matchups.find((item) => item.id === matchupId);
 
@@ -154,7 +160,7 @@ export function settleGenesisMatchupByScore(
         ? "away"
         : "home";
 
-  const matchups = state.matchups.map((item) =>
+  const matchups: GenesisPickMatchup[] = state.matchups.map((item) =>
     item.id === matchupId
       ? {
           ...item,

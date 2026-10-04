@@ -11,6 +11,7 @@ import {
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
 import { createGenesisPvpThread, PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
+import { saveGenesisPick } from "@/lib/genesisPicks";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
 // Discord's raw 32-byte hex public key into a format Node's crypto module
@@ -123,10 +124,11 @@ type DiscordInteraction = {
   guild_id?: string;
   channel_id?: string;
   member?: {
-    user?: { id?: string; username?: string };
+    user?: { id?: string; username?: string; global_name?: string | null };
     permissions?: string;
+    nick?: string | null;
   };
-  user?: { id?: string; username?: string };
+  user?: { id?: string; username?: string; global_name?: string | null };
   data?: {
     name?: string;
     custom_id?: string;
@@ -339,6 +341,93 @@ export async function POST(request: Request) {
 
     if (customId === "link_account") {
       return createLinkToken(admin, discordUserId, discordUsername);
+    }
+
+    if (customId.startsWith("genesis_pick:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const [, seasonId, matchupId, side] = customId.split(":");
+      if (
+        !seasonId ||
+        !matchupId ||
+        (side !== "away" && side !== "home")
+      ) {
+        return ephemeral("That Genesis pick button is invalid.");
+      }
+
+      const displayName =
+        interaction.member?.nick ||
+        discordUser?.global_name ||
+        discordUsername ||
+        "Discord user";
+
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const { data: seasonRow, error: seasonError } = await admin
+          .from("seasons")
+          .select("season_data, updated_at")
+          .eq("id", seasonId)
+          .maybeSingle();
+
+        if (seasonError || !seasonRow) {
+          return ephemeral("Couldn't find that Genesis season.");
+        }
+
+        const pickResult = saveGenesisPick(
+          seasonRow.season_data as SeasonData,
+          matchupId,
+          {
+            discordUserId,
+            discordUsername: displayName,
+            side,
+            pickedAt: new Date().toISOString(),
+          }
+        );
+
+        if ("error" in pickResult) {
+          return ephemeral(pickResult.error);
+        }
+
+        const nextUpdatedAt = new Date().toISOString();
+        const { data: updatedRow, error: updateError } = await admin
+          .from("seasons")
+          .update({
+            season_data: pickResult.seasonData,
+            updated_at: nextUpdatedAt,
+          })
+          .eq("id", seasonId)
+          .eq("updated_at", seasonRow.updated_at)
+          .select("id")
+          .maybeSingle();
+
+        if (updateError) {
+          return ephemeral("Couldn't save your Genesis pick. Try again.");
+        }
+
+        if (updatedRow) {
+          const matchup = pickResult.matchup;
+          const team =
+            side === "away" ? matchup.awayTeam : matchup.homeTeam;
+          const signedLine =
+            side === "away" ? matchup.awayLine : -matchup.awayLine;
+          const lineText =
+            signedLine === 0
+              ? "PK"
+              : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+          const changed =
+            pickResult.previous &&
+            pickResult.previous.side !== side;
+
+          return ephemeral(
+            `🎯 ${changed ? "Pick changed" : "Pick saved"}: **${team} ${lineText}**. Picks stay open until the result is final.`
+          );
+        }
+      }
+
+      return ephemeral(
+        "Someone else submitted a pick at the same moment. Tap your selection once more."
+      );
     }
 
     if (customId === "create_pvp_thread") {

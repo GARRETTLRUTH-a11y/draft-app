@@ -356,21 +356,59 @@ export default function SeasonRoomPage() {
     setGenesisLine(null);
   }, [pvpAwayTeam, pvpHomeTeam, pvpSeparator]);
 
-  const pvpThreadTitle = useMemo(() => {
-    const away = pvpAwayTeam || "X Team";
-    const home = pvpHomeTeam || "Y Team";
+  function pvpThreadTitleFor(
+    awayTeam: string,
+    separator: "@" | "vs.",
+    homeTeam: string
+  ) {
+    const away = awayTeam || "X Team";
+    const home = homeTeam || "Y Team";
     const stage = pvpStageLabel.trim() || formatWeekLabel(currentWeek);
-    const year = pvpYear.trim() || String(seasonData?.seasonYear ?? new Date().getFullYear());
-    return `${away} ${pvpSeparator} ${home} (${stage}, ${year})`;
-  }, [
-    pvpAwayTeam,
-    pvpHomeTeam,
-    pvpSeparator,
-    pvpStageLabel,
-    pvpYear,
-    currentWeek,
-    seasonData?.seasonYear,
-  ]);
+    const year =
+      pvpYear.trim() ||
+      String(seasonData?.seasonYear ?? new Date().getFullYear());
+    return `${away} ${separator} ${home} (${stage}, ${year})`;
+  }
+
+  const pvpThreadTitle = useMemo(
+    () => pvpThreadTitleFor(pvpAwayTeam, pvpSeparator, pvpHomeTeam),
+    [
+      pvpAwayTeam,
+      pvpHomeTeam,
+      pvpSeparator,
+      pvpStageLabel,
+      pvpYear,
+      currentWeek,
+      seasonData?.seasonYear,
+    ]
+  );
+
+  const pvpGamesToCreate = useMemo(
+    () => [
+      {
+        id: "primary",
+        awayTeam: pvpAwayTeam,
+        homeTeam: pvpHomeTeam,
+        separator: pvpSeparator,
+      } satisfies PvpBatchGame,
+      ...additionalPvpGames,
+    ],
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
+  );
+
+  const allPvpGamesReady =
+    pvpGamesToCreate.length > 0 &&
+    pvpGamesToCreate.every(
+      (game) =>
+        Boolean(game.awayTeam) &&
+        Boolean(game.homeTeam) &&
+        game.awayTeam !== game.homeTeam &&
+        pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
+        ).length <= 100
+    );
 
   // Host-toggleable sort for the Manage Players list specifically -- other
   // views (Teams board, claim grid) keep the original draft order.

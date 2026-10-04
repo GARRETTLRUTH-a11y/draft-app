@@ -152,7 +152,7 @@ export async function POST(request: Request) {
         : [];
 
     const starterMessage = line
-      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. You can change your pick until the result is final.`
+      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.`
       : undefined;
 
     const result = await createGenesisPvpThread(

@@ -412,7 +412,10 @@ export async function POST(request: Request) {
         return ephemeral("That Genesis matchup could not be found.");
       }
 
-      if (matchup.status !== "open") {
+      if (matchup.status === "locked") {
+        return ephemeral("🔒 Picks are closed because this game has started.");
+      }
+      if (matchup.status === "settled") {
         return ephemeral("Picks are closed because this matchup is already final.");
       }
 

@@ -2,8 +2,14 @@ import { NextResponse } from "next/server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
-import { buildGenesisLine, genesisStarterMessage } from "@/lib/genesisLines";
+import {
+  buildGenesisLine,
+  genesisStarterMessage,
+  syncGenesisHistory,
+} from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
+
+export const maxDuration = 300;
 
 type PvpThreadPayload = {
   seasonId?: string;
@@ -109,10 +115,51 @@ export async function POST(request: Request) {
   try {
     const awayTeam = payload.awayTeam?.trim();
     const homeTeam = payload.homeTeam?.trim();
+    const seasonData = season.season_data as SeasonData;
+
+    let nextSeasonData = seasonData;
+    let syncResult:
+      | {
+          messagesScanned: number;
+          mode?: "full" | "incremental";
+          totalGames: number;
+          achievements: number;
+          lastSyncedAt: string;
+        }
+      | undefined;
+
+    if (awayTeam && homeTeam) {
+      const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
+      nextSeasonData = {
+        ...seasonData,
+        genesisHistory: history,
+      };
+
+      const { error: updateError } = await admin
+        .from("seasons")
+        .update({
+          season_data: nextSeasonData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", seasonId);
+
+      if (updateError) {
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+
+      syncResult = {
+        messagesScanned: history.messagesScanned,
+        mode: history.lastSyncMode,
+        totalGames: history.games.length,
+        achievements: history.postseasonAchievements?.length ?? 0,
+        lastSyncedAt: history.lastSyncedAt,
+      };
+    }
+
     const line =
       awayTeam && homeTeam
         ? buildGenesisLine(
-            season.season_data as SeasonData,
+            nextSeasonData,
             awayTeam,
             homeTeam,
             Boolean(payload.neutral)
@@ -122,7 +169,7 @@ export async function POST(request: Request) {
     const matchupDiscordUserIds = await resolveMatchupDiscordUserIds(
       admin,
       seasonId,
-      season.season_data as SeasonData,
+      nextSeasonData,
       awayTeam,
       homeTeam
     );
@@ -140,6 +187,7 @@ export async function POST(request: Request) {
       genesisRoleTagged: result.genesisRoleTagged,
       taggedPlayers: result.taggedUserIds.length,
       line,
+      sync: syncResult,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

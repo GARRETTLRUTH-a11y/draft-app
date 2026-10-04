@@ -20,68 +20,31 @@ async function discordApi(path: string, init: RequestInit = {}) {
   });
 }
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function addThreadMemberWithRetry(threadId: string, userId: string) {
-  const maxAttempts = 5;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const response = await discordApi("/channels/" + threadId + "/thread-members/" + userId, {
-      method: "PUT",
-    });
-
-    if (response.ok || response.status === 204) {
-      return { ok: true as const };
-    }
-
-    const body = await response.text();
-
-    if (response.status !== 429 || attempt === maxAttempts) {
-      return {
-        ok: false as const,
-        error: body || response.statusText || "HTTP " + response.status,
-      };
-    }
-
-    let retryAfterSeconds = Number(response.headers.get("retry-after"));
-
-    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
-      try {
-        const parsed = JSON.parse(body) as { retry_after?: number };
-        retryAfterSeconds = Number(parsed.retry_after);
-      } catch {
-        retryAfterSeconds = NaN;
-      }
-    }
-
-    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
-      retryAfterSeconds = Number(response.headers.get("x-ratelimit-reset-after"));
-    }
-
-    if (!Number.isFinite(retryAfterSeconds) || retryAfterSeconds <= 0) {
-      retryAfterSeconds = 1;
-    }
-
-    await sleep(Math.ceil(retryAfterSeconds * 1000) + 100);
-  }
-
-  return { ok: false as const, error: "Discord rate limit retry exhausted." };
-}
-
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
-  added: number;
-  total: number;
-  failed: number;
-  failedMembers: string[];
-  reportedRoleCount?: number;
+  taggedUserIds: string[];
+  genesisRoleTagged: boolean;
 };
+
+function buildTaggedStarterMessage(
+  threadName: string,
+  starterMessage: string | undefined,
+  taggedUserIds: string[]
+) {
+  const uniqueUsers = [...new Set(taggedUserIds.filter(Boolean))];
+  const mentions = [
+    `<@&${GENESIS_ROLE_ID}>`,
+    ...uniqueUsers.map((userId) => `<@${userId}>`),
+  ].join(" ");
+
+  const body = starterMessage || `🏈 **${threadName}**`;
+  return `${mentions}\n\n${body}`;
+}
 
 export async function createGenesisPvpThread(
   threadName: string,
-  starterMessage?: string
+  starterMessage?: string,
+  taggedUserIds: string[] = []
 ): Promise<PvpThreadCreateResult> {
   const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
   if (!parentResponse.ok) {
@@ -114,13 +77,25 @@ export async function createGenesisPvpThread(
     );
   }
 
+  const uniqueTaggedUsers = [...new Set(taggedUserIds.filter(Boolean))];
+  const taggedMessage = buildTaggedStarterMessage(
+    threadName,
+    starterMessage,
+    uniqueTaggedUsers
+  );
+  const allowedMentions = {
+    parse: [] as string[],
+    roles: [GENESIS_ROLE_ID],
+    users: uniqueTaggedUsers,
+  };
+
   const threadPayload = isForumOrMedia
     ? {
         name: threadName.slice(0, 100),
         auto_archive_duration: 10080,
         message: {
-          content: starterMessage || `🏈 **${threadName}**`,
-          allowed_mentions: { parse: [] as string[] },
+          content: taggedMessage,
+          allowed_mentions: allowedMentions,
         },
         ...(pvpTag ? { applied_tags: [pvpTag.id] } : {}),
       }
@@ -142,100 +117,29 @@ export async function createGenesisPvpThread(
 
   const thread = (await createResponse.json()) as { id: string; name?: string };
 
-  if (!isForumOrMedia && starterMessage) {
+  if (!isForumOrMedia) {
     const starterResponse = await discordApi(`/channels/${thread.id}/messages`, {
       method: "POST",
       body: JSON.stringify({
-        content: starterMessage,
-        allowed_mentions: { parse: [] as string[] },
+        content: taggedMessage,
+        allowed_mentions: allowedMentions,
       }),
     });
 
     if (!starterResponse.ok) {
       const body = await starterResponse.text();
       throw new Error(
-        `Thread created, but could not post Genesis line: ${body || starterResponse.statusText}`
+        `Thread created, but could not post matchup message: ${body || starterResponse.statusText}`
       );
     }
   }
 
-  const genesisMembers: { id: string; label: string }[] = [];
-  let after: string | undefined;
-
-  do {
-    const params = new URLSearchParams({ limit: "1000" });
-    if (after) params.set("after", after);
-
-    const membersResponse = await discordApi(
-      `/guilds/${parent.guild_id}/members?${params.toString()}`
-    );
-    if (!membersResponse.ok) {
-      const body = await membersResponse.text();
-      throw new Error(`Could not read @genesis members: ${body || membersResponse.statusText}`);
-    }
-
-    const members = (await membersResponse.json()) as {
-      user?: {
-        id?: string;
-        bot?: boolean;
-        username?: string;
-        global_name?: string | null;
-      };
-      nick?: string | null;
-      roles?: string[];
-    }[];
-
-    for (const member of members) {
-      const userId = member.user?.id;
-      if (userId && !member.user?.bot && member.roles?.includes(GENESIS_ROLE_ID)) {
-        genesisMembers.push({
-          id: userId,
-          label:
-            member.nick ||
-            member.user?.global_name ||
-            member.user?.username ||
-            userId,
-        });
-      }
-    }
-
-    after = members.length === 1000 ? members[members.length - 1]?.user?.id : undefined;
-  } while (after);
-
-  let reportedRoleCount: number | undefined;
-  const roleCountResponse = await discordApi(
-    "/guilds/" + parent.guild_id + "/roles/member-counts"
-  );
-  if (roleCountResponse.ok) {
-    const roleCounts = (await roleCountResponse.json()) as Record<string, number>;
-    const count = roleCounts[GENESIS_ROLE_ID];
-    if (typeof count === "number") reportedRoleCount = count;
-  }
-
-  let added = 0;
-  const failedMembers: string[] = [];
-
-  for (let index = 0; index < genesisMembers.length; index++) {
-    const member = genesisMembers[index];
-    const result = await addThreadMemberWithRetry(thread.id, member.id);
-
-    if (result.ok) {
-      added++;
-    } else {
-      failedMembers.push(member.label);
-    }
-
-    if (index < genesisMembers.length - 1) {
-      await sleep(250);
-    }
-  }
-
+  // Public forum/text threads are visible to everyone who can access the
+  // parent channel. We intentionally do not add every @genesis member as a
+  // thread member because Discord emits one noisy system message per add.
   return {
     thread,
-    added,
-    total: genesisMembers.length,
-    failed: failedMembers.length,
-    failedMembers,
-    reportedRoleCount,
+    taggedUserIds: uniqueTaggedUsers,
+    genesisRoleTagged: true,
   };
 }

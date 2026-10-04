@@ -554,6 +554,9 @@ export async function POST(request: Request) {
     if (matchup.status === "settled") {
       return ephemeral("This Genesis matchup is already final.");
     }
+    if (matchup.status === "voided") {
+      return ephemeral("🚫 This Genesis matchup was voided for an Auto Sim or Force Win.");
+    }
 
     const lockedAt = new Date().toISOString();
     const nextMatchups = picksState.matchups.map((item) =>
@@ -641,6 +644,9 @@ export async function POST(request: Request) {
       if (matchup.status === "settled") {
         return ephemeral("This Genesis matchup is already final.");
       }
+      if (matchup.status === "voided") {
+        return ephemeral("🚫 This Genesis matchup was voided, so no final score is needed for Genesis grading.");
+      }
 
       return NextResponse.json({
         type: 9,
@@ -720,6 +726,9 @@ export async function POST(request: Request) {
       if (matchup.status === "settled") {
         return ephemeral("This Genesis matchup is already final.");
       }
+      if (matchup.status === "voided") {
+        return ephemeral("🚫 This Genesis matchup was voided for an Auto Sim or Force Win.");
+      }
 
       return NextResponse.json({
         type: 9,
@@ -790,6 +799,9 @@ export async function POST(request: Request) {
       }
       if (matchup.status === "settled") {
         return ephemeral("Picks are closed because this matchup is already final.");
+      }
+      if (matchup.status === "voided") {
+        return ephemeral("🚫 This Genesis line was voided; picks do not count.");
       }
 
       const previous = matchup.picks[discordUserId];
@@ -1101,6 +1113,9 @@ export async function POST(request: Request) {
       }
       if (matchup.status === "settled") {
         return ephemeral("This Genesis matchup is already final.");
+      }
+      if (matchup.status === "voided") {
+        return ephemeral("🚫 This Genesis matchup was voided for an Auto Sim or Force Win.");
       }
 
       const lockedAt = new Date().toISOString();

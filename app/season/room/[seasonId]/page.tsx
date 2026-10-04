@@ -907,12 +907,7 @@ export default function SeasonRoomPage() {
   }
 
   async function createPvpThread() {
-    if (!season || !pvpAwayTeam || !pvpHomeTeam) return;
-
-    if (pvpAwayTeam === pvpHomeTeam) {
-      setPvpCreateStatus("Choose two different teams.");
-      return;
-    }
+    if (!season) return;
 
     const stage = pvpStageLabel.trim();
     const year = pvpYear.trim();
@@ -921,13 +916,34 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    if (pvpThreadTitle.length > 100) {
-      setPvpCreateStatus("Discord thread names must be 100 characters or fewer.");
+    const games = pvpGamesToCreate;
+    const invalidGame = games.find(
+      (game) =>
+        !game.awayTeam ||
+        !game.homeTeam ||
+        game.awayTeam === game.homeTeam ||
+        pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
+        ).length > 100
+    );
+
+    if (invalidGame) {
+      setPvpCreateStatus(
+        "Complete every matchup with two different teams before creating the weekly threads."
+      );
       return;
     }
 
     setIsCreatingPvpThread(true);
-    setPvpCreateStatus("Refreshing Genesis history and locking the latest line...");
+    setPvpCreateStatus(
+      `Preparing ${games.length} PvP matchup${games.length === 1 ? "" : "s"}...`
+    );
+
+    const failures: string[] = [];
+    const warnings: string[] = [];
+    let createdCount = 0;
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -937,113 +953,150 @@ export default function SeasonRoomPage() {
         return;
       }
 
-      const lineResponse = await fetch("/api/genesis/line", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          seasonId: season.id,
-          awayTeam: pvpAwayTeam,
-          homeTeam: pvpHomeTeam,
-          neutral: pvpSeparator === "vs.",
-        }),
-      });
-
-      const lineResult = (await lineResponse.json()) as {
-        error?: string;
-        line?: GenesisLinePreview;
-        sync?: {
-          messagesScanned: number;
-          mode?: "full" | "incremental";
-          totalGames: number;
-          achievements: number;
-          lastSyncedAt: string;
-          settledPicks?: number;
-        };
-        leaderboardWarning?: string;
-      };
-
-      if (!lineResponse.ok || !lineResult.line) {
-        setPvpCreateStatus(
-          lineResult.error || "Could not refresh Genesis history before creating the thread."
+      for (let index = 0; index < games.length; index++) {
+        const game = games[index];
+        const threadName = pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
         );
-        return;
+
+        setPvpCreateStatus(
+          `Creating ${index + 1} of ${games.length}: ${game.awayTeam} ${game.separator} ${game.homeTeam}...`
+        );
+
+        try {
+          const lineResponse = await fetch("/api/genesis/line", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              seasonId: season.id,
+              awayTeam: game.awayTeam,
+              homeTeam: game.homeTeam,
+              neutral: game.separator === "vs.",
+            }),
+          });
+
+          const lineResult = (await lineResponse.json()) as {
+            error?: string;
+            line?: GenesisLinePreview;
+            sync?: {
+              messagesScanned: number;
+              mode?: "full" | "incremental";
+              totalGames: number;
+              achievements: number;
+              lastSyncedAt: string;
+              settledPicks?: number;
+            };
+            leaderboardWarning?: string;
+          };
+
+          if (!lineResponse.ok || !lineResult.line) {
+            throw new Error(
+              lineResult.error ||
+                "Could not refresh Genesis history before creating the thread."
+            );
+          }
+
+          if (index === 0) setGenesisLine(lineResult.line);
+
+          const response = await fetch("/api/discord/pvp-thread", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              seasonId: season.id,
+              threadName,
+              awayTeam: game.awayTeam,
+              homeTeam: game.homeTeam,
+              neutral: game.separator === "vs.",
+              postStreamInstructions: postPvpStreamInstructions,
+            }),
+          });
+
+          const result = (await response.json()) as {
+            error?: string;
+            threadName?: string;
+            genesisRoleTagged?: boolean;
+            taggedPlayers?: number;
+            line?: GenesisLinePreview;
+            leaderboardChannelId?: string;
+            leaderboardWarning?: string;
+            streamInstructionsPosted?: boolean;
+            streamInstructionsWarning?: string;
+          };
+
+          if (!response.ok) {
+            throw new Error(result.error || "Could not create the PvP thread.");
+          }
+
+          createdCount++;
+
+          if (result.leaderboardWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.leaderboardWarning}`
+            );
+          }
+          if (result.streamInstructionsWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.streamInstructionsWarning}`
+            );
+          }
+
+          // Remove successful rows immediately so a partial batch failure can
+          // be retried without accidentally recreating threads that succeeded.
+          if (game.id === "primary") {
+            setPvpAwayTeam("");
+            setPvpHomeTeam("");
+            setPvpSeparator("@");
+          } else {
+            setAdditionalPvpGames((current) =>
+              current.filter((row) => row.id !== game.id)
+            );
+          }
+        } catch (error) {
+          failures.push(
+            `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
       }
 
-      setGenesisLine(lineResult.line);
+      await loadRoomSeason(season.id);
+
+      if (createdCount > 0) {
+        let status = `✅ Created ${createdCount} of ${games.length} PvP thread${
+          games.length === 1 ? "" : "s"
+        }.`;
+        if (postPvpStreamInstructions) {
+          status += " /stream instructions were requested for each created game.";
+        }
+        if (failures.length) {
+          status += ` Failed: ${failures.join(" | ")}`;
+        }
+        if (warnings.length) {
+          status += ` Warnings: ${warnings.join(" | ")}`;
+        }
+        setPvpCreateStatus(status);
+      } else {
+        setPvpCreateStatus(
+          failures.length
+            ? `Could not create the weekly PvP threads: ${failures.join(" | ")}`
+            : "Could not create the weekly PvP threads."
+        );
+      }
+    } catch (error) {
       setPvpCreateStatus(
-        `Genesis line locked: ${lineResult.line.displayLine}. Creating Discord thread...`
+        error instanceof Error
+          ? `Could not create the PvP threads: ${error.message}`
+          : "Could not create the PvP threads. Try again."
       );
-
-      const response = await fetch("/api/discord/pvp-thread", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          seasonId: season.id,
-          threadName: pvpThreadTitle,
-          awayTeam: pvpAwayTeam,
-          homeTeam: pvpHomeTeam,
-          neutral: pvpSeparator === "vs.",
-          postStreamInstructions: postPvpStreamInstructions,
-        }),
-      });
-
-      const result = (await response.json()) as {
-        error?: string;
-        threadName?: string;
-        genesisRoleTagged?: boolean;
-        taggedPlayers?: number;
-        line?: GenesisLinePreview;
-        leaderboardChannelId?: string;
-        leaderboardWarning?: string;
-        streamInstructionsPosted?: boolean;
-        streamInstructionsWarning?: string;
-      };
-
-      if (!response.ok) {
-        setPvpCreateStatus(result.error || "Could not create the PvP thread.");
-        return;
-      }
-
-      const taggedPlayers = result.taggedPlayers ?? 0;
-      let status = `✅ Created "${result.threadName || pvpThreadTitle}". Tagged @genesis`;
-      status +=
-        taggedPlayers === 2
-          ? " and both matchup players."
-          : taggedPlayers === 1
-            ? " and 1 linked matchup player."
-            : " (matchup players were not linked to Discord).";
-
-      if (result.line) {
-        setGenesisLine(result.line);
-        status += ` Genesis Line: ${result.line.displayLine}.`;
-      }
-
-      if (result.leaderboardChannelId) {
-        status += " Genesis pick buttons are live and #genesis-picks is ready.";
-      }
-      if (result.leaderboardWarning) {
-        status += ` Leaderboard warning: ${result.leaderboardWarning}`;
-      }
-      if (postPvpStreamInstructions && result.streamInstructionsPosted) {
-        status += " /stream instructions posted in the game thread.";
-      }
-      if (result.streamInstructionsWarning) {
-        status += ` Stream-instructions warning: ${result.streamInstructionsWarning}`;
-      }
-
-      setPvpCreateStatus(status);
-
-      setPvpAwayTeam("");
-      setPvpHomeTeam("");
-      setPvpSeparator("@");
-    } catch {
-      setPvpCreateStatus("Could not create the PvP thread. Try again.");
     } finally {
       setIsCreatingPvpThread(false);
     }

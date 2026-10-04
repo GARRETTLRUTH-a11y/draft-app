@@ -11,6 +11,11 @@ import {
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
 import { createGenesisPvpThread, PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
+import {
+  postGenesisFinalToThread,
+  settleGenesisMatchupByScore,
+  syncGenesisLeaderboard,
+} from "@/lib/genesisPicks";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
 // Discord's raw 32-byte hex public key into a format Node's crypto module
@@ -602,6 +607,82 @@ export async function POST(request: Request) {
       return createLinkToken(admin, discordUserId, discordUsername);
     }
 
+    if (customId.startsWith("genesis_final_score:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const parts = customId.split(":");
+      const seasonId = parts[1];
+      const matchupId = parts[2];
+      if (!seasonId || !matchupId) {
+        return ephemeral("That Genesis final-score button is invalid.");
+      }
+
+      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      if ("error" in resolved) return respondToResolveError(resolved);
+
+      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (!matchup) {
+        return ephemeral("That Genesis matchup could not be found.");
+      }
+
+      const playerTeam = normalizeGenesisTeam(resolved.player.team);
+      const isMatchupPlayer =
+        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
+        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
+
+      if (!isMatchupPlayer) {
+        return ephemeral("Only one of the two players in this matchup can submit the final score.");
+      }
+
+      if (matchup.status === "settled") {
+        return ephemeral("This Genesis matchup is already final.");
+      }
+
+      return NextResponse.json({
+        type: 9,
+        data: {
+          custom_id: `genesis_final_score_modal:${seasonId}:${matchupId}`,
+          title: "Submit Final Score",
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 4,
+                  custom_id: "away_score",
+                  label: `${matchup.awayTeam} score`.slice(0, 45),
+                  style: 1,
+                  required: true,
+                  min_length: 1,
+                  max_length: 3,
+                  placeholder: "31",
+                },
+              ],
+            },
+            {
+              type: 1,
+              components: [
+                {
+                  type: 4,
+                  custom_id: "home_score",
+                  label: `${matchup.homeTeam} score`.slice(0, 45),
+                  style: 1,
+                  required: true,
+                  min_length: 1,
+                  max_length: 3,
+                  placeholder: "24",
+                },
+              ],
+            },
+          ],
+        },
+      });
+    }
+
     if (customId.startsWith("genesis_stream:")) {
       if (!discordUserId) {
         return ephemeral("Couldn't identify your Discord account.");
@@ -876,6 +957,100 @@ export async function POST(request: Request) {
   // Modal submit: the "Request an Extension" form
   if (interaction.type === 5 && typeof interaction.data?.custom_id === "string") {
     const customId = interaction.data.custom_id;
+
+    if (customId.startsWith("genesis_final_score_modal:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const parts = customId.split(":");
+      const seasonId = parts[1];
+      const matchupId = parts[2];
+      if (!seasonId || !matchupId) {
+        return ephemeral("That Genesis final-score form is invalid.");
+      }
+
+      const values = new Map<string, string>();
+      for (const row of interaction.data.components ?? []) {
+        for (const field of row.components ?? []) {
+          if (field.custom_id && typeof field.value === "string") {
+            values.set(field.custom_id, field.value);
+          }
+        }
+      }
+
+      const awayScore = Number(values.get("away_score"));
+      const homeScore = Number(values.get("home_score"));
+
+      if (
+        !Number.isInteger(awayScore) ||
+        !Number.isInteger(homeScore) ||
+        awayScore < 0 ||
+        homeScore < 0
+      ) {
+        return ephemeral("Final scores must be whole numbers of 0 or greater.");
+      }
+
+      if (awayScore === homeScore) {
+        return ephemeral("College football games cannot end in a tie.");
+      }
+
+      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      if ("error" in resolved) return respondToResolveError(resolved);
+
+      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (!matchup) {
+        return ephemeral("That Genesis matchup could not be found.");
+      }
+
+      const playerTeam = normalizeGenesisTeam(resolved.player.team);
+      const isMatchupPlayer =
+        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
+        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
+
+      if (!isMatchupPlayer) {
+        return ephemeral("Only one of the two players in this matchup can submit the final score.");
+      }
+
+      const settled = settleGenesisMatchupByScore(
+        resolved.seasonData,
+        matchupId,
+        awayScore,
+        homeScore
+      );
+
+      if ("error" in settled) {
+        return ephemeral(settled.error);
+      }
+
+      const leaderboard = await syncGenesisLeaderboard(settled.seasonData);
+      const nextSeasonData = leaderboard.seasonData;
+
+      const { error: updateError } = await admin
+        .from("seasons")
+        .update({
+          season_data: nextSeasonData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", seasonId);
+
+      if (updateError) {
+        return ephemeral("Couldn't save the Genesis final score. Try again.");
+      }
+
+      await postGenesisFinalToThread({
+        matchup,
+        awayScore,
+        homeScore,
+        atsWinner: settled.atsWinner,
+      });
+
+      return ephemeral(
+        `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded and the leaderboard updated.`
+      );
+    }
 
     if (customId.startsWith("genesis_stream_modal:")) {
       if (!discordUserId) {

@@ -767,7 +767,9 @@ export default function SeasonRoomPage() {
           totalGames: number;
           achievements: number;
           lastSyncedAt: string;
+          settledPicks?: number;
         };
+        leaderboardWarning?: string;
       };
 
       if (!response.ok || !result.line) {
@@ -782,13 +784,21 @@ export default function SeasonRoomPage() {
           result.sync.mode === "full" &&
           !seasonData?.genesisHistory?.sourceCursors;
 
-        setGenesisHistoryStatus(
+        let syncStatus =
           firstCursorSetup
             ? `✅ Automatic history setup complete: scanned ${result.sync.messagesScanned} messages and established incremental sync.`
             : result.sync.messagesScanned > 0
               ? `✅ Auto-synced ${result.sync.messagesScanned} new Discord message${result.sync.messagesScanned === 1 ? "" : "s"} before generating the line.`
-              : "✅ Discord history already current — no new messages to parse."
-        );
+              : "✅ Discord history already current — no new messages to parse.";
+
+        if (result.sync.settledPicks) {
+          syncStatus += ` Auto-graded ${result.sync.settledPicks} completed Genesis pick matchup${result.sync.settledPicks === 1 ? "" : "s"}.`;
+        }
+        if (result.leaderboardWarning) {
+          syncStatus += ` Leaderboard warning: ${result.leaderboardWarning}`;
+        }
+
+        setGenesisHistoryStatus(syncStatus);
 
         await loadRoomSeason(season.id);
       }
@@ -860,7 +870,10 @@ export default function SeasonRoomPage() {
           totalGames: number;
           achievements: number;
           lastSyncedAt: string;
+          settledPicks?: number;
         };
+        leaderboardChannelId?: string;
+        leaderboardWarning?: string;
       };
 
       if (!response.ok) {
@@ -884,6 +897,13 @@ export default function SeasonRoomPage() {
 
       if (result.sync?.messagesScanned) {
         status += ` Auto-synced ${result.sync.messagesScanned} new Discord message${result.sync.messagesScanned === 1 ? "" : "s"} first.`;
+      }
+
+      if (result.leaderboardChannelId) {
+        status += " Genesis pick buttons are live and #genesis-picks is ready.";
+      }
+      if (result.leaderboardWarning) {
+        status += ` Leaderboard warning: ${result.leaderboardWarning}`;
       }
 
       setPvpCreateStatus(status);

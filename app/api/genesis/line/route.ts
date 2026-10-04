@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { buildGenesisLine, syncGenesisHistory } from "@/lib/genesisLines";
+import {
+  settleGenesisPicksFromHistory,
+  syncGenesisLeaderboard,
+} from "@/lib/genesisPicks";
 import type { SeasonData } from "@/lib/season";
 
 export const maxDuration = 300;
@@ -71,10 +75,19 @@ export async function POST(request: Request) {
   try {
     const seasonData = season.season_data as SeasonData;
     const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
-    const nextSeasonData: SeasonData = {
+    const withHistory: SeasonData = {
       ...seasonData,
       genesisHistory: history,
     };
+    const settled = settleGenesisPicksFromHistory(withHistory);
+    let nextSeasonData = settled.seasonData;
+    let leaderboardWarning: string | undefined;
+
+    if (settled.settledCount > 0 || nextSeasonData.genesisPicks?.leaderboardChannelId) {
+      const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+      nextSeasonData = leaderboard.seasonData;
+      leaderboardWarning = leaderboard.warning;
+    }
 
     const { error: updateError } = await admin
       .from("seasons")
@@ -104,7 +117,9 @@ export async function POST(request: Request) {
         totalGames: history.games.length,
         achievements: history.postseasonAchievements?.length ?? 0,
         lastSyncedAt: history.lastSyncedAt,
+        settledPicks: settled.settledCount,
       },
+      leaderboardWarning,
     });
   } catch (error) {
     const message =

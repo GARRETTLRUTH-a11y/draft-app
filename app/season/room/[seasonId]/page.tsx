@@ -181,6 +181,11 @@ export default function SeasonRoomPage() {
   const [isGeneratingGenesisLine, setIsGeneratingGenesisLine] = useState(false);
   const [isSyncingGenesisHistory, setIsSyncingGenesisHistory] = useState(false);
   const [genesisHistoryStatus, setGenesisHistoryStatus] = useState("");
+  const [genesisFinalScoreInputs, setGenesisFinalScoreInputs] = useState<
+    Record<string, { away: string; home: string }>
+  >({});
+  const [finalizingGenesisMatchupId, setFinalizingGenesisMatchupId] = useState<string | null>(null);
+  const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
   const [ratingOffenseInput, setRatingOffenseInput] = useState("");
@@ -277,6 +282,13 @@ export default function SeasonRoomPage() {
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
+  const openGenesisMatchups = useMemo(
+    () =>
+      [...(seasonData?.genesisPicks?.matchups ?? [])]
+        .filter((matchup) => matchup.status === "open")
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [seasonData?.genesisPicks?.matchups]
+  );
 
   const leagueTeamNames = useMemo(
     () =>
@@ -943,6 +955,88 @@ export default function SeasonRoomPage() {
       setPvpCreateStatus("Could not create the PvP thread. Try again.");
     } finally {
       setIsCreatingPvpThread(false);
+    }
+  }
+
+  async function finalizeGenesisMatchup(matchupId: string) {
+    if (!season) return;
+
+    const scores = genesisFinalScoreInputs[matchupId];
+    const awayScore = Number(scores?.away);
+    const homeScore = Number(scores?.home);
+
+    if (
+      !scores ||
+      scores.away.trim() === "" ||
+      scores.home.trim() === "" ||
+      !Number.isInteger(awayScore) ||
+      !Number.isInteger(homeScore) ||
+      awayScore < 0 ||
+      homeScore < 0
+    ) {
+      setGenesisFinalizeStatus("Enter both final scores as whole numbers.");
+      return;
+    }
+
+    if (awayScore === homeScore) {
+      setGenesisFinalizeStatus("College football games cannot end in a tie.");
+      return;
+    }
+
+    setFinalizingGenesisMatchupId(matchupId);
+    setGenesisFinalizeStatus("Finalizing game, grading ATS picks, and updating Discord...");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/finalize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          matchupId,
+          awayScore,
+          homeScore,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        atsWinner?: "away" | "home" | "push";
+        leaderboardWarning?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisFinalizeStatus(result.error || "Could not finalize Genesis matchup.");
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisFinalScoreInputs((current) => {
+        const next = { ...current };
+        delete next[matchupId];
+        return next;
+      });
+
+      setGenesisFinalizeStatus(
+        `✅ Game finalized. Picks locked and graded${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ", and #genesis-picks updated."}`
+      );
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not finalize Genesis matchup: ${error.message}`
+          : "Could not finalize Genesis matchup."
+      );
+    } finally {
+      setFinalizingGenesisMatchupId(null);
     }
   }
 
@@ -2235,6 +2329,116 @@ export default function SeasonRoomPage() {
                 </span>
               )}
             </div>
+
+            {openGenesisMatchups.length > 0 && (
+              <div className="mt-6 border-t border-white/10 pt-5">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-base font-black text-white">🏁 Finalize Genesis Games</h3>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Enter the final score to close the matchup, grade every locked ATS pick, and update #genesis-picks.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
+                    {openGenesisMatchups.length} open
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {openGenesisMatchups.map((matchup) => {
+                    const score = genesisFinalScoreInputs[matchup.id] || {
+                      away: "",
+                      home: "",
+                    };
+                    const pickCount = Object.keys(matchup.picks || {}).length;
+
+                    return (
+                      <div
+                        key={matchup.id}
+                        className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <p className="font-black text-white">
+                              {matchup.awayTeam} @ {matchup.homeTeam}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-400">
+                              Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} locked
+                            </p>
+                          </div>
+
+                          <div className="flex flex-wrap items-end gap-2">
+                            <label className="flex flex-col gap-1 text-[11px] font-bold text-slate-400">
+                              {matchup.awayTeam}
+                              <input
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                value={score.away}
+                                onChange={(event) =>
+                                  setGenesisFinalScoreInputs((current) => ({
+                                    ...current,
+                                    [matchup.id]: {
+                                      away: event.target.value,
+                                      home: current[matchup.id]?.home ?? "",
+                                    },
+                                  }))
+                                }
+                                className="w-20 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-center font-black text-white outline-none focus:border-fuchsia-300"
+                              />
+                            </label>
+
+                            <span className="pb-2 text-sm font-black text-slate-500">–</span>
+
+                            <label className="flex flex-col gap-1 text-[11px] font-bold text-slate-400">
+                              {matchup.homeTeam}
+                              <input
+                                type="number"
+                                min={0}
+                                inputMode="numeric"
+                                value={score.home}
+                                onChange={(event) =>
+                                  setGenesisFinalScoreInputs((current) => ({
+                                    ...current,
+                                    [matchup.id]: {
+                                      away: current[matchup.id]?.away ?? "",
+                                      home: event.target.value,
+                                    },
+                                  }))
+                                }
+                                className="w-20 rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-center font-black text-white outline-none focus:border-fuchsia-300"
+                              />
+                            </label>
+
+                            <button
+                              onClick={() => finalizeGenesisMatchup(matchup.id)}
+                              disabled={finalizingGenesisMatchupId === matchup.id}
+                              className="rounded-xl bg-green-300 px-4 py-2 font-black text-slate-950 transition hover:bg-green-200 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {finalizingGenesisMatchupId === matchup.id
+                                ? "Finalizing..."
+                                : "Finalize Game"}
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {genesisFinalizeStatus && (
+                  <p
+                    className={`mt-3 text-sm font-semibold ${
+                      genesisFinalizeStatus.startsWith("✅")
+                        ? "text-green-300"
+                        : "text-slate-300"
+                    }`}
+                  >
+                    {genesisFinalizeStatus}
+                  </p>
+                )}
+              </div>
+            )}
           </section>
         )}
 

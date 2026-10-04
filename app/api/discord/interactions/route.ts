@@ -285,6 +285,38 @@ async function markPlayerReady(
   );
 }
 
+async function postGenesisPickAnnouncement(
+  threadId: string,
+  discordUserId: string,
+  team: string,
+  signedLine: number
+) {
+  const botToken = process.env.DISCORD_BOT_TOKEN;
+  if (!botToken) return false;
+
+  const lineText =
+    signedLine === 0
+      ? "PK"
+      : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+
+  const response = await fetch(
+    `https://discord.com/api/v10/channels/${threadId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        content: `🎯 <@${discordUserId}> locked in **${team} ${lineText}**`,
+        allowed_mentions: { users: [discordUserId], parse: [] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
 export async function POST(request: Request) {
   const publicKey = process.env.DISCORD_PUBLIC_KEY;
   if (!publicKey) {
@@ -385,6 +417,21 @@ export async function POST(request: Request) {
       }
 
       const previous = matchup.picks[discordUserId];
+      if (previous) {
+        const previousTeam =
+          previous.side === "away" ? matchup.awayTeam : matchup.homeTeam;
+        const previousLine =
+          previous.side === "away" ? matchup.awayLine : -matchup.awayLine;
+        const previousLineText =
+          previousLine === 0
+            ? "PK"
+            : `${previousLine > 0 ? "+" : ""}${previousLine.toFixed(1)}`;
+
+        return ephemeral(
+          `🔒 Your Genesis pick is already locked: **${previousTeam} ${previousLineText}**.`
+        );
+      }
+
       const nextMatchups = picksState.matchups.map((item) =>
         item.id === matchupId
           ? {
@@ -428,10 +475,15 @@ export async function POST(request: Request) {
         signedLine === 0
           ? "PK"
           : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-      const changed = Boolean(previous) && previous?.side !== side;
+      await postGenesisPickAnnouncement(
+        matchup.threadId,
+        discordUserId,
+        team,
+        signedLine
+      );
 
       return ephemeral(
-        `🎯 ${changed ? "Pick changed" : "Pick saved"}: **${team} ${lineText}**. Picks stay open until the result is final.`
+        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.`
       );
     }
 

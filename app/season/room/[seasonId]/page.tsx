@@ -825,11 +825,8 @@ export default function SeasonRoomPage() {
       const result = (await response.json()) as {
         error?: string;
         threadName?: string;
-        added?: number;
-        total?: number;
-        failed?: number;
-        failedMembers?: string[];
-        reportedRoleCount?: number;
+        genesisRoleTagged?: boolean;
+        taggedPlayers?: number;
         line?: GenesisLinePreview;
       };
 
@@ -838,20 +835,14 @@ export default function SeasonRoomPage() {
         return;
       }
 
-      const added = result.added ?? 0;
-      const total = result.total ?? added;
-      const failed = result.failed ?? 0;
-      const reportedRoleCount = result.reportedRoleCount;
-      const failedNames = result.failedMembers ?? [];
-
-      let status =
-        failed > 0
-          ? `✅ Created "${result.threadName || pvpThreadTitle}". Added ${added}/${total} @genesis members; ${failed} failed${failedNames.length ? `: ${failedNames.join(", ")}` : "."}`
-          : `✅ Created "${result.threadName || pvpThreadTitle}" and added all ${added} @genesis members.`;
-
-      if (typeof reportedRoleCount === "number" && reportedRoleCount > total) {
-        status += ` Discord reports ${reportedRoleCount} accounts with @genesis, but the member-list API returned only ${total} non-bot members with that role. Re-check Server Members Intent if that difference is unexpected.`;
-      }
+      const taggedPlayers = result.taggedPlayers ?? 0;
+      let status = `✅ Created "${result.threadName || pvpThreadTitle}". Tagged @genesis`;
+      status +=
+        taggedPlayers === 2
+          ? " and both matchup players."
+          : taggedPlayers === 1
+            ? " and 1 linked matchup player."
+            : " (matchup players were not linked to Discord).";
 
       if (result.line) {
         setGenesisLine(result.line);

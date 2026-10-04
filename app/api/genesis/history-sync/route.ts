@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { syncGenesisHistory } from "@/lib/genesisLines";
+import {
+  settleGenesisPicksFromHistory,
+  syncGenesisLeaderboard,
+} from "@/lib/genesisPicks";
 import type { SeasonData } from "@/lib/season";
 
 export const maxDuration = 300;
@@ -63,7 +67,16 @@ export async function POST(request: Request) {
   try {
     const seasonData = season.season_data as SeasonData;
     const history = await syncGenesisHistory(seasonData, { mode: "full" });
-    const nextSeasonData: SeasonData = { ...seasonData, genesisHistory: history };
+    const withHistory: SeasonData = { ...seasonData, genesisHistory: history };
+    const settled = settleGenesisPicksFromHistory(withHistory);
+    let nextSeasonData = settled.seasonData;
+    let leaderboardWarning: string | undefined;
+
+    if (settled.settledCount > 0 || nextSeasonData.genesisPicks?.leaderboardChannelId) {
+      const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+      nextSeasonData = leaderboard.seasonData;
+      leaderboardWarning = leaderboard.warning;
+    }
 
     const { error: updateError } = await admin
       .from("seasons")
@@ -85,6 +98,8 @@ export async function POST(request: Request) {
       sourceCounts: history.sourceCounts,
       achievements: history.postseasonAchievements?.length ?? 0,
       syncMode: history.lastSyncMode,
+      settledPicks: settled.settledCount,
+      leaderboardWarning,
     });
   } catch (error) {
     const message =

@@ -33,6 +33,8 @@ export type GenesisHistoricalGame = {
 };
 
 export type GenesisPostseasonAchievementType =
+  | "conference_championship_appearance"
+  | "conference_championship"
   | "playoff_appearance"
   | "semifinal_appearance"
   | "championship_appearance"

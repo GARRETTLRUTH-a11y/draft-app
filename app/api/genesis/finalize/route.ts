@@ -121,7 +121,7 @@ export async function POST(request: Request) {
   }
 
   const atsWinner = settled.atsWinner;
-  let nextSeasonData = settled.seasonData;
+  let nextSeasonData: SeasonData = settled.seasonData;
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;

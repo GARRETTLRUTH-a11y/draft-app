@@ -80,7 +80,8 @@ export type PvpThreadCreateResult = {
 };
 
 export async function createGenesisPvpThread(
-  threadName: string
+  threadName: string,
+  starterMessage?: string
 ): Promise<PvpThreadCreateResult> {
   const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
   if (!parentResponse.ok) {
@@ -118,7 +119,7 @@ export async function createGenesisPvpThread(
         name: threadName.slice(0, 100),
         auto_archive_duration: 10080,
         message: {
-          content: `🏈 **${threadName}**`,
+          content: starterMessage || `🏈 **${threadName}**`,
           allowed_mentions: { parse: [] as string[] },
         },
         ...(pvpTag ? { applied_tags: [pvpTag.id] } : {}),
@@ -140,6 +141,23 @@ export async function createGenesisPvpThread(
   }
 
   const thread = (await createResponse.json()) as { id: string; name?: string };
+
+  if (!isForumOrMedia && starterMessage) {
+    const starterResponse = await discordApi(`/channels/${thread.id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({
+        content: starterMessage,
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    });
+
+    if (!starterResponse.ok) {
+      const body = await starterResponse.text();
+      throw new Error(
+        `Thread created, but could not post Genesis line: ${body || starterResponse.statusText}`
+      );
+    }
+  }
 
   const genesisMembers: { id: string; label: string }[] = [];
   let after: string | undefined;

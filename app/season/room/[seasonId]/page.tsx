@@ -833,7 +833,7 @@ export default function SeasonRoomPage() {
     }
 
     setIsCreatingPvpThread(true);
-    setPvpCreateStatus("");
+    setPvpCreateStatus("Refreshing Genesis history and locking the latest line...");
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -842,6 +842,46 @@ export default function SeasonRoomPage() {
         setPvpCreateStatus("Your session expired. Refresh and sign in again.");
         return;
       }
+
+      const lineResponse = await fetch("/api/genesis/line", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          awayTeam: pvpAwayTeam,
+          homeTeam: pvpHomeTeam,
+          neutral: pvpSeparator === "vs.",
+        }),
+      });
+
+      const lineResult = (await lineResponse.json()) as {
+        error?: string;
+        line?: GenesisLinePreview;
+        sync?: {
+          messagesScanned: number;
+          mode?: "full" | "incremental";
+          totalGames: number;
+          achievements: number;
+          lastSyncedAt: string;
+          settledPicks?: number;
+        };
+        leaderboardWarning?: string;
+      };
+
+      if (!lineResponse.ok || !lineResult.line) {
+        setPvpCreateStatus(
+          lineResult.error || "Could not refresh Genesis history before creating the thread."
+        );
+        return;
+      }
+
+      setGenesisLine(lineResult.line);
+      setPvpCreateStatus(
+        `Genesis line locked: ${lineResult.line.displayLine}. Creating Discord thread...`
+      );
 
       const response = await fetch("/api/discord/pvp-thread", {
         method: "POST",
@@ -864,14 +904,6 @@ export default function SeasonRoomPage() {
         genesisRoleTagged?: boolean;
         taggedPlayers?: number;
         line?: GenesisLinePreview;
-        sync?: {
-          messagesScanned: number;
-          mode?: "full" | "incremental";
-          totalGames: number;
-          achievements: number;
-          lastSyncedAt: string;
-          settledPicks?: number;
-        };
         leaderboardChannelId?: string;
         leaderboardWarning?: string;
       };
@@ -893,10 +925,6 @@ export default function SeasonRoomPage() {
       if (result.line) {
         setGenesisLine(result.line);
         status += ` Genesis Line: ${result.line.displayLine}.`;
-      }
-
-      if (result.sync?.messagesScanned) {
-        status += ` Auto-synced ${result.sync.messagesScanned} new Discord message${result.sync.messagesScanned === 1 ? "" : "s"} first.`;
       }
 
       if (result.leaderboardChannelId) {

@@ -348,85 +348,72 @@ export async function POST(request: Request) {
         return ephemeral("Couldn't identify your Discord account.");
       }
 
-      const [, seasonId, matchupId, side] = customId.split(":");
+      const [, seasonId, matchupId, rawSide] = customId.split(":");
       if (
         !seasonId ||
         !matchupId ||
-        (side !== "away" && side !== "home")
+        (rawSide !== "away" && rawSide !== "home")
       ) {
         return ephemeral("That Genesis pick button is invalid.");
       }
 
+      const side: "away" | "home" = rawSide;
       const displayName =
         interaction.member?.nick ||
         discordUser?.global_name ||
         discordUsername ||
         "Discord user";
 
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const { data: seasonRow, error: seasonError } = await admin
-          .from("seasons")
-          .select("season_data, updated_at")
-          .eq("id", seasonId)
-          .maybeSingle();
+      const { data: seasonRow, error: seasonError } = await admin
+        .from("seasons")
+        .select("season_data")
+        .eq("id", seasonId)
+        .maybeSingle();
 
-        if (seasonError || !seasonRow) {
-          return ephemeral("Couldn't find that Genesis season.");
-        }
-
-        const pickResult = saveGenesisPick(
-          seasonRow.season_data as SeasonData,
-          matchupId,
-          {
-            discordUserId,
-            discordUsername: displayName,
-            side,
-            pickedAt: new Date().toISOString(),
-          }
-        );
-
-        if ("error" in pickResult) {
-          return ephemeral(pickResult.error);
-        }
-
-        const nextUpdatedAt = new Date().toISOString();
-        const { data: updatedRow, error: updateError } = await admin
-          .from("seasons")
-          .update({
-            season_data: pickResult.seasonData,
-            updated_at: nextUpdatedAt,
-          })
-          .eq("id", seasonId)
-          .eq("updated_at", seasonRow.updated_at)
-          .select("id")
-          .maybeSingle();
-
-        if (updateError) {
-          return ephemeral("Couldn't save your Genesis pick. Try again.");
-        }
-
-        if (updatedRow) {
-          const matchup = pickResult.matchup;
-          const team =
-            side === "away" ? matchup.awayTeam : matchup.homeTeam;
-          const signedLine =
-            side === "away" ? matchup.awayLine : -matchup.awayLine;
-          const lineText =
-            signedLine === 0
-              ? "PK"
-              : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-          const changed =
-            pickResult.previous &&
-            pickResult.previous.side !== side;
-
-          return ephemeral(
-            `🎯 ${changed ? "Pick changed" : "Pick saved"}: **${team} ${lineText}**. Picks stay open until the result is final.`
-          );
-        }
+      if (seasonError || !seasonRow) {
+        return ephemeral("Couldn't find that Genesis season.");
       }
 
+      const pickResult = saveGenesisPick(
+        seasonRow.season_data as SeasonData,
+        matchupId,
+        {
+          discordUserId,
+          discordUsername: displayName,
+          side,
+          pickedAt: new Date().toISOString(),
+        }
+      );
+
+      if ("error" in pickResult) {
+        return ephemeral(pickResult.error);
+      }
+
+      const { error: updateError } = await admin
+        .from("seasons")
+        .update({
+          season_data: pickResult.seasonData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", seasonId);
+
+      if (updateError) {
+        return ephemeral("Couldn't save your Genesis pick. Try again.");
+      }
+
+      const matchup = pickResult.matchup;
+      const team = side === "away" ? matchup.awayTeam : matchup.homeTeam;
+      const signedLine = side === "away" ? matchup.awayLine : -matchup.awayLine;
+      const lineText =
+        signedLine === 0
+          ? "PK"
+          : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+      const changed =
+        Boolean(pickResult.previous) &&
+        pickResult.previous?.side !== side;
+
       return ephemeral(
-        "Someone else submitted a pick at the same moment. Tap your selection once more."
+        `🎯 ${changed ? "Pick changed" : "Pick saved"}: **${team} ${lineText}**. Picks stay open until the result is final.`
       );
     }
 

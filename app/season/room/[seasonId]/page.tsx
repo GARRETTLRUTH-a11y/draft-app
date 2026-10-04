@@ -802,7 +802,6 @@ export default function SeasonRoomPage() {
           awayTeam: pvpAwayTeam,
           homeTeam: pvpHomeTeam,
           neutral: pvpSeparator === "vs.",
-          postStreamInstructions: postPvpStreamInstructions,
         }),
       });
 
@@ -943,6 +942,7 @@ export default function SeasonRoomPage() {
           awayTeam: pvpAwayTeam,
           homeTeam: pvpHomeTeam,
           neutral: pvpSeparator === "vs.",
+          postStreamInstructions: postPvpStreamInstructions,
         }),
       });
 

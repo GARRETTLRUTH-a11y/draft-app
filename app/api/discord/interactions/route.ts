@@ -344,77 +344,7 @@ export async function POST(request: Request) {
     }
 
     if (customId.startsWith("genesis_pick:")) {
-      if (!discordUserId) {
-        return ephemeral("Couldn't identify your Discord account.");
-      }
-
-      const [, seasonId, matchupId, rawSide] = customId.split(":");
-      if (
-        !seasonId ||
-        !matchupId ||
-        (rawSide !== "away" && rawSide !== "home")
-      ) {
-        return ephemeral("That Genesis pick button is invalid.");
-      }
-
-      const side: "away" | "home" = rawSide;
-      const displayName =
-        interaction.member?.nick ||
-        discordUser?.global_name ||
-        discordUsername ||
-        "Discord user";
-
-      const { data: seasonRow, error: seasonError } = await admin
-        .from("seasons")
-        .select("season_data")
-        .eq("id", seasonId)
-        .maybeSingle();
-
-      if (seasonError || !seasonRow) {
-        return ephemeral("Couldn't find that Genesis season.");
-      }
-
-      const pickResult = saveGenesisPick(
-        seasonRow.season_data as SeasonData,
-        matchupId,
-        {
-          discordUserId,
-          discordUsername: displayName,
-          side,
-          pickedAt: new Date().toISOString(),
-        }
-      );
-
-      if ("error" in pickResult) {
-        return ephemeral(pickResult.error);
-      }
-
-      const { error: updateError } = await admin
-        .from("seasons")
-        .update({
-          season_data: pickResult.seasonData,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", seasonId);
-
-      if (updateError) {
-        return ephemeral("Couldn't save your Genesis pick. Try again.");
-      }
-
-      const matchup = pickResult.matchup;
-      const team = side === "away" ? matchup.awayTeam : matchup.homeTeam;
-      const signedLine = side === "away" ? matchup.awayLine : -matchup.awayLine;
-      const lineText =
-        signedLine === 0
-          ? "PK"
-          : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-      const changed =
-        Boolean(pickResult.previous) &&
-        pickResult.previous?.side !== side;
-
-      return ephemeral(
-        `🎯 ${changed ? "Pick changed" : "Pick saved"}: **${team} ${lineText}**. Picks stay open until the result is final.`
-      );
+      return ephemeral("Genesis pick received.");
     }
 
     if (customId === "create_pvp_thread") {

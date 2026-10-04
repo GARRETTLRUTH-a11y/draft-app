@@ -148,6 +148,7 @@ export default function SeasonRoomPage() {
   const [grantModalRequest, setGrantModalRequest] = useState<ExtensionRequest | null>(null);
   const [showPendingExtensionAlert, setShowPendingExtensionAlert] = useState(false);
   const hasShownPendingExtensionAlertRef = useRef(false);
+  const hasRegisteredStreamCommandRef = useRef(false);
   const [grantModalDate, setGrantModalDate] = useState("");
   const [grantModalStartHour, setGrantModalStartHour] = useState(19);
   const [grantModalEndHour, setGrantModalEndHour] = useState(22);
@@ -279,6 +280,34 @@ export default function SeasonRoomPage() {
   const isOwner = Boolean(
     season && currentUserId && season.user_id === currentUserId
   );
+
+  useEffect(() => {
+    if (!isOwner || !season || hasRegisteredStreamCommandRef.current) return;
+    hasRegisteredStreamCommandRef.current = true;
+
+    void (async () => {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) return;
+
+      try {
+        const response = await fetch("/api/discord/register-stream-command", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ seasonId: season.id }),
+        });
+
+        if (!response.ok) {
+          hasRegisteredStreamCommandRef.current = false;
+        }
+      } catch {
+        hasRegisteredStreamCommandRef.current = false;
+      }
+    })();
+  }, [isOwner, season]);
 
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];

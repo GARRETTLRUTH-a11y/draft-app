@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
-import { buildGenesisLine, genesisStarterMessage } from "@/lib/genesisLines";
+import { buildGenesisLine } from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
 
-type PvpThreadPayload = {
+type Payload = {
   seasonId?: string;
-  threadName?: string;
   awayTeam?: string;
   homeTeam?: string;
   neutral?: boolean;
@@ -26,7 +24,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let payload: PvpThreadPayload;
+  let payload: Payload;
   try {
     payload = await request.json();
   } catch {
@@ -34,14 +32,14 @@ export async function POST(request: Request) {
   }
 
   const seasonId = payload.seasonId?.trim();
-  const threadName = payload.threadName?.trim();
+  const awayTeam = payload.awayTeam?.trim();
+  const homeTeam = payload.homeTeam?.trim();
 
-  if (!seasonId || !threadName) {
-    return NextResponse.json({ error: "seasonId and threadName are required." }, { status: 400 });
-  }
-
-  if (threadName.length > 100) {
-    return NextResponse.json({ error: "Thread name must be 100 characters or fewer." }, { status: 400 });
+  if (!seasonId || !awayTeam || !homeTeam) {
+    return NextResponse.json(
+      { error: "seasonId, awayTeam, and homeTeam are required." },
+      { status: 400 }
+    );
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -62,40 +60,23 @@ export async function POST(request: Request) {
   }
 
   if (season.user_id !== userData.user.id) {
-    return NextResponse.json({ error: "Only the season commissioner can create PvP threads." }, { status: 403 });
+    return NextResponse.json(
+      { error: "Only the season commissioner can generate Genesis lines." },
+      { status: 403 }
+    );
   }
 
   try {
-    const awayTeam = payload.awayTeam?.trim();
-    const homeTeam = payload.homeTeam?.trim();
-    const line =
-      awayTeam && homeTeam
-        ? buildGenesisLine(
-            season.season_data as SeasonData,
-            awayTeam,
-            homeTeam,
-            Boolean(payload.neutral)
-          )
-        : undefined;
-
-    const result = await createGenesisPvpThread(
-      threadName,
-      line ? genesisStarterMessage(threadName, line) : undefined
+    const line = buildGenesisLine(
+      season.season_data as SeasonData,
+      awayTeam,
+      homeTeam,
+      Boolean(payload.neutral)
     );
-
-    return NextResponse.json({
-      ok: true,
-      threadId: result.thread.id,
-      threadName: result.thread.name || threadName,
-      added: result.added,
-      total: result.total,
-      failed: result.failed,
-      failedMembers: result.failedMembers,
-      reportedRoleCount: result.reportedRoleCount,
-      line,
-    });
+    return NextResponse.json({ ok: true, line });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown Discord error.";
-    return NextResponse.json({ error: message }, { status: 502 });
+    const message =
+      error instanceof Error ? error.message : "Unknown Genesis line error.";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 }

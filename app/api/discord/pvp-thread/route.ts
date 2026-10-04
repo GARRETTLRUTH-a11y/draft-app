@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
@@ -8,6 +9,12 @@ import {
   syncGenesisHistory,
 } from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
+import {
+  buildGenesisPickComponents,
+  createGenesisPickMatchup,
+  settleGenesisPicksFromHistory,
+  syncGenesisLeaderboard,
+} from "@/lib/genesisPicks";
 
 export const maxDuration = 300;
 
@@ -125,27 +132,18 @@ export async function POST(request: Request) {
           totalGames: number;
           achievements: number;
           lastSyncedAt: string;
+          settledPicks: number;
         }
       | undefined;
 
     if (awayTeam && homeTeam) {
       const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
-      nextSeasonData = {
+      const withHistory: SeasonData = {
         ...seasonData,
         genesisHistory: history,
       };
-
-      const { error: updateError } = await admin
-        .from("seasons")
-        .update({
-          season_data: nextSeasonData,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", seasonId);
-
-      if (updateError) {
-        return NextResponse.json({ error: updateError.message }, { status: 500 });
-      }
+      const settled = settleGenesisPicksFromHistory(withHistory);
+      nextSeasonData = settled.seasonData;
 
       syncResult = {
         messagesScanned: history.messagesScanned,
@@ -153,6 +151,7 @@ export async function POST(request: Request) {
         totalGames: history.games.length,
         achievements: history.postseasonAchievements?.length ?? 0,
         lastSyncedAt: history.lastSyncedAt,
+        settledPicks: settled.settledCount,
       };
     }
 
@@ -174,11 +173,58 @@ export async function POST(request: Request) {
       homeTeam
     );
 
+    const matchupId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    const pickComponents =
+      line && awayTeam && homeTeam
+        ? buildGenesisPickComponents(seasonId, matchupId, line)
+        : [];
+
+    const starterMessage = line
+      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. You can change your pick until the result is final.`
+      : undefined;
+
     const result = await createGenesisPvpThread(
       threadName,
-      line ? genesisStarterMessage(threadName, line) : undefined,
-      matchupDiscordUserIds
+      starterMessage,
+      matchupDiscordUserIds,
+      pickComponents
     );
+
+    if (line && awayTeam && homeTeam) {
+      const currentPicks = nextSeasonData.genesisPicks || { matchups: [] };
+      const matchup = createGenesisPickMatchup({
+        id: matchupId,
+        threadId: result.thread.id,
+        threadName: result.thread.name || threadName,
+        createdAt: new Date().toISOString(),
+        seasonYear: nextSeasonData.seasonYear,
+        stage: nextSeasonData.periodLabel || undefined,
+        line,
+      });
+
+      nextSeasonData = {
+        ...nextSeasonData,
+        genesisPicks: {
+          ...currentPicks,
+          matchups: [...currentPicks.matchups, matchup],
+        },
+      };
+    }
+
+    const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+    nextSeasonData = leaderboard.seasonData;
+
+    const { error: updateError } = await admin
+      .from("seasons")
+      .update({
+        season_data: nextSeasonData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", seasonId);
+
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    }
 
     return NextResponse.json({
       ok: true,
@@ -188,6 +234,8 @@ export async function POST(request: Request) {
       taggedPlayers: result.taggedUserIds.length,
       line,
       sync: syncResult,
+      leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
+      leaderboardWarning: leaderboard.warning,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

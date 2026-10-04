@@ -14,6 +14,31 @@ export type SeasonPlayer = {
   onVacation?: boolean;
 };
 
+export type GenesisGameType = "pvp" | "cpu" | "unknown";
+
+export type GenesisHistoricalGame = {
+  id: string;
+  sourceChannelId: string;
+  sourceMessageId: string;
+  sourceTimestamp?: string;
+  seasonYear?: number;
+  stage?: string;
+  teamA: string;
+  scoreA: number;
+  teamB: string;
+  scoreB: number;
+  gameType: GenesisGameType;
+  playerA?: string;
+  playerB?: string;
+};
+
+export type GenesisHistory = {
+  games: GenesisHistoricalGame[];
+  lastSyncedAt: string;
+  messagesScanned: number;
+  sourceCounts: Record<string, number>;
+};
+
 export type ExtensionStatus = "pending" | "granted" | "denied";
 
 export type ExtensionRequest = {
@@ -85,6 +110,8 @@ export type SeasonData = {
   advanceWindow?: AdvanceWindow | null;
   sourceDraftId?: string | null;
   reminders?: ReminderSchedule[];
+  // Parsed Discord results used by the Genesis Lines model.
+  genesisHistory?: GenesisHistory;
 };
 
 // The timezone reminder times are entered/interpreted in.

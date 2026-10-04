@@ -1102,6 +1102,77 @@ export default function SeasonRoomPage() {
     }
   }
 
+  async function deleteGenesisMatchup(
+    matchupId: string,
+    matchupLabel: string
+  ) {
+    if (!season) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${matchupLabel}? This removes the Genesis matchup and its Discord game thread so you can remake it.`
+    );
+    if (!confirmed) return;
+
+    setDeletingGenesisMatchupId(matchupId);
+    setGenesisFinalizeStatus(`Deleting ${matchupLabel}...`);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          matchupId,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        leaderboardWarning?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisFinalizeStatus(
+          result.error || "Could not delete the Genesis matchup."
+        );
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisFinalScoreInputs((current) => {
+        const next = { ...current };
+        delete next[matchupId];
+        return next;
+      });
+
+      setGenesisFinalizeStatus(
+        `✅ Deleted ${matchupLabel} and its Discord thread.${
+          result.leaderboardWarning
+            ? ` Leaderboard warning: ${result.leaderboardWarning}`
+            : ""
+        }`
+      );
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not delete Genesis matchup: ${error.message}`
+          : "Could not delete Genesis matchup."
+      );
+    } finally {
+      setDeletingGenesisMatchupId(null);
+    }
+  }
+
   async function lockGenesisPicks(matchupId: string) {
     if (!season) return;
 

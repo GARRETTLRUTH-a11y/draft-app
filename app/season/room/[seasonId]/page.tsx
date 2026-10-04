@@ -185,6 +185,7 @@ export default function SeasonRoomPage() {
     Record<string, { away: string; home: string }>
   >({});
   const [finalizingGenesisMatchupId, setFinalizingGenesisMatchupId] = useState<string | null>(null);
+  const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
@@ -282,10 +283,10 @@ export default function SeasonRoomPage() {
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
-  const openGenesisMatchups = useMemo(
+  const activeGenesisMatchups = useMemo(
     () =>
       [...(seasonData?.genesisPicks?.matchups ?? [])]
-        .filter((matchup) => matchup.status === "open")
+        .filter((matchup) => matchup.status !== "settled")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [seasonData?.genesisPicks?.matchups]
   );
@@ -955,6 +956,70 @@ export default function SeasonRoomPage() {
       setPvpCreateStatus("Could not create the PvP thread. Try again.");
     } finally {
       setIsCreatingPvpThread(false);
+    }
+  }
+
+  async function lockGenesisPicks(matchupId: string) {
+    if (!season) return;
+
+    const confirmed = window.confirm(
+      "Lock Genesis picks for this game? No additional picks will be accepted after this."
+    );
+    if (!confirmed) return;
+
+    setLockingGenesisMatchupId(matchupId);
+    setGenesisFinalizeStatus("Locking Genesis picks and announcing game start in Discord...");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/lock-picks", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          matchupId,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        pickCount?: number;
+        discordPosted?: boolean;
+        leaderboardWarning?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisFinalizeStatus(result.error || "Could not lock Genesis picks.");
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+
+      let status = `✅ Picks locked at game start. ${result.pickCount ?? 0} pick${(result.pickCount ?? 0) === 1 ? "" : "s"} preserved.`;
+      if (result.discordPosted === false) {
+        status += " The matchup was locked, but the Discord notice could not be posted.";
+      }
+      if (result.leaderboardWarning) {
+        status += ` Leaderboard warning: ${result.leaderboardWarning}`;
+      }
+      setGenesisFinalizeStatus(status);
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not lock Genesis picks: ${error.message}`
+          : "Could not lock Genesis picks."
+      );
+    } finally {
+      setLockingGenesisMatchupId(null);
     }
   }
 
@@ -2330,22 +2395,22 @@ export default function SeasonRoomPage() {
               )}
             </div>
 
-            {openGenesisMatchups.length > 0 && (
+            {activeGenesisMatchups.length > 0 && (
               <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="text-base font-black text-white">🏁 Finalize Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Enter the final score to close the matchup, grade every locked ATS pick, and update #genesis-picks.
+                      Lock picks when the game starts, then enter the final score afterward to grade ATS picks and update #genesis-picks.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
-                    {openGenesisMatchups.length} open
+                    {activeGenesisMatchups.length} active
                   </span>
                 </div>
 
                 <div className="mt-4 space-y-3">
-                  {openGenesisMatchups.map((matchup) => {
+                  {activeGenesisMatchups.map((matchup) => {
                     const score = genesisFinalScoreInputs[matchup.id] || {
                       away: "",
                       home: "",
@@ -2363,11 +2428,33 @@ export default function SeasonRoomPage() {
                               {matchup.awayTeam} @ {matchup.homeTeam}
                             </p>
                             <p className="mt-1 text-xs text-slate-400">
-                              Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} locked
+                              Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} submitted
+                            </p>
+                            <p
+                              className={`mt-1 text-xs font-black uppercase tracking-wide ${
+                                matchup.status === "locked"
+                                  ? "text-amber-300"
+                                  : "text-green-300"
+                              }`}
+                            >
+                              {matchup.status === "locked"
+                                ? "🔒 Picks closed · game started"
+                                : "🟢 Picks open"}
                             </p>
                           </div>
 
                           <div className="flex flex-wrap items-end gap-2">
+                            {matchup.status === "open" && (
+                              <button
+                                onClick={() => lockGenesisPicks(matchup.id)}
+                                disabled={lockingGenesisMatchupId === matchup.id}
+                                className="rounded-xl border border-amber-300/40 bg-amber-300/10 px-4 py-2 font-black text-amber-200 transition hover:bg-amber-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                              >
+                                {lockingGenesisMatchupId === matchup.id
+                                  ? "Locking..."
+                                  : "🔒 Lock Picks / Game Started"}
+                              </button>
+                            )}
                             <label className="flex flex-col gap-1 text-[11px] font-bold text-slate-400">
                               {matchup.awayTeam}
                               <input

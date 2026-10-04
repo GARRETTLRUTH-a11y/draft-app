@@ -117,7 +117,9 @@ async function fetchMessagesFromChannel(channelId: string, maxMessages: number) 
   let before: string | undefined;
 
   while (messages.length < maxMessages) {
-    const params = new URLSearchParams({ limit: "100" });
+    const params = new URLSearchParams({
+      limit: String(Math.min(100, maxMessages - messages.length)),
+    });
     if (before) params.set("before", before);
 
     const response = await discordApi(
@@ -136,6 +138,64 @@ async function fetchMessagesFromChannel(channelId: string, maxMessages: number) 
 
     messages.push(...page);
     before = page[page.length - 1]?.id;
+
+    if (page.length < 100) break;
+  }
+
+  return messages.slice(0, maxMessages);
+}
+
+function compareSnowflakes(a: string, b: string) {
+  try {
+    const left = BigInt(a);
+    const right = BigInt(b);
+    return left < right ? -1 : left > right ? 1 : 0;
+  } catch {
+    return a.localeCompare(b);
+  }
+}
+
+function latestMessageId(messages: DiscordMessage[]) {
+  return messages.reduce<string | undefined>((latest, message) => {
+    if (!latest || compareSnowflakes(message.id, latest) > 0) return message.id;
+    return latest;
+  }, undefined);
+}
+
+async function fetchMessagesAfter(
+  channelId: string,
+  afterId: string,
+  maxMessages: number
+) {
+  const messages: DiscordMessage[] = [];
+  let after = afterId;
+
+  while (messages.length < maxMessages) {
+    const params = new URLSearchParams({
+      limit: String(Math.min(100, maxMessages - messages.length)),
+      after,
+    });
+
+    const response = await discordApi(
+      `/channels/${channelId}/messages?${params.toString()}`
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Could not read new Discord history from channel ${channelId}: ${body || response.statusText}`
+      );
+    }
+
+    const page = (await response.json()) as DiscordMessage[];
+    if (!page.length) break;
+
+    const ordered = [...page].sort((a, b) => compareSnowflakes(a.id, b.id));
+    messages.push(...ordered);
+
+    const nextAfter = latestMessageId(page);
+    if (!nextAfter || nextAfter === after) break;
+    after = nextAfter;
 
     if (page.length < 100) break;
   }
@@ -212,23 +272,62 @@ async function resolveSourceMessageChannels(sourceChannelId: string) {
   return [sourceChannelId];
 }
 
+export type GenesisSyncMode = "full" | "incremental";
+
 async function fetchSourceMessages(
   sourceChannelId: string,
-  maxMessagesPerSource: number
+  maxMessagesPerSource: number,
+  existingCursors: Record<string, string>,
+  mode: GenesisSyncMode
 ) {
   const messageChannels = await resolveSourceMessageChannels(sourceChannelId);
   const all: DiscordMessage[] = [];
+  const cursors: Record<string, string> = {};
+
+  // A full rebuild spreads its message budget across forum threads so one
+  // busy thread cannot consume the entire backfill. Incremental sync instead
+  // spends the budget only on channels that actually have new messages.
+  const fullPerChannelLimit =
+    messageChannels.length > 1
+      ? Math.max(10, Math.ceil(maxMessagesPerSource / messageChannels.length))
+      : maxMessagesPerSource;
 
   for (const channelId of messageChannels) {
-    if (all.length >= maxMessagesPerSource) break;
-    const remaining = maxMessagesPerSource - all.length;
-    const messages = await fetchMessagesFromChannel(channelId, remaining);
+    if (mode === "incremental" && all.length >= maxMessagesPerSource) break;
+
+    const existingCursor = existingCursors[channelId];
+    const remaining = Math.max(1, maxMessagesPerSource - all.length);
+    const limit =
+      mode === "full"
+        ? fullPerChannelLimit
+        : existingCursor
+          ? remaining
+          : Math.min(50, remaining);
+
+    const messages =
+      mode === "incremental" && existingCursor
+        ? await fetchMessagesAfter(channelId, existingCursor, limit)
+        : await fetchMessagesFromChannel(channelId, limit);
+
     all.push(...messages);
+
+    const latest = latestMessageId(messages);
+    if (latest) {
+      cursors[channelId] = latest;
+    } else if (existingCursor) {
+      cursors[channelId] = existingCursor;
+    }
   }
 
-  return all
-    .filter((message) => messageText(message).length > 0)
-    .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || ""));
+  const deduped = new Map<string, DiscordMessage>();
+  for (const message of all) deduped.set(message.id, message);
+
+  return {
+    messages: [...deduped.values()]
+      .filter((message) => messageText(message).length > 0)
+      .sort((a, b) => (a.timestamp || "").localeCompare(b.timestamp || "")),
+    cursors,
+  };
 }
 
 function outputTextFromResponse(payload: unknown) {
@@ -446,7 +545,8 @@ function mergeGame(
 }
 
 export async function syncGenesisHistory(
-  seasonData: SeasonData
+  seasonData: SeasonData,
+  options: { mode?: GenesisSyncMode } = {}
 ): Promise<GenesisHistory> {
   const maxMessagesPerSource = clamp(
     Number(process.env.GENESIS_HISTORY_MAX_MESSAGES || 200),
@@ -459,11 +559,35 @@ export async function syncGenesisHistory(
     SEASON_SUMMARY_CHANNEL_ID,
   ];
 
+  const requestedMode = options.mode || "full";
+  // Existing seasons created before incremental sync have no cursors yet.
+  // Their first automatic sync establishes high-water marks with one full
+  // pass; every later Generate Line/Create Thread call only reads new posts.
+  const mode: GenesisSyncMode =
+    requestedMode === "incremental" &&
+    !seasonData.genesisHistory?.sourceCursors
+      ? "full"
+      : requestedMode;
+
+  const existingCursors =
+    mode === "incremental"
+      ? seasonData.genesisHistory?.sourceCursors || {}
+      : {};
+
   const fetched = await Promise.all(
-    sources.map(async (sourceChannelId) => ({
-      sourceChannelId,
-      messages: await fetchSourceMessages(sourceChannelId, maxMessagesPerSource),
-    }))
+    sources.map(async (sourceChannelId) => {
+      const result = await fetchSourceMessages(
+        sourceChannelId,
+        maxMessagesPerSource,
+        existingCursors,
+        mode
+      );
+      return {
+        sourceChannelId,
+        messages: result.messages,
+        cursors: result.cursors,
+      };
+    })
   );
 
   const extracted: GenesisHistoricalGame[] = [];
@@ -578,6 +702,15 @@ export async function syncGenesisHistory(
     achievementMap.set(achievement.id, achievement);
   }
 
+  const sourceCursors =
+    mode === "incremental"
+      ? { ...(seasonData.genesisHistory?.sourceCursors || {}) }
+      : {};
+
+  for (const source of fetched) {
+    Object.assign(sourceCursors, source.cursors);
+  }
+
   return {
     games,
     postseasonAchievements: [...achievementMap.values()].sort((a, b) => {
@@ -585,6 +718,7 @@ export async function syncGenesisHistory(
       if (yearDiff !== 0) return yearDiff;
       return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
     }),
+    sourceCursors,
     lastSyncedAt: new Date().toISOString(),
     messagesScanned: fetched.reduce(
       (sum, source) => sum + source.messages.length,
@@ -593,6 +727,7 @@ export async function syncGenesisHistory(
     sourceCounts: Object.fromEntries(
       fetched.map((source) => [source.sourceChannelId, source.messages.length])
     ),
+    lastSyncMode: mode,
   };
 }
 

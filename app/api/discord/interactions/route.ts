@@ -458,11 +458,13 @@ export async function POST(request: Request) {
 
       try {
         const result = await createGenesisPvpThread(threadName);
-        const membershipNote =
-          result.failed > 0
-            ? " Added " + result.added + "/" + result.total + " @genesis members (" + result.failed + " failed)."
-            : " Added all " + result.added + " @genesis members.";
-        return ephemeral("✅ Created <#" + result.thread.id + "> under <#" + PVP_PARENT_CHANNEL_ID + ">." + membershipNote);
+        return ephemeral(
+          "✅ Created <#" +
+            result.thread.id +
+            "> under <#" +
+            PVP_PARENT_CHANNEL_ID +
+            ">. Tagged @genesis without individually adding every member."
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown Discord error.";
         return ephemeral("Couldn't create the PvP thread: " + message);

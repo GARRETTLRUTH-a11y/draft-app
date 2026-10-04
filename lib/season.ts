@@ -95,6 +95,7 @@ export type GenesisPickMatchup = {
   finalHomeScore?: number;
   atsWinner?: GenesisPickSide | "push";
   lockedAt?: string;
+  resultPromptSentAt?: string;
   settledAt?: string;
   sourceGameId?: string;
 };

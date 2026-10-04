@@ -1,8 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import type { GenesisPickSide, SeasonData } from "@/lib/season";
-import { syncGenesisLeaderboard } from "@/lib/genesisPicks";
+import type { SeasonData } from "@/lib/season";
+import {
+  postGenesisFinalToThread,
+  settleGenesisMatchupByScore,
+  syncGenesisLeaderboard,
+} from "@/lib/genesisPicks";
 
 type Payload = {
   seasonId?: string;
@@ -10,50 +14,6 @@ type Payload = {
   awayScore?: number;
   homeScore?: number;
 };
-
-async function postFinalToThread(input: {
-  threadId: string;
-  awayTeam: string;
-  homeTeam: string;
-  awayScore: number;
-  homeScore: number;
-  displayLine: string;
-  atsWinner: GenesisPickSide | "push";
-  awayLine: number;
-}) {
-  const botToken = process.env.DISCORD_BOT_TOKEN;
-  if (!botToken) return false;
-
-  const winnerText =
-    input.atsWinner === "push"
-      ? "Push"
-      : input.atsWinner === "away"
-        ? input.awayTeam
-        : input.homeTeam;
-
-  const response = await fetch(
-    `https://discord.com/api/v10/channels/${input.threadId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bot ${botToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        content: [
-          "🏁 **GENESIS FINAL**",
-          `**${input.awayTeam} ${input.awayScore} – ${input.homeTeam} ${input.homeScore}**`,
-          `Locked line: **${input.displayLine}**`,
-          `ATS result: **${winnerText}**`,
-          "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
-        ].join("\n"),
-        allowed_mentions: { parse: [] as string[] },
-      }),
-    }
-  );
-
-  return response.ok;
-}
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -149,35 +109,19 @@ export async function POST(request: Request) {
     );
   }
 
-  const atsValue = awayScore - homeScore + matchup.awayLine;
-  const atsWinner: GenesisPickSide | "push" =
-    Math.abs(atsValue) < 0.001
-      ? "push"
-      : atsValue > 0
-        ? "away"
-        : "home";
-
-  const settledAt = new Date().toISOString();
-  const matchups = picksState.matchups.map((item) =>
-    item.id === matchupId
-      ? {
-          ...item,
-          status: "settled" as const,
-          finalAwayScore: awayScore,
-          finalHomeScore: homeScore,
-          atsWinner,
-          settledAt,
-        }
-      : item
+  const settled = settleGenesisMatchupByScore(
+    seasonData,
+    matchupId,
+    awayScore,
+    homeScore
   );
 
-  let nextSeasonData: SeasonData = {
-    ...seasonData,
-    genesisPicks: {
-      ...picksState,
-      matchups,
-    },
-  };
+  if ("error" in settled) {
+    return NextResponse.json({ error: settled.error }, { status: 409 });
+  }
+
+  const atsWinner = settled.atsWinner;
+  let nextSeasonData: SeasonData = settled.seasonData;
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;
@@ -194,15 +138,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  await postFinalToThread({
-    threadId: matchup.threadId,
-    awayTeam: matchup.awayTeam,
-    homeTeam: matchup.homeTeam,
+  await postGenesisFinalToThread({
+    matchup,
     awayScore,
     homeScore,
-    displayLine: matchup.displayLine,
     atsWinner,
-    awayLine: matchup.awayLine,
   });
 
   return NextResponse.json({

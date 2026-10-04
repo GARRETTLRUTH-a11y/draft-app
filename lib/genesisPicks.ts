@@ -128,6 +128,132 @@ export function createGenesisPickMatchup(input: {
     picks: {},
   };
 }
+export function settleGenesisMatchupByScore(
+  seasonData: SeasonData,
+  matchupId: string,
+  awayScore: number,
+  homeScore: number,
+  settledAt = new Date().toISOString()
+):
+  | { error: string }
+  | {
+      seasonData: SeasonData;
+      matchup: GenesisPickMatchup;
+      atsWinner: GenesisPickSide | "push";
+    } {
+  const state = seasonData.genesisPicks;
+  const matchup = state?.matchups.find((item) => item.id === matchupId);
+
+  if (!state || !matchup) {
+    return { error: "Genesis matchup not found." } as const;
+  }
+
+  if (matchup.status === "settled") {
+    return { error: "That Genesis matchup is already finalized." } as const;
+  }
+
+  const atsValue = awayScore - homeScore + matchup.awayLine;
+  const atsWinner: GenesisPickSide | "push" =
+    Math.abs(atsValue) < 0.001
+      ? "push"
+      : atsValue > 0
+        ? "away"
+        : "home";
+
+  const matchups: GenesisPickMatchup[] = state.matchups.map((item) =>
+    item.id === matchupId
+      ? {
+          ...item,
+          status: "settled" as const,
+          finalAwayScore: awayScore,
+          finalHomeScore: homeScore,
+          atsWinner,
+          settledAt,
+        }
+      : item
+  );
+
+  return {
+    seasonData: {
+      ...seasonData,
+      genesisPicks: {
+        ...state,
+        matchups,
+      },
+    },
+    matchup,
+    atsWinner,
+  } as const;
+}
+
+export async function postGenesisFinalScorePrompt(
+  seasonId: string,
+  matchup: GenesisPickMatchup
+) {
+  const response = await discordApi(
+    `/channels/${matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: [
+          "🏁 **Game finished? Submit the final score**",
+          `**${matchup.awayTeam} @ ${matchup.homeTeam}**`,
+          "If the game is over, submit the score so Genesis can grade the locked picks.",
+        ].join("\n"),
+        components: [
+          {
+            type: 1,
+            components: [
+              {
+                type: 2,
+                style: 3,
+                label: "🏁 Submit Final Score",
+                custom_id: `genesis_final_score:${seasonId}:${matchup.id}`,
+              },
+            ],
+          },
+        ],
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
+export async function postGenesisFinalToThread(input: {
+  matchup: GenesisPickMatchup;
+  awayScore: number;
+  homeScore: number;
+  atsWinner: GenesisPickSide | "push";
+}) {
+  const winnerText =
+    input.atsWinner === "push"
+      ? "Push"
+      : input.atsWinner === "away"
+        ? input.matchup.awayTeam
+        : input.matchup.homeTeam;
+
+  const response = await discordApi(
+    `/channels/${input.matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: [
+          "🏁 **GENESIS FINAL**",
+          `**${input.matchup.awayTeam} ${input.awayScore} – ${input.matchup.homeTeam} ${input.homeScore}**`,
+          `Locked line: **${input.matchup.displayLine}**`,
+          `ATS result: **${winnerText}**`,
+          "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
+        ].join("\n"),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
 
 export function saveGenesisPick(
   seasonData: SeasonData,

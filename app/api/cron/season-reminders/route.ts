@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
+import { postGenesisFinalScorePrompt } from "@/lib/genesisPicks";
 import {
   buildWeekSummary,
   formatAdvanceWindow,
@@ -21,6 +22,7 @@ import {
 // row; a proper fix is a more reliable external trigger (e.g.
 // cron-job.org) hitting this route instead of/alongside GitHub Actions.
 const FIRE_WINDOW_MINUTES = 90;
+const GENESIS_FINAL_PROMPT_DELAY_MS = 60 * 60 * 1000;
 
 function nowInTimeZone(timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -110,11 +112,12 @@ export async function GET(request: Request) {
   const { dateKey, minutesOfDay, dayOfWeek } = nowInTimeZone(REMINDER_TIMEZONE);
 
   let sentCount = 0;
+  let genesisFinalPromptCount = 0;
+  const nowMs = Date.now();
 
   for (const row of seasons || []) {
     const seasonData = row.season_data as SeasonData;
     const reminders = seasonData.reminders || [];
-    if (reminders.length === 0) continue;
 
     let changed = false;
 
@@ -172,13 +175,65 @@ export async function GET(request: Request) {
       }
     }
 
+    let nextGenesisPicks = seasonData.genesisPicks;
+
+    if (seasonData.genesisPicks?.matchups?.length) {
+      const nextMatchups: NonNullable<SeasonData["genesisPicks"]>["matchups"] = [];
+
+      for (const matchup of seasonData.genesisPicks.matchups) {
+        const lockedMs = matchup.lockedAt
+          ? new Date(matchup.lockedAt).getTime()
+          : Number.NaN;
+
+        const finalPromptDue =
+          matchup.status === "locked" &&
+          !matchup.resultPromptSentAt &&
+          Number.isFinite(lockedMs) &&
+          nowMs - lockedMs >= GENESIS_FINAL_PROMPT_DELAY_MS;
+
+        if (!finalPromptDue) {
+          nextMatchups.push(matchup);
+          continue;
+        }
+
+        const posted = await postGenesisFinalScorePrompt(row.id, matchup);
+
+        if (posted) {
+          genesisFinalPromptCount++;
+          changed = true;
+          nextMatchups.push({
+            ...matchup,
+            resultPromptSentAt: new Date().toISOString(),
+          });
+        } else {
+          // Leave resultPromptSentAt empty so the next scheduler run retries.
+          nextMatchups.push(matchup);
+        }
+      }
+
+      nextGenesisPicks = {
+        ...seasonData.genesisPicks,
+        matchups: nextMatchups,
+      };
+    }
+
     if (changed) {
       await admin
         .from("seasons")
-        .update({ season_data: { ...seasonData, reminders: nextReminders } })
+        .update({
+          season_data: {
+            ...seasonData,
+            reminders: nextReminders,
+            ...(nextGenesisPicks ? { genesisPicks: nextGenesisPicks } : {}),
+          },
+        })
         .eq("id", row.id);
     }
   }
 
-  return NextResponse.json({ ok: true, sent: sentCount });
+  return NextResponse.json({
+    ok: true,
+    sent: sentCount,
+    genesisFinalPrompts: genesisFinalPromptCount,
+  });
 }

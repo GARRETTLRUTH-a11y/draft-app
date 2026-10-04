@@ -45,6 +45,8 @@ type ParsedPostseasonAchievement = {
   team: string | null;
   player: string | null;
   type:
+    | "conference_championship_appearance"
+    | "conference_championship"
     | "playoff_appearance"
     | "semifinal_appearance"
     | "championship_appearance"
@@ -278,10 +280,12 @@ async function parseMessageChunk(
     "Use seasonYear and stage only when they are stated or can be unambiguously inferred from the local message context; otherwise return null.",
     "gameType is pvp only when both sides are human-controlled league teams/users, cpu when exactly one side is human-controlled and the opponent is CPU, otherwise unknown.",
     "Do not invent player names. Use playerA/playerB only when the message identifies them or when the result clearly belongs to the current-season roster mapping and current season year.",
-    "Also extract explicit postseason accomplishments when stated: playoff appearance, semifinal appearance, national championship appearance, and national championship.",
+    "Also extract explicit postseason accomplishments when stated: conference championship appearance, conference championship win, playoff appearance, semifinal appearance, national championship appearance, and national championship.",
     "Do not infer a postseason accomplishment merely from rankings or a strong record. It must be explicit in the Discord text or unambiguous from a postseason result.",
+    "For a conference champion, emit conference_championship. Do not also emit conference_championship_appearance for the same player/team/season.",
+    "For a conference title-game loser, emit conference_championship_appearance.",
     "For a national champion, emit type championship. Do not also emit championship_appearance for the same player/team/season unless the source separately states it.",
-    "For a championship-game loser, emit championship_appearance. For a semifinal participant that did not reach the title game, emit semifinal_appearance. For other playoff qualifiers, emit playoff_appearance.",
+    "For a national championship-game loser, emit championship_appearance. For a semifinal participant that did not reach the title game, emit semifinal_appearance. For other playoff qualifiers, emit playoff_appearance.",
     `Current dynasty season year: ${seasonData.seasonYear}.`,
     `Current human team mapping: ${buildRosterHint(seasonData) || "none supplied"}.`,
   ].join(" ");
@@ -355,6 +359,8 @@ async function parseMessageChunk(
                     type: {
                       type: "string",
                       enum: [
+                        "conference_championship_appearance",
+                        "conference_championship",
                         "playoff_appearance",
                         "semifinal_appearance",
                         "championship_appearance",
@@ -833,15 +839,21 @@ function weightedCpuLossPenalty(
 }
 
 function postseasonAchievementValue(type: GenesisPostseasonAchievementType) {
+  // Hierarchy: CFP/national-title résumé > conference-title résumé > raw team ratings.
+  // Direct PvP is still substantially stronger than every résumé signal.
   switch (type) {
     case "championship":
-      return 2.25;
+      return 3;
     case "championship_appearance":
-      return 1.5;
+      return 2.1;
     case "semifinal_appearance":
-      return 1;
+      return 1.55;
     case "playoff_appearance":
-      return 0.65;
+      return 1.15;
+    case "conference_championship":
+      return 0.9;
+    case "conference_championship_appearance":
+      return 0.6;
   }
 }
 
@@ -1098,7 +1110,7 @@ export function buildGenesisLine(
 
   if (awayPostseason.count + homePostseason.count > 0) {
     notes.push(
-      `Postseason résumé contributes ${postseasonAdjustment >= 0 ? "+" : ""}${postseasonAdjustment.toFixed(1)} points from ${awayTeam}'s perspective; championships count more than appearances but less than direct PvP.`
+      `Postseason résumé contributes ${postseasonAdjustment >= 0 ? "+" : ""}${postseasonAdjustment.toFixed(1)} points from ${awayTeam}'s perspective; CFP/national-title success ranks above conference-title success, and both remain below direct PvP.`
     );
   }
 

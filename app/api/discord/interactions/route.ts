@@ -577,10 +577,13 @@ export async function POST(request: Request) {
       },
     };
 
+    const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+    const syncedSeasonData = leaderboard.seasonData;
+
     const { error: updateError } = await admin
       .from("seasons")
       .update({
-        season_data: nextSeasonData,
+        season_data: syncedSeasonData,
         updated_at: new Date().toISOString(),
       })
       .eq("id", seasonId);
@@ -598,7 +601,11 @@ export async function POST(request: Request) {
     });
 
     return ephemeral(
-      `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.`
+      `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.${
+        leaderboard.warning
+          ? ` Leaderboard warning: ${leaderboard.warning}`
+          : " #genesis-picks updated."
+      }`
     );
   }
 
@@ -1137,10 +1144,13 @@ export async function POST(request: Request) {
         },
       };
 
+      const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+      const syncedSeasonData = leaderboard.seasonData;
+
       const { error: updateError } = await admin
         .from("seasons")
         .update({
-          season_data: nextSeasonData,
+          season_data: syncedSeasonData,
           updated_at: new Date().toISOString(),
         })
         .eq("id", seasonId);
@@ -1158,7 +1168,11 @@ export async function POST(request: Request) {
       });
 
       return ephemeral(
-        `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.`
+        `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.${
+          leaderboard.warning
+            ? ` Leaderboard warning: ${leaderboard.warning}`
+            : " #genesis-picks updated."
+        }`
       );
     }
 

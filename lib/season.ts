@@ -32,8 +32,27 @@ export type GenesisHistoricalGame = {
   playerB?: string;
 };
 
+export type GenesisPostseasonAchievementType =
+  | "playoff_appearance"
+  | "semifinal_appearance"
+  | "championship_appearance"
+  | "championship";
+
+export type GenesisPostseasonAchievement = {
+  id: string;
+  sourceChannelId: string;
+  sourceMessageId: string;
+  sourceTimestamp?: string;
+  seasonYear?: number;
+  team?: string;
+  player?: string;
+  type: GenesisPostseasonAchievementType;
+  label?: string;
+};
+
 export type GenesisHistory = {
   games: GenesisHistoricalGame[];
+  postseasonAchievements?: GenesisPostseasonAchievement[];
   lastSyncedAt: string;
   messagesScanned: number;
   sourceCounts: Record<string, number>;

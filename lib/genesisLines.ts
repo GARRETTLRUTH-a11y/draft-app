@@ -1,6 +1,8 @@
 import type {
   GenesisHistoricalGame,
   GenesisHistory,
+  GenesisPostseasonAchievement,
+  GenesisPostseasonAchievementType,
   SeasonData,
   SeasonPlayer,
 } from "@/lib/season";
@@ -35,6 +37,24 @@ type ParsedGame = {
   gameType: "pvp" | "cpu" | "unknown";
   playerA: string | null;
   playerB: string | null;
+};
+
+type ParsedPostseasonAchievement = {
+  sourceMessageId: string;
+  seasonYear: number | null;
+  team: string | null;
+  player: string | null;
+  type:
+    | "playoff_appearance"
+    | "semifinal_appearance"
+    | "championship_appearance"
+    | "championship";
+  label: string | null;
+};
+
+type ParsedHistoryChunk = {
+  games: ParsedGame[];
+  postseasonAchievements: ParsedPostseasonAchievement[];
 };
 
 export type GenesisLineResult = {
@@ -239,7 +259,7 @@ async function parseMessageChunk(
   messages: DiscordMessage[],
   sourceChannelId: string,
   seasonData: SeasonData
-): Promise<ParsedGame[]> {
+): Promise<ParsedHistoryChunk> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY is not configured.");
 
@@ -250,14 +270,18 @@ async function parseMessageChunk(
   }));
 
   const instructions = [
-    "You extract completed EA Sports College Football dynasty game results from Discord history.",
-    "Return ONLY actual completed games with both teams and both final scores.",
+    "You extract completed EA Sports College Football dynasty results and postseason accomplishments from Discord history.",
+    "For games, return ONLY actual completed games with both teams and both final scores.",
     "Do not treat rankings, records, polls, betting lines, projected scores, schedules, or future matchups as completed games.",
     "One Discord message may contain many completed games.",
     "Preserve the exact sourceMessageId supplied with each extracted game.",
     "Use seasonYear and stage only when they are stated or can be unambiguously inferred from the local message context; otherwise return null.",
     "gameType is pvp only when both sides are human-controlled league teams/users, cpu when exactly one side is human-controlled and the opponent is CPU, otherwise unknown.",
     "Do not invent player names. Use playerA/playerB only when the message identifies them or when the result clearly belongs to the current-season roster mapping and current season year.",
+    "Also extract explicit postseason accomplishments when stated: playoff appearance, semifinal appearance, national championship appearance, and national championship.",
+    "Do not infer a postseason accomplishment merely from rankings or a strong record. It must be explicit in the Discord text or unambiguous from a postseason result.",
+    "For a national champion, emit type championship. Do not also emit championship_appearance for the same player/team/season unless the source separately states it.",
+    "For a championship-game loser, emit championship_appearance. For a semifinal participant that did not reach the title game, emit semifinal_appearance. For other playoff qualifiers, emit playoff_appearance.",
     `Current dynasty season year: ${seasonData.seasonYear}.`,
     `Current human team mapping: ${buildRosterHint(seasonData) || "none supplied"}.`,
   ].join(" ");
@@ -278,7 +302,7 @@ async function parseMessageChunk(
       text: {
         format: {
           type: "json_schema",
-          name: "genesis_history_games",
+          name: "genesis_history",
           strict: true,
           schema: {
             type: "object",
@@ -318,8 +342,39 @@ async function parseMessageChunk(
                   ],
                 },
               },
+              postseasonAchievements: {
+                type: "array",
+                items: {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    sourceMessageId: { type: "string" },
+                    seasonYear: { type: ["integer", "null"] },
+                    team: { type: ["string", "null"] },
+                    player: { type: ["string", "null"] },
+                    type: {
+                      type: "string",
+                      enum: [
+                        "playoff_appearance",
+                        "semifinal_appearance",
+                        "championship_appearance",
+                        "championship"
+                      ],
+                    },
+                    label: { type: ["string", "null"] },
+                  },
+                  required: [
+                    "sourceMessageId",
+                    "seasonYear",
+                    "team",
+                    "player",
+                    "type",
+                    "label"
+                  ],
+                },
+              },
             },
-            required: ["games"],
+            required: ["games", "postseasonAchievements"],
           },
         },
       },
@@ -338,8 +393,11 @@ async function parseMessageChunk(
   const outputText = outputTextFromResponse(payload);
   if (!outputText) throw new Error("OpenAI returned no parsed history output.");
 
-  const parsed = JSON.parse(outputText) as { games?: ParsedGame[] };
-  return parsed.games || [];
+  const parsed = JSON.parse(outputText) as Partial<ParsedHistoryChunk>;
+  return {
+    games: parsed.games || [],
+    postseasonAchievements: parsed.postseasonAchievements || [],
+  };
 }
 
 function gameFingerprint(game: {
@@ -403,6 +461,7 @@ export async function syncGenesisHistory(
   );
 
   const extracted: GenesisHistoricalGame[] = [];
+  const extractedAchievements: GenesisPostseasonAchievement[] = [];
 
   for (const source of fetched) {
     const chunks: DiscordMessage[][] = [];
@@ -421,8 +480,8 @@ export async function syncGenesisHistory(
           )
       );
 
-      for (const parsedGames of parsedGroups) {
-        for (const game of parsedGames) {
+      for (const parsedGroup of parsedGroups) {
+        for (const game of parsedGroup.games) {
           const sourceMessage = source.messages.find(
             (message) => message.id === game.sourceMessageId
           );
@@ -454,6 +513,37 @@ export async function syncGenesisHistory(
             playerB: game.playerB?.trim() || undefined,
           });
         }
+
+        for (const achievement of parsedGroup.postseasonAchievements) {
+          const sourceMessage = source.messages.find(
+            (message) => message.id === achievement.sourceMessageId
+          );
+          if (!sourceMessage) continue;
+          if (!achievement.team?.trim() && !achievement.player?.trim()) continue;
+
+          const seasonPart = achievement.seasonYear ?? "?";
+          const identityPart = normalize(
+            achievement.player?.trim() || achievement.team?.trim() || "unknown"
+          );
+          const id = [
+            "postseason",
+            seasonPart,
+            achievement.type,
+            identityPart,
+          ].join("|");
+
+          extractedAchievements.push({
+            id,
+            sourceChannelId: source.sourceChannelId,
+            sourceMessageId: achievement.sourceMessageId,
+            sourceTimestamp: sourceMessage.timestamp,
+            seasonYear: achievement.seasonYear ?? undefined,
+            team: achievement.team?.trim() || undefined,
+            player: achievement.player?.trim() || undefined,
+            type: achievement.type,
+            label: achievement.label?.trim() || undefined,
+          });
+        }
       }
     }
   }
@@ -474,8 +564,21 @@ export async function syncGenesisHistory(
     return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
   });
 
+  const achievementMap = new Map<string, GenesisPostseasonAchievement>();
+  for (const existing of seasonData.genesisHistory?.postseasonAchievements || []) {
+    achievementMap.set(existing.id, existing);
+  }
+  for (const achievement of extractedAchievements) {
+    achievementMap.set(achievement.id, achievement);
+  }
+
   return {
     games,
+    postseasonAchievements: [...achievementMap.values()].sort((a, b) => {
+      const yearDiff = (a.seasonYear || 0) - (b.seasonYear || 0);
+      if (yearDiff !== 0) return yearDiff;
+      return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
+    }),
     lastSyncedAt: new Date().toISOString(),
     messagesScanned: fetched.reduce(
       (sum, source) => sum + source.messages.length,
@@ -506,7 +609,8 @@ function gameMarginForTeam(game: GenesisHistoricalGame, team: string) {
 
 function historicalWeight(
   game: GenesisHistoricalGame,
-  currentSeasonYear: number
+  currentSeasonYear: number,
+  margin: number
 ) {
   const age =
     typeof game.seasonYear === "number"
@@ -515,7 +619,13 @@ function historicalWeight(
 
   const seasonWeight = Math.pow(0.82, age);
   const gameTypeWeight =
-    game.gameType === "pvp" ? 1 : game.gameType === "cpu" ? 0.15 : 0.25;
+    game.gameType === "pvp"
+      ? 1
+      : game.gameType === "cpu"
+        ? margin < 0
+          ? 0.32
+          : 0.02
+        : 0.2;
 
   return seasonWeight * gameTypeWeight;
 }
@@ -532,7 +642,7 @@ function weightedTeamForm(
   for (const game of games) {
     const margin = gameMarginForTeam(game, team);
     if (margin == null) continue;
-    const weight = historicalWeight(game, currentSeasonYear);
+    const weight = historicalWeight(game, currentSeasonYear, margin);
     numerator += clamp(margin, -35, 35) * weight;
     denominator += weight;
     count++;
@@ -673,6 +783,107 @@ function weightedCoachHeadToHead(
   };
 }
 
+function weightedCpuLossPenalty(
+  games: GenesisHistoricalGame[],
+  playerName: string | undefined,
+  teamName: string,
+  currentSeasonYear: number
+) {
+  const playerTarget = playerName ? normalize(playerName) : "";
+  const teamTarget = normalize(teamName);
+  let penalty = 0;
+  let count = 0;
+
+  for (const game of games) {
+    if (game.gameType !== "cpu") continue;
+
+    let margin: number | null = null;
+
+    if (playerTarget && game.playerA && normalize(game.playerA) === playerTarget) {
+      margin = game.scoreA - game.scoreB;
+    } else if (
+      playerTarget &&
+      game.playerB &&
+      normalize(game.playerB) === playerTarget
+    ) {
+      margin = game.scoreB - game.scoreA;
+    } else if (normalize(game.teamA) === teamTarget) {
+      margin = game.scoreA - game.scoreB;
+    } else if (normalize(game.teamB) === teamTarget) {
+      margin = game.scoreB - game.scoreA;
+    }
+
+    if (margin == null || margin >= 0) continue;
+
+    const age =
+      typeof game.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - game.seasonYear)
+        : 2;
+    const recency = Math.pow(0.78, age);
+    const lossSeverity = clamp(Math.abs(margin) / 10, 0.6, 2.5);
+
+    penalty -= lossSeverity * recency;
+    count++;
+  }
+
+  return {
+    adjustment: clamp(penalty, -5, 0),
+    count,
+  };
+}
+
+function postseasonAchievementValue(type: GenesisPostseasonAchievementType) {
+  switch (type) {
+    case "championship":
+      return 2.25;
+    case "championship_appearance":
+      return 1.5;
+    case "semifinal_appearance":
+      return 1;
+    case "playoff_appearance":
+      return 0.65;
+  }
+}
+
+function weightedPostseasonScore(
+  achievements: GenesisPostseasonAchievement[],
+  playerName: string | undefined,
+  teamName: string,
+  currentSeasonYear: number
+) {
+  const playerTarget = playerName ? normalize(playerName) : "";
+  const teamTarget = normalize(teamName);
+  let score = 0;
+  let count = 0;
+
+  for (const achievement of achievements) {
+    const playerMatch =
+      Boolean(playerTarget) &&
+      Boolean(achievement.player) &&
+      normalize(achievement.player || "") === playerTarget;
+    const teamMatch =
+      !achievement.player &&
+      Boolean(achievement.team) &&
+      normalize(achievement.team || "") === teamTarget;
+
+    if (!playerMatch && !teamMatch) continue;
+
+    const age =
+      typeof achievement.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - achievement.seasonYear)
+        : 2;
+    const recency = Math.pow(0.82, age);
+
+    score += postseasonAchievementValue(achievement.type) * recency;
+    count++;
+  }
+
+  return {
+    score: clamp(score, 0, 5),
+    count,
+  };
+}
+
 function directPvpAdjustment(margin: number, count: number) {
   if (count <= 0) return 0;
 
@@ -733,8 +944,45 @@ export function buildGenesisLine(
     seasonData.seasonYear
   );
 
+  const achievements = seasonData.genesisHistory?.postseasonAchievements || [];
+  const awayPostseason = weightedPostseasonScore(
+    achievements,
+    awayPlayer.name,
+    awayTeam,
+    seasonData.seasonYear
+  );
+  const homePostseason = weightedPostseasonScore(
+    achievements,
+    homePlayer.name,
+    homeTeam,
+    seasonData.seasonYear
+  );
+  const postseasonAdjustment = clamp(
+    awayPostseason.score - homePostseason.score,
+    -4.5,
+    4.5
+  );
+
+  const awayCpuLosses = weightedCpuLossPenalty(
+    games,
+    awayPlayer.name,
+    awayTeam,
+    seasonData.seasonYear
+  );
+  const homeCpuLosses = weightedCpuLossPenalty(
+    games,
+    homePlayer.name,
+    homeTeam,
+    seasonData.seasonYear
+  );
+  const cpuLossAdjustment = clamp(
+    awayCpuLosses.adjustment - homeCpuLosses.adjustment,
+    -5,
+    5
+  );
+
   const teamHistoryAdjustment =
-    (awayTeamForm.margin - homeTeamForm.margin) * 0.04;
+    (awayTeamForm.margin - homeTeamForm.margin) * 0.025;
   const playerHistoryAdjustment =
     (awayPlayerForm.margin - homePlayerForm.margin) * 0.1;
 
@@ -764,9 +1012,11 @@ export function buildGenesisLine(
   const historyAdjustment = clamp(
     teamHistoryAdjustment +
       playerHistoryAdjustment +
+      postseasonAdjustment +
+      cpuLossAdjustment +
       directMatchupAdjustment,
-    -14,
-    14
+    -16,
+    16
   );
 
   const homeFieldAdjustment = neutral ? 0 : -2.5;
@@ -807,7 +1057,9 @@ export function buildGenesisLine(
         completeRatings * 4 +
         Math.min(18, historyGamesUsed * 1.1) +
         Math.min(8, (awayPlayerForm.count + homePlayerForm.count) * 1.1) +
-        Math.min(12, directMatchupSource.count * 3),
+        Math.min(12, directMatchupSource.count * 3) +
+        Math.min(6, (awayPostseason.count + homePostseason.count) * 1.2) +
+        Math.min(4, (awayCpuLosses.count + homeCpuLosses.count) * 1.5),
       45,
       88
     )
@@ -841,6 +1093,18 @@ export function buildGenesisLine(
   if (directMatchupSource.count > 0) {
     notes.push(
       `Direct PvP history: ${directMatchupSource.count} matchup${directMatchupSource.count === 1 ? "" : "s"}, weighted average margin ${directMatchupSource.margin >= 0 ? "+" : ""}${directMatchupSource.margin.toFixed(1)} from ${awayTeam}'s perspective.`
+    );
+  }
+
+  if (awayPostseason.count + homePostseason.count > 0) {
+    notes.push(
+      `Postseason résumé contributes ${postseasonAdjustment >= 0 ? "+" : ""}${postseasonAdjustment.toFixed(1)} points from ${awayTeam}'s perspective; championships count more than appearances but less than direct PvP.`
+    );
+  }
+
+  if (awayCpuLosses.count + homeCpuLosses.count > 0) {
+    notes.push(
+      `CPU wins are treated as nearly neutral; CPU losses apply a ${cpuLossAdjustment >= 0 ? "+" : ""}${cpuLossAdjustment.toFixed(1)}-point relative adjustment from ${awayTeam}'s perspective.`
     );
   }
 

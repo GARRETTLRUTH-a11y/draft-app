@@ -114,6 +114,13 @@ type GenesisLinePreview = {
   notes: string[];
 };
 
+type PvpBatchGame = {
+  id: string;
+  awayTeam: string;
+  homeTeam: string;
+  separator: "@" | "vs.";
+};
+
 export default function SeasonRoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -176,6 +183,7 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
+  const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -189,6 +197,7 @@ export default function SeasonRoomPage() {
   const [finalizingGenesisMatchupId, setFinalizingGenesisMatchupId] = useState<string | null>(null);
   const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
   const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
+  const [deletingGenesisMatchupId, setDeletingGenesisMatchupId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");

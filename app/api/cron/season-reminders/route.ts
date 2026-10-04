@@ -178,7 +178,7 @@ export async function GET(request: Request) {
     let nextGenesisPicks = seasonData.genesisPicks;
 
     if (seasonData.genesisPicks?.matchups?.length) {
-      const nextMatchups = [];
+      const nextMatchups: NonNullable<SeasonData["genesisPicks"]>["matchups"] = [];
 
       for (const matchup of seasonData.genesisPicks.matchups) {
         const lockedMs = matchup.lockedAt

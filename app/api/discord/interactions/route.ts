@@ -131,6 +131,7 @@ type DiscordInteraction = {
   data?: {
     name?: string;
     custom_id?: string;
+    options?: { name?: string; type?: number; value?: string | number | boolean }[];
     components?: { components?: { custom_id?: string; value?: string }[] }[];
   };
 };
@@ -247,6 +248,95 @@ async function resolveActiveSeasonForUser(
   }
 
   return { seasonId: seasonRow.id, seasonData, player };
+}
+
+async function resolveGenesisMatchupForUserInThread(
+  admin: SupabaseClient,
+  discordUserId: string,
+  threadId: string
+): Promise<
+  | {
+      seasonId: string;
+      seasonData: SeasonData;
+      player: SeasonPlayer;
+      matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number];
+    }
+  | ResolveError
+> {
+  const { data: link } = await admin
+    .from("discord_links")
+    .select("user_id")
+    .eq("discord_user_id", discordUserId)
+    .maybeSingle();
+
+  if (!link) {
+    return {
+      error: "Your Discord account isn't linked yet. Click the button below to connect it, then try again.",
+      needsLink: true,
+    };
+  }
+
+  const { data: participants } = await admin
+    .from("season_participants")
+    .select("season_id, player_name")
+    .eq("user_id", link.user_id);
+
+  if (!participants?.length) {
+    return { error: "You haven't claimed a team in a Genesis season yet." };
+  }
+
+  const { data: seasons, error: seasonError } = await admin
+    .from("seasons")
+    .select("id, season_data")
+    .in(
+      "id",
+      participants.map((participant) => participant.season_id)
+    );
+
+  if (seasonError || !seasons?.length) {
+    return { error: "Couldn't find your Genesis season." };
+  }
+
+  for (const row of seasons) {
+    const seasonData = row.season_data as SeasonData;
+    const matchup = seasonData.genesisPicks?.matchups.find(
+      (item) => item.threadId === threadId
+    );
+    if (!matchup) continue;
+
+    const participant = participants.find(
+      (item) => item.season_id === row.id
+    );
+    const player = seasonData.players.find(
+      (item) =>
+        item.name.toLowerCase() === participant?.player_name.toLowerCase()
+    );
+    if (!player) continue;
+
+    const playerTeam = normalizeGenesisTeam(player.team);
+    const isMatchupPlayer =
+      playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
+      playerTeam === normalizeGenesisTeam(matchup.homeTeam);
+
+    if (!isMatchupPlayer) {
+      return {
+        error:
+          "Only one of the two players in this matchup can post the game stream and start it.",
+      };
+    }
+
+    return {
+      seasonId: row.id,
+      seasonData,
+      player,
+      matchup,
+    };
+  }
+
+  return {
+    error:
+      "Use /stream inside your Genesis PvP game thread. I couldn't match this channel to one of your active matchups.",
+  };
 }
 
 function respondToResolveError(resolved: ResolveError) {
@@ -418,6 +508,90 @@ export async function POST(request: Request) {
     if ("error" in resolved) return respondToResolveError(resolved);
 
     return markPlayerReady(admin, resolved.seasonId, resolved.seasonData, resolved.player);
+  }
+
+  // Slash command: /stream <YouTube/Twitch URL>
+  // Must be run by one of the two matchup players inside that game's thread.
+  if (interaction.type === 2 && interaction.data?.name === "stream") {
+    if (!discordUserId) {
+      return ephemeral("Couldn't identify your Discord account.");
+    }
+    if (!interaction.channel_id) {
+      return ephemeral("Use /stream inside the Genesis PvP game thread.");
+    }
+
+    const rawLink = interaction.data.options?.find(
+      (option) => option.name === "link"
+    )?.value;
+    const streamUrl =
+      typeof rawLink === "string" ? validGenesisStreamUrl(rawLink) : null;
+
+    if (!streamUrl) {
+      return ephemeral("Use a valid YouTube or Twitch stream link.");
+    }
+
+    const resolved = await resolveGenesisMatchupForUserInThread(
+      admin,
+      discordUserId,
+      interaction.channel_id
+    );
+    if ("error" in resolved) return respondToResolveError(resolved);
+
+    const { seasonId, seasonData, matchup } = resolved;
+    const picksState = seasonData.genesisPicks;
+    if (!picksState) {
+      return ephemeral("That Genesis matchup could not be found.");
+    }
+
+    if (matchup.status === "locked") {
+      return ephemeral("🔒 Genesis picks are already closed for this game.");
+    }
+    if (matchup.status === "settled") {
+      return ephemeral("This Genesis matchup is already final.");
+    }
+
+    const lockedAt = new Date().toISOString();
+    const nextMatchups = picksState.matchups.map((item) =>
+      item.id === matchup.id
+        ? {
+            ...item,
+            status: "locked" as const,
+            lockedAt,
+          }
+        : item
+    );
+
+    const nextSeasonData: SeasonData = {
+      ...seasonData,
+      genesisPicks: {
+        ...picksState,
+        matchups: nextMatchups,
+      },
+    };
+
+    const { error: updateError } = await admin
+      .from("seasons")
+      .update({
+        season_data: nextSeasonData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", seasonId);
+
+    if (updateError) {
+      return ephemeral("Couldn't lock Genesis picks. Try again.");
+    }
+
+    const pickCount = Object.keys(matchup.picks || {}).length;
+    await postGenesisStreamStartAnnouncement({
+      threadId: matchup.threadId,
+      discordUserId,
+      streamUrl,
+      pickCount,
+    });
+
+    return ephemeral(
+      `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.`
+    );
   }
 
   // Button click

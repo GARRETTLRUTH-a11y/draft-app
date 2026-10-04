@@ -2484,12 +2484,11 @@ export default function SeasonRoomPage() {
               </span>
             </div>
 
-            <h2 className="text-xl font-black">Create Weekly Matchup Thread</h2>
+            <h2 className="text-xl font-black">Create Weekly Matchup Threads</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Pick two teams in the league. The current stage and season year fill in automatically,
-              but you can edit the stage for a bowl, playoff game, or other custom matchup. Threads
-              are created under the configured PvP parent channel and every @genesis member is added
-              without pinging the role.
+              Add one or more PvP games for the week. Stage/year and the optional /stream instructions
+              apply to the whole batch. RTA generates a separate Genesis line and Discord thread for
+              every matchup.
             </p>
 
             <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
@@ -2537,6 +2536,137 @@ export default function SeasonRoomPage() {
                 </select>
               </label>
             </div>
+
+            {additionalPvpGames.map((game, index) => (
+              <div
+                key={game.id}
+                className="relative mt-3 rounded-2xl border border-white/10 bg-slate-950/50 p-4 pr-12"
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAdditionalPvpGames((current) =>
+                      current.filter((row) => row.id !== game.id)
+                    )
+                  }
+                  title="Remove this matchup from the batch"
+                  className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm font-black text-slate-400 transition hover:border-red-300/40 hover:bg-red-300/10 hover:text-red-200"
+                >
+                  ×
+                </button>
+
+                <p className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                  Game {index + 2}
+                </p>
+
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    X Team
+                    <select
+                      value={game.awayTeam}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? { ...row, awayTeam: event.target.value }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="">Select X team...</option>
+                      {leagueTeamNames.map((team) => (
+                        <option
+                          key={team}
+                          value={team}
+                          disabled={team === game.homeTeam}
+                        >
+                          {team}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Site
+                    <select
+                      value={game.separator}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? {
+                                  ...row,
+                                  separator: event.target.value as "@" | "vs.",
+                                }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-center text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="@">@</option>
+                      <option value="vs.">vs.</option>
+                    </select>
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Y Team
+                    <select
+                      value={game.homeTeam}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? { ...row, homeTeam: event.target.value }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="">Select Y team...</option>
+                      {leagueTeamNames.map((team) => (
+                        <option
+                          key={team}
+                          value={team}
+                          disabled={team === game.awayTeam}
+                        >
+                          {team}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <p className="mt-3 text-xs text-slate-500">
+                  {pvpThreadTitleFor(
+                    game.awayTeam,
+                    game.separator,
+                    game.homeTeam
+                  )}
+                </p>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() =>
+                setAdditionalPvpGames((current) => [
+                  ...current,
+                  {
+                    id: crypto.randomUUID(),
+                    awayTeam: "",
+                    homeTeam: "",
+                    separator: "@",
+                  },
+                ])
+              }
+              className="mt-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200 transition hover:bg-cyan-400/20"
+            >
+              + Add Another Game
+            </button>
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
               <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-semibold text-slate-400">

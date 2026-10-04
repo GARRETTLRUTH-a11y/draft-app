@@ -385,7 +385,7 @@ export async function syncGenesisHistory(
   seasonData: SeasonData
 ): Promise<GenesisHistory> {
   const maxMessagesPerSource = clamp(
-    Number(process.env.GENESIS_HISTORY_MAX_MESSAGES || 600),
+    Number(process.env.GENESIS_HISTORY_MAX_MESSAGES || 200),
     100,
     2000
   );
@@ -406,15 +406,16 @@ export async function syncGenesisHistory(
 
   for (const source of fetched) {
     const chunks: DiscordMessage[][] = [];
-    for (let i = 0; i < source.messages.length; i += 40) {
-      chunks.push(source.messages.slice(i, i + 40));
+    for (let i = 0; i < source.messages.length; i += 60) {
+      chunks.push(source.messages.slice(i, i + 60));
     }
 
-    // Keep a little concurrency for speed without hammering the API.
-    for (let i = 0; i < chunks.length; i += 4) {
+    // Parse a few chunks in parallel so a first-time sync stays within
+    // serverless request limits while avoiding a large burst of model calls.
+    for (let i = 0; i < chunks.length; i += 3) {
       const parsedGroups = await Promise.all(
         chunks
-          .slice(i, i + 4)
+          .slice(i, i + 3)
           .map((chunk) =>
             parseMessageChunk(chunk, source.sourceChannelId, seasonData)
           )

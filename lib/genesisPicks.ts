@@ -353,7 +353,9 @@ type DiscordChannel = {
   permission_overwrites?: unknown[];
 };
 
-async function findOrCreateLeaderboardChannel(existingChannelId?: string) {
+async function findOrCreateLeaderboardChannel(
+  existingChannelId?: string
+): Promise<{ channel?: DiscordChannel; warning?: string }> {
   if (existingChannelId) {
     const existingResponse = await discordApi(`/channels/${existingChannelId}`);
     if (existingResponse.ok) {

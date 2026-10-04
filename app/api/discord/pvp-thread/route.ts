@@ -2,10 +2,15 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
+import { buildGenesisLine, genesisStarterMessage } from "@/lib/genesisLines";
+import type { SeasonData } from "@/lib/season";
 
 type PvpThreadPayload = {
   seasonId?: string;
   threadName?: string;
+  awayTeam?: string;
+  homeTeam?: string;
+  neutral?: boolean;
 };
 
 export async function POST(request: Request) {
@@ -48,7 +53,7 @@ export async function POST(request: Request) {
   const admin = createClient(supabaseUrl, serviceRoleKey);
   const { data: season, error: seasonError } = await admin
     .from("seasons")
-    .select("user_id")
+    .select("user_id, season_data")
     .eq("id", seasonId)
     .maybeSingle();
 
@@ -61,7 +66,23 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await createGenesisPvpThread(threadName);
+    const awayTeam = payload.awayTeam?.trim();
+    const homeTeam = payload.homeTeam?.trim();
+    const line =
+      awayTeam && homeTeam
+        ? buildGenesisLine(
+            season.season_data as SeasonData,
+            awayTeam,
+            homeTeam,
+            Boolean(payload.neutral)
+          )
+        : undefined;
+
+    const result = await createGenesisPvpThread(
+      threadName,
+      line ? genesisStarterMessage(threadName, line) : undefined
+    );
+
     return NextResponse.json({
       ok: true,
       threadId: result.thread.id,
@@ -71,6 +92,7 @@ export async function POST(request: Request) {
       failed: result.failed,
       failedMembers: result.failedMembers,
       reportedRoleCount: result.reportedRoleCount,
+      line,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

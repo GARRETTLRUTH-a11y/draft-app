@@ -556,7 +556,7 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   lines.push(
     "",
     `Settled: **${settledCount}** · Voided: **${voidedCount}** · Locked/in progress: **${lockedCount}** · Open picks: **${openCount}**`,
-    "Pushes do not count toward accuracy."
+    "Pushes do not count toward accuracy. Voided matchups do not count at all."
   );
 
   return lines.join("\n").slice(0, 2000);

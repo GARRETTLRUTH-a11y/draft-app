@@ -176,6 +176,7 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
+  const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
   const [genesisLine, setGenesisLine] = useState<GenesisLinePreview | null>(null);
@@ -941,6 +942,7 @@ export default function SeasonRoomPage() {
           awayTeam: pvpAwayTeam,
           homeTeam: pvpHomeTeam,
           neutral: pvpSeparator === "vs.",
+          postStreamInstructions: postPvpStreamInstructions,
         }),
       });
 
@@ -952,6 +954,8 @@ export default function SeasonRoomPage() {
         line?: GenesisLinePreview;
         leaderboardChannelId?: string;
         leaderboardWarning?: string;
+        streamInstructionsPosted?: boolean;
+        streamInstructionsWarning?: string;
       };
 
       if (!response.ok) {
@@ -978,6 +982,12 @@ export default function SeasonRoomPage() {
       }
       if (result.leaderboardWarning) {
         status += ` Leaderboard warning: ${result.leaderboardWarning}`;
+      }
+      if (postPvpStreamInstructions && result.streamInstructionsPosted) {
+        status += " /stream instructions posted in the game thread.";
+      }
+      if (result.streamInstructionsWarning) {
+        status += ` Stream-instructions warning: ${result.streamInstructionsWarning}`;
       }
 
       setPvpCreateStatus(status);
@@ -2474,6 +2484,25 @@ export default function SeasonRoomPage() {
             </div>
 
             <div className="mt-4 flex flex-wrap items-center gap-3">
+              <label className="flex cursor-pointer items-start gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={postPvpStreamInstructions}
+                  onChange={(event) =>
+                    setPostPvpStreamInstructions(event.target.checked)
+                  }
+                  className="mt-0.5 h-4 w-4 accent-cyan-400"
+                />
+                <span>
+                  <span className="font-bold text-white">
+                    Post /stream instructions in the game thread
+                  </span>
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    RTA will remind the matchup players to use /stream with their YouTube/Twitch link when the game starts, which closes Genesis voting at the locked line.
+                  </span>
+                </span>
+              </label>
+
               <button
                 onClick={createPvpThread}
                 disabled={

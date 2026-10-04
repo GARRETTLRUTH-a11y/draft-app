@@ -20,6 +20,28 @@ async function discordApi(path: string, init: RequestInit = {}) {
   });
 }
 
+export async function postGenesisPvpThreadMessage(
+  threadId: string,
+  content: string
+) {
+  const response = await discordApi(`/channels/${threadId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      content,
+      allowed_mentions: { parse: [] as string[] },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(
+      `Could not post PvP thread message: ${body || response.statusText}`
+    );
+  }
+
+  return true;
+}
+
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
   taggedUserIds: string[];

@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
+import {
+  createGenesisPvpThread,
+  postGenesisPvpThreadMessage,
+} from "@/lib/discordPvpThreads";
 import {
   buildGenesisLine,
   genesisStarterMessage,
@@ -22,6 +25,7 @@ type PvpThreadPayload = {
   awayTeam?: string;
   homeTeam?: string;
   neutral?: boolean;
+  postStreamInstructions?: boolean;
 };
 
 function normalizeTeam(value: string) {
@@ -162,6 +166,34 @@ export async function POST(request: Request) {
       pickComponents
     );
 
+    let streamInstructionsWarning: string | undefined;
+    let streamInstructionsPosted = false;
+
+    if (payload.postStreamInstructions) {
+      try {
+        await postGenesisPvpThreadMessage(
+          result.thread.id,
+          [
+            "📺 **STREAM / GAME START INSTRUCTIONS**",
+            "When the game is about to start, one of the two matchup players should use **/stream** in this thread and paste the YouTube or Twitch link.",
+            "",
+            "Using **/stream** will:",
+            "• post the stream publicly in this game thread",
+            "• mark the game as started",
+            "• immediately close Genesis voting at the locked line",
+            "",
+            "After the game, RTA will prompt for the final score if it has not already been submitted.",
+          ].join("\n")
+        );
+        streamInstructionsPosted = true;
+      } catch (error) {
+        streamInstructionsWarning =
+          error instanceof Error
+            ? error.message
+            : "Could not post the /stream instructions.";
+      }
+    }
+
     if (line && awayTeam && homeTeam) {
       const currentPicks = nextSeasonData.genesisPicks || { matchups: [] };
       const matchup = createGenesisPickMatchup({
@@ -207,6 +239,8 @@ export async function POST(request: Request) {
       line,
       leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
       leaderboardWarning: leaderboard.warning,
+      streamInstructionsPosted,
+      streamInstructionsWarning,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

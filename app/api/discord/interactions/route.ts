@@ -308,7 +308,7 @@ async function postGenesisPickAnnouncement(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        content: `🎯 <@${discordUserId}> locked in **${team} ${lineText}**`,
+        content: `🎯 <@${discordUserId}> picked **${team} ${lineText}**`,
         allowed_mentions: { users: [discordUserId], parse: [] },
       }),
     }

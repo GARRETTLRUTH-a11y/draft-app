@@ -513,9 +513,9 @@ function historicalWeight(
       ? Math.max(0, currentSeasonYear - game.seasonYear)
       : 2;
 
-  const seasonWeight = Math.pow(0.72, age);
+  const seasonWeight = Math.pow(0.82, age);
   const gameTypeWeight =
-    game.gameType === "pvp" ? 1 : game.gameType === "cpu" ? 0.35 : 0.5;
+    game.gameType === "pvp" ? 1 : game.gameType === "cpu" ? 0.15 : 0.25;
 
   return seasonWeight * gameTypeWeight;
 }
@@ -585,6 +585,106 @@ function weightedPlayerPvpForm(
   };
 }
 
+function weightedPvpTeamHeadToHead(
+  games: GenesisHistoricalGame[],
+  awayTeam: string,
+  homeTeam: string,
+  currentSeasonYear: number
+) {
+  const away = normalize(awayTeam);
+  const home = normalize(homeTeam);
+  let numerator = 0;
+  let denominator = 0;
+  let count = 0;
+
+  for (const game of games) {
+    if (game.gameType !== "pvp") continue;
+
+    const a = normalize(game.teamA);
+    const b = normalize(game.teamB);
+    const isMatch =
+      (a === away && b === home) ||
+      (a === home && b === away);
+    if (!isMatch) continue;
+
+    const awayMargin =
+      a === away ? game.scoreA - game.scoreB : game.scoreB - game.scoreA;
+
+    const age =
+      typeof game.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - game.seasonYear)
+        : 2;
+    const weight = Math.pow(0.84, age);
+
+    numerator += clamp(awayMargin, -35, 35) * weight;
+    denominator += weight;
+    count++;
+  }
+
+  return {
+    margin: denominator ? numerator / denominator : 0,
+    count,
+  };
+}
+
+function weightedCoachHeadToHead(
+  games: GenesisHistoricalGame[],
+  awayPlayerName: string | undefined,
+  homePlayerName: string | undefined,
+  currentSeasonYear: number
+) {
+  if (!awayPlayerName || !homePlayerName) {
+    return { margin: 0, count: 0 };
+  }
+
+  const away = normalize(awayPlayerName);
+  const home = normalize(homePlayerName);
+  let numerator = 0;
+  let denominator = 0;
+  let count = 0;
+
+  for (const game of games) {
+    if (game.gameType !== "pvp" || !game.playerA || !game.playerB) continue;
+
+    const a = normalize(game.playerA);
+    const b = normalize(game.playerB);
+    const isMatch =
+      (a === away && b === home) ||
+      (a === home && b === away);
+    if (!isMatch) continue;
+
+    const awayMargin =
+      a === away ? game.scoreA - game.scoreB : game.scoreB - game.scoreA;
+
+    const age =
+      typeof game.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - game.seasonYear)
+        : 2;
+    const weight = Math.pow(0.86, age);
+
+    numerator += clamp(awayMargin, -35, 35) * weight;
+    denominator += weight;
+    count++;
+  }
+
+  return {
+    margin: denominator ? numerator / denominator : 0,
+    count,
+  };
+}
+
+function directPvpAdjustment(margin: number, count: number) {
+  if (count <= 0) return 0;
+
+  const factor =
+    count >= 4 ? 0.6 :
+    count === 3 ? 0.55 :
+    count === 2 ? 0.45 :
+    0.35;
+
+  return clamp(margin * factor, -12, 12);
+}
+
 export function buildGenesisLine(
   seasonData: SeasonData,
   awayTeam: string,
@@ -634,30 +734,39 @@ export function buildGenesisLine(
   );
 
   const teamHistoryAdjustment =
-    (awayTeamForm.margin - homeTeamForm.margin) * 0.08;
+    (awayTeamForm.margin - homeTeamForm.margin) * 0.04;
   const playerHistoryAdjustment =
-    (awayPlayerForm.margin - homePlayerForm.margin) * 0.12;
+    (awayPlayerForm.margin - homePlayerForm.margin) * 0.1;
 
-  const headToHead = games
-    .map((game) => {
-      const awayMargin = gameMarginForTeam(game, awayTeam);
-      const homeMargin = gameMarginForTeam(game, homeTeam);
-      if (awayMargin == null || homeMargin == null) return null;
-      return awayMargin;
-    })
-    .filter((value): value is number => value != null);
+  const teamPvpHeadToHead = weightedPvpTeamHeadToHead(
+    games,
+    awayTeam,
+    homeTeam,
+    seasonData.seasonYear
+  );
+  const coachHeadToHead = weightedCoachHeadToHead(
+    games,
+    awayPlayer.name,
+    homePlayer.name,
+    seasonData.seasonYear
+  );
 
-  const headToHeadAverage = headToHead.length
-    ? headToHead.reduce((sum, margin) => sum + clamp(margin, -30, 30), 0) /
-      headToHead.length
-    : 0;
+  // Direct human-vs-human history is the strongest historical signal.
+  // Prefer coach-vs-coach history (even if the users changed teams); fall
+  // back to team-vs-team PvP history when player identities were unavailable.
+  const directMatchupSource =
+    coachHeadToHead.count > 0 ? coachHeadToHead : teamPvpHeadToHead;
+  const directMatchupAdjustment = directPvpAdjustment(
+    directMatchupSource.margin,
+    directMatchupSource.count
+  );
 
   const historyAdjustment = clamp(
     teamHistoryAdjustment +
       playerHistoryAdjustment +
-      headToHeadAverage * 0.06,
-    -6,
-    6
+      directMatchupAdjustment,
+    -14,
+    14
   );
 
   const homeFieldAdjustment = neutral ? 0 : -2.5;
@@ -696,8 +805,9 @@ export function buildGenesisLine(
     clamp(
       45 +
         completeRatings * 4 +
-        Math.min(22, historyGamesUsed * 1.5) +
-        Math.min(8, (awayPlayerForm.count + homePlayerForm.count) * 1.5),
+        Math.min(18, historyGamesUsed * 1.1) +
+        Math.min(8, (awayPlayerForm.count + homePlayerForm.count) * 1.1) +
+        Math.min(12, directMatchupSource.count * 3),
       45,
       88
     )
@@ -722,10 +832,16 @@ export function buildGenesisLine(
 
   if (historyGamesUsed > 0) {
     notes.push(
-      `Uses ${historyGamesUsed} relevant historical league game${historyGamesUsed === 1 ? "" : "s"}, with PvP and recent seasons weighted more heavily.`
+      `Uses ${historyGamesUsed} relevant historical league game${historyGamesUsed === 1 ? "" : "s"}; PvP results are weighted far more heavily than CPU results.`
     );
   } else {
     notes.push("No relevant parsed league history is available yet.");
+  }
+
+  if (directMatchupSource.count > 0) {
+    notes.push(
+      `Direct PvP history: ${directMatchupSource.count} matchup${directMatchupSource.count === 1 ? "" : "s"}, weighted average margin ${directMatchupSource.margin >= 0 ? "+" : ""}${directMatchupSource.margin.toFixed(1)} from ${awayTeam}'s perspective.`
+    );
   }
 
   notes.push(neutral ? "Neutral site: no home-field adjustment." : `${homeTeam} receives a 2.5-point home-field adjustment.`);

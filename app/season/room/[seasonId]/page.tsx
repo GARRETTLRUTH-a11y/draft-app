@@ -688,15 +688,28 @@ export default function SeasonRoomPage() {
         body: JSON.stringify({ seasonId: season.id }),
       });
 
-      const result = (await response.json()) as {
+      const responseText = await response.text();
+      let result: {
         error?: string;
         games?: number;
         messagesScanned?: number;
         lastSyncedAt?: string;
-      };
+      } = {};
+
+      if (responseText) {
+        try {
+          result = JSON.parse(responseText);
+        } catch {
+          result = {
+            error: `Server returned HTTP ${response.status}: ${responseText.slice(0, 500)}`,
+          };
+        }
+      }
 
       if (!response.ok) {
-        setGenesisHistoryStatus(result.error || "Could not sync Genesis history.");
+        setGenesisHistoryStatus(
+          result.error || `Could not sync Genesis history (HTTP ${response.status}).`
+        );
         return;
       }
 
@@ -704,8 +717,12 @@ export default function SeasonRoomPage() {
       setGenesisHistoryStatus(
         `✅ History synced: ${result.games ?? 0} games parsed from ${result.messagesScanned ?? 0} Discord messages.`
       );
-    } catch {
-      setGenesisHistoryStatus("Could not sync Genesis history. Try again.");
+    } catch (error) {
+      setGenesisHistoryStatus(
+        error instanceof Error
+          ? `Could not sync Genesis history: ${error.message}`
+          : "Could not sync Genesis history. Try again."
+      );
     } finally {
       setIsSyncingGenesisHistory(false);
     }

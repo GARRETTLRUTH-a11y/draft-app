@@ -55,9 +55,13 @@ export type GenesisPostseasonAchievement = {
 export type GenesisHistory = {
   games: GenesisHistoricalGame[];
   postseasonAchievements?: GenesisPostseasonAchievement[];
+  // Per Discord text/thread channel high-water marks. Automatic line
+  // generation uses these to fetch only messages newer than the last sync.
+  sourceCursors?: Record<string, string>;
   lastSyncedAt: string;
   messagesScanned: number;
   sourceCounts: Record<string, number>;
+  lastSyncMode?: "full" | "incremental";
 };
 
 export type ExtensionStatus = "pending" | "granted" | "denied";

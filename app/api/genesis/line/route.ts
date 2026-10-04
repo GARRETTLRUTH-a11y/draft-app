@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import { buildGenesisLine } from "@/lib/genesisLines";
+import { buildGenesisLine, syncGenesisHistory } from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
+
+export const maxDuration = 300;
 
 type Payload = {
   seasonId?: string;
@@ -67,13 +69,43 @@ export async function POST(request: Request) {
   }
 
   try {
+    const seasonData = season.season_data as SeasonData;
+    const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
+    const nextSeasonData: SeasonData = {
+      ...seasonData,
+      genesisHistory: history,
+    };
+
+    const { error: updateError } = await admin
+      .from("seasons")
+      .update({
+        season_data: nextSeasonData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", seasonId);
+
+    if (updateError) {
+      return NextResponse.json({ error: updateError.message }, { status: 500 });
+    }
+
     const line = buildGenesisLine(
-      season.season_data as SeasonData,
+      nextSeasonData,
       awayTeam,
       homeTeam,
       Boolean(payload.neutral)
     );
-    return NextResponse.json({ ok: true, line });
+
+    return NextResponse.json({
+      ok: true,
+      line,
+      sync: {
+        messagesScanned: history.messagesScanned,
+        mode: history.lastSyncMode,
+        totalGames: history.games.length,
+        achievements: history.postseasonAchievements?.length ?? 0,
+        lastSyncedAt: history.lastSyncedAt,
+      },
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown Genesis line error.";

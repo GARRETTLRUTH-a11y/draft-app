@@ -668,7 +668,7 @@ export default function SeasonRoomPage() {
     if (!season) return;
 
     setIsSyncingGenesisHistory(true);
-    setGenesisHistoryStatus("Reading Discord history and parsing completed games...");
+    setGenesisHistoryStatus("Rebuilding Discord history from the configured sources...");
     setGenesisLine(null);
 
     try {
@@ -694,6 +694,8 @@ export default function SeasonRoomPage() {
         games?: number;
         messagesScanned?: number;
         lastSyncedAt?: string;
+        achievements?: number;
+        syncMode?: "full" | "incremental";
       } = {};
 
       if (responseText) {
@@ -715,7 +717,7 @@ export default function SeasonRoomPage() {
 
       await loadRoomSeason(season.id);
       setGenesisHistoryStatus(
-        `✅ History synced: ${result.games ?? 0} games parsed from ${result.messagesScanned ?? 0} Discord messages.`
+        `✅ History rebuilt: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages.`
       );
     } catch (error) {
       setGenesisHistoryStatus(
@@ -759,6 +761,13 @@ export default function SeasonRoomPage() {
       const result = (await response.json()) as {
         error?: string;
         line?: GenesisLinePreview;
+        sync?: {
+          messagesScanned: number;
+          mode?: "full" | "incremental";
+          totalGames: number;
+          achievements: number;
+          lastSyncedAt: string;
+        };
       };
 
       if (!response.ok || !result.line) {
@@ -767,6 +776,23 @@ export default function SeasonRoomPage() {
       }
 
       setGenesisLine(result.line);
+
+      if (result.sync) {
+        const firstCursorSetup =
+          result.sync.mode === "full" &&
+          !seasonData?.genesisHistory?.sourceCursors;
+
+        setGenesisHistoryStatus(
+          firstCursorSetup
+            ? `✅ Automatic history setup complete: scanned ${result.sync.messagesScanned} messages and established incremental sync.`
+            : result.sync.messagesScanned > 0
+              ? `✅ Auto-synced ${result.sync.messagesScanned} new Discord message${result.sync.messagesScanned === 1 ? "" : "s"} before generating the line.`
+              : "✅ Discord history already current — no new messages to parse."
+        );
+
+        await loadRoomSeason(season.id);
+      }
+
       return result.line;
     } catch {
       setPvpCreateStatus("Could not generate Genesis line. Try again.");
@@ -828,6 +854,13 @@ export default function SeasonRoomPage() {
         genesisRoleTagged?: boolean;
         taggedPlayers?: number;
         line?: GenesisLinePreview;
+        sync?: {
+          messagesScanned: number;
+          mode?: "full" | "incremental";
+          totalGames: number;
+          achievements: number;
+          lastSyncedAt: string;
+        };
       };
 
       if (!response.ok) {
@@ -847,6 +880,10 @@ export default function SeasonRoomPage() {
       if (result.line) {
         setGenesisLine(result.line);
         status += ` Genesis Line: ${result.line.displayLine}.`;
+      }
+
+      if (result.sync?.messagesScanned) {
+        status += ` Auto-synced ${result.sync.messagesScanned} new Discord message${result.sync.messagesScanned === 1 ? "" : "s"} first.`;
       }
 
       setPvpCreateStatus(status);
@@ -2043,10 +2080,10 @@ export default function SeasonRoomPage() {
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
                     {seasonData.genesisHistory
-                      ? `${seasonData.genesisHistory.games.length} historical games stored · last synced ${new Date(
+                      ? `${seasonData.genesisHistory.games.length} historical games stored · auto-sync enabled · last checked ${new Date(
                           seasonData.genesisHistory.lastSyncedAt
                         ).toLocaleString()}`
-                      : "No Discord history synced yet."}
+                      : "No Discord history synced yet. The first generated line will initialize automatic sync."}
                   </p>
                 </div>
 
@@ -2056,7 +2093,7 @@ export default function SeasonRoomPage() {
                     disabled={isSyncingGenesisHistory}
                     className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-400/10 px-3 py-2 text-xs font-bold text-fuchsia-200 transition hover:bg-fuchsia-400/20 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {isSyncingGenesisHistory ? "Syncing History..." : "Sync Discord History"}
+                    {isSyncingGenesisHistory ? "Rebuilding History..." : "Rebuild Discord History"}
                   </button>
                   <button
                     onClick={generateGenesisLine}

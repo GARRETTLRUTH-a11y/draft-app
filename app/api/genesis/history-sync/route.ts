@@ -62,7 +62,7 @@ export async function POST(request: Request) {
 
   try {
     const seasonData = season.season_data as SeasonData;
-    const history = await syncGenesisHistory(seasonData);
+    const history = await syncGenesisHistory(seasonData, { mode: "full" });
     const nextSeasonData: SeasonData = { ...seasonData, genesisHistory: history };
 
     const { error: updateError } = await admin
@@ -83,6 +83,8 @@ export async function POST(request: Request) {
       messagesScanned: history.messagesScanned,
       lastSyncedAt: history.lastSyncedAt,
       sourceCounts: history.sourceCounts,
+      achievements: history.postseasonAchievements?.length ?? 0,
+      syncMode: history.lastSyncMode,
     });
   } catch (error) {
     const message =

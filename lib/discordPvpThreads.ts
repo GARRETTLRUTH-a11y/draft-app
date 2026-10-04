@@ -42,6 +42,19 @@ export async function postGenesisPvpThreadMessage(
   return true;
 }
 
+export async function deleteGenesisPvpThread(threadId: string) {
+  const response = await discordApi(`/channels/${threadId}`, {
+    method: "DELETE",
+  });
+
+  if (response.ok || response.status === 404) return true;
+
+  const body = await response.text();
+  throw new Error(
+    `Could not delete Discord PvP thread: ${body || response.statusText}`
+  );
+}
+
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
   taggedUserIds: string[];

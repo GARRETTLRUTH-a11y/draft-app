@@ -114,6 +114,13 @@ type GenesisLinePreview = {
   notes: string[];
 };
 
+type PvpBatchGame = {
+  id: string;
+  awayTeam: string;
+  homeTeam: string;
+  separator: "@" | "vs.";
+};
+
 export default function SeasonRoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -176,6 +183,7 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
+  const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -189,6 +197,7 @@ export default function SeasonRoomPage() {
   const [finalizingGenesisMatchupId, setFinalizingGenesisMatchupId] = useState<string | null>(null);
   const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
   const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
+  const [deletingGenesisMatchupId, setDeletingGenesisMatchupId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
@@ -347,21 +356,59 @@ export default function SeasonRoomPage() {
     setGenesisLine(null);
   }, [pvpAwayTeam, pvpHomeTeam, pvpSeparator]);
 
-  const pvpThreadTitle = useMemo(() => {
-    const away = pvpAwayTeam || "X Team";
-    const home = pvpHomeTeam || "Y Team";
+  function pvpThreadTitleFor(
+    awayTeam: string,
+    separator: "@" | "vs.",
+    homeTeam: string
+  ) {
+    const away = awayTeam || "X Team";
+    const home = homeTeam || "Y Team";
     const stage = pvpStageLabel.trim() || formatWeekLabel(currentWeek);
-    const year = pvpYear.trim() || String(seasonData?.seasonYear ?? new Date().getFullYear());
-    return `${away} ${pvpSeparator} ${home} (${stage}, ${year})`;
-  }, [
-    pvpAwayTeam,
-    pvpHomeTeam,
-    pvpSeparator,
-    pvpStageLabel,
-    pvpYear,
-    currentWeek,
-    seasonData?.seasonYear,
-  ]);
+    const year =
+      pvpYear.trim() ||
+      String(seasonData?.seasonYear ?? new Date().getFullYear());
+    return `${away} ${separator} ${home} (${stage}, ${year})`;
+  }
+
+  const pvpThreadTitle = useMemo(
+    () => pvpThreadTitleFor(pvpAwayTeam, pvpSeparator, pvpHomeTeam),
+    [
+      pvpAwayTeam,
+      pvpHomeTeam,
+      pvpSeparator,
+      pvpStageLabel,
+      pvpYear,
+      currentWeek,
+      seasonData?.seasonYear,
+    ]
+  );
+
+  const pvpGamesToCreate = useMemo(
+    () => [
+      {
+        id: "primary",
+        awayTeam: pvpAwayTeam,
+        homeTeam: pvpHomeTeam,
+        separator: pvpSeparator,
+      } satisfies PvpBatchGame,
+      ...additionalPvpGames,
+    ],
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
+  );
+
+  const allPvpGamesReady =
+    pvpGamesToCreate.length > 0 &&
+    pvpGamesToCreate.every(
+      (game) =>
+        Boolean(game.awayTeam) &&
+        Boolean(game.homeTeam) &&
+        game.awayTeam !== game.homeTeam &&
+        pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
+        ).length <= 100
+    );
 
   // Host-toggleable sort for the Manage Players list specifically -- other
   // views (Teams board, claim grid) keep the original draft order.
@@ -860,12 +907,7 @@ export default function SeasonRoomPage() {
   }
 
   async function createPvpThread() {
-    if (!season || !pvpAwayTeam || !pvpHomeTeam) return;
-
-    if (pvpAwayTeam === pvpHomeTeam) {
-      setPvpCreateStatus("Choose two different teams.");
-      return;
-    }
+    if (!season) return;
 
     const stage = pvpStageLabel.trim();
     const year = pvpYear.trim();
@@ -874,13 +916,34 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    if (pvpThreadTitle.length > 100) {
-      setPvpCreateStatus("Discord thread names must be 100 characters or fewer.");
+    const games = pvpGamesToCreate;
+    const invalidGame = games.find(
+      (game) =>
+        !game.awayTeam ||
+        !game.homeTeam ||
+        game.awayTeam === game.homeTeam ||
+        pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
+        ).length > 100
+    );
+
+    if (invalidGame) {
+      setPvpCreateStatus(
+        "Complete every matchup with two different teams before creating the weekly threads."
+      );
       return;
     }
 
     setIsCreatingPvpThread(true);
-    setPvpCreateStatus("Refreshing Genesis history and locking the latest line...");
+    setPvpCreateStatus(
+      `Preparing ${games.length} PvP matchup${games.length === 1 ? "" : "s"}...`
+    );
+
+    const failures: string[] = [];
+    const warnings: string[] = [];
+    let createdCount = 0;
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -890,47 +953,178 @@ export default function SeasonRoomPage() {
         return;
       }
 
-      const lineResponse = await fetch("/api/genesis/line", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          seasonId: season.id,
-          awayTeam: pvpAwayTeam,
-          homeTeam: pvpHomeTeam,
-          neutral: pvpSeparator === "vs.",
-        }),
-      });
-
-      const lineResult = (await lineResponse.json()) as {
-        error?: string;
-        line?: GenesisLinePreview;
-        sync?: {
-          messagesScanned: number;
-          mode?: "full" | "incremental";
-          totalGames: number;
-          achievements: number;
-          lastSyncedAt: string;
-          settledPicks?: number;
-        };
-        leaderboardWarning?: string;
-      };
-
-      if (!lineResponse.ok || !lineResult.line) {
-        setPvpCreateStatus(
-          lineResult.error || "Could not refresh Genesis history before creating the thread."
+      for (let index = 0; index < games.length; index++) {
+        const game = games[index];
+        const threadName = pvpThreadTitleFor(
+          game.awayTeam,
+          game.separator,
+          game.homeTeam
         );
+
+        setPvpCreateStatus(
+          `Creating ${index + 1} of ${games.length}: ${game.awayTeam} ${game.separator} ${game.homeTeam}...`
+        );
+
+        try {
+          const lineResponse = await fetch("/api/genesis/line", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              seasonId: season.id,
+              awayTeam: game.awayTeam,
+              homeTeam: game.homeTeam,
+              neutral: game.separator === "vs.",
+            }),
+          });
+
+          const lineResult = (await lineResponse.json()) as {
+            error?: string;
+            line?: GenesisLinePreview;
+            sync?: {
+              messagesScanned: number;
+              mode?: "full" | "incremental";
+              totalGames: number;
+              achievements: number;
+              lastSyncedAt: string;
+              settledPicks?: number;
+            };
+            leaderboardWarning?: string;
+          };
+
+          if (!lineResponse.ok || !lineResult.line) {
+            throw new Error(
+              lineResult.error ||
+                "Could not refresh Genesis history before creating the thread."
+            );
+          }
+
+          if (index === 0) setGenesisLine(lineResult.line);
+
+          const response = await fetch("/api/discord/pvp-thread", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              seasonId: season.id,
+              threadName,
+              awayTeam: game.awayTeam,
+              homeTeam: game.homeTeam,
+              neutral: game.separator === "vs.",
+              postStreamInstructions: postPvpStreamInstructions,
+            }),
+          });
+
+          const result = (await response.json()) as {
+            error?: string;
+            threadName?: string;
+            genesisRoleTagged?: boolean;
+            taggedPlayers?: number;
+            line?: GenesisLinePreview;
+            leaderboardChannelId?: string;
+            leaderboardWarning?: string;
+            streamInstructionsPosted?: boolean;
+            streamInstructionsWarning?: string;
+          };
+
+          if (!response.ok) {
+            throw new Error(result.error || "Could not create the PvP thread.");
+          }
+
+          createdCount++;
+
+          if (result.leaderboardWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.leaderboardWarning}`
+            );
+          }
+          if (result.streamInstructionsWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.streamInstructionsWarning}`
+            );
+          }
+
+          // Remove successful rows immediately so a partial batch failure can
+          // be retried without accidentally recreating threads that succeeded.
+          if (game.id === "primary") {
+            setPvpAwayTeam("");
+            setPvpHomeTeam("");
+            setPvpSeparator("@");
+          } else {
+            setAdditionalPvpGames((current) =>
+              current.filter((row) => row.id !== game.id)
+            );
+          }
+        } catch (error) {
+          failures.push(
+            `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`
+          );
+        }
+      }
+
+      await loadRoomSeason(season.id);
+
+      if (createdCount > 0) {
+        let status = `✅ Created ${createdCount} of ${games.length} PvP thread${
+          games.length === 1 ? "" : "s"
+        }.`;
+        if (postPvpStreamInstructions) {
+          status += " /stream instructions were requested for each created game.";
+        }
+        if (failures.length) {
+          status += ` Failed: ${failures.join(" | ")}`;
+        }
+        if (warnings.length) {
+          status += ` Warnings: ${warnings.join(" | ")}`;
+        }
+        setPvpCreateStatus(status);
+      } else {
+        setPvpCreateStatus(
+          failures.length
+            ? `Could not create the weekly PvP threads: ${failures.join(" | ")}`
+            : "Could not create the weekly PvP threads."
+        );
+      }
+    } catch (error) {
+      setPvpCreateStatus(
+        error instanceof Error
+          ? `Could not create the PvP threads: ${error.message}`
+          : "Could not create the PvP threads. Try again."
+      );
+    } finally {
+      setIsCreatingPvpThread(false);
+    }
+  }
+
+  async function deleteGenesisMatchup(
+    matchupId: string,
+    matchupLabel: string
+  ) {
+    if (!season) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to delete ${matchupLabel}? This removes the Genesis matchup and its Discord game thread so you can remake it.`
+    );
+    if (!confirmed) return;
+
+    setDeletingGenesisMatchupId(matchupId);
+    setGenesisFinalizeStatus(`Deleting ${matchupLabel}...`);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
         return;
       }
 
-      setGenesisLine(lineResult.line);
-      setPvpCreateStatus(
-        `Genesis line locked: ${lineResult.line.displayLine}. Creating Discord thread...`
-      );
-
-      const response = await fetch("/api/discord/pvp-thread", {
+      const response = await fetch("/api/genesis/delete", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -938,67 +1132,44 @@ export default function SeasonRoomPage() {
         },
         body: JSON.stringify({
           seasonId: season.id,
-          threadName: pvpThreadTitle,
-          awayTeam: pvpAwayTeam,
-          homeTeam: pvpHomeTeam,
-          neutral: pvpSeparator === "vs.",
-          postStreamInstructions: postPvpStreamInstructions,
+          matchupId,
         }),
       });
 
       const result = (await response.json()) as {
         error?: string;
-        threadName?: string;
-        genesisRoleTagged?: boolean;
-        taggedPlayers?: number;
-        line?: GenesisLinePreview;
-        leaderboardChannelId?: string;
         leaderboardWarning?: string;
-        streamInstructionsPosted?: boolean;
-        streamInstructionsWarning?: string;
       };
 
       if (!response.ok) {
-        setPvpCreateStatus(result.error || "Could not create the PvP thread.");
+        setGenesisFinalizeStatus(
+          result.error || "Could not delete the Genesis matchup."
+        );
         return;
       }
 
-      const taggedPlayers = result.taggedPlayers ?? 0;
-      let status = `✅ Created "${result.threadName || pvpThreadTitle}". Tagged @genesis`;
-      status +=
-        taggedPlayers === 2
-          ? " and both matchup players."
-          : taggedPlayers === 1
-            ? " and 1 linked matchup player."
-            : " (matchup players were not linked to Discord).";
+      await loadRoomSeason(season.id);
+      setGenesisFinalScoreInputs((current) => {
+        const next = { ...current };
+        delete next[matchupId];
+        return next;
+      });
 
-      if (result.line) {
-        setGenesisLine(result.line);
-        status += ` Genesis Line: ${result.line.displayLine}.`;
-      }
-
-      if (result.leaderboardChannelId) {
-        status += " Genesis pick buttons are live and #genesis-picks is ready.";
-      }
-      if (result.leaderboardWarning) {
-        status += ` Leaderboard warning: ${result.leaderboardWarning}`;
-      }
-      if (postPvpStreamInstructions && result.streamInstructionsPosted) {
-        status += " /stream instructions posted in the game thread.";
-      }
-      if (result.streamInstructionsWarning) {
-        status += ` Stream-instructions warning: ${result.streamInstructionsWarning}`;
-      }
-
-      setPvpCreateStatus(status);
-
-      setPvpAwayTeam("");
-      setPvpHomeTeam("");
-      setPvpSeparator("@");
-    } catch {
-      setPvpCreateStatus("Could not create the PvP thread. Try again.");
+      setGenesisFinalizeStatus(
+        `✅ Deleted ${matchupLabel} and its Discord thread.${
+          result.leaderboardWarning
+            ? ` Leaderboard warning: ${result.leaderboardWarning}`
+            : ""
+        }`
+      );
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not delete Genesis matchup: ${error.message}`
+          : "Could not delete Genesis matchup."
+      );
     } finally {
-      setIsCreatingPvpThread(false);
+      setDeletingGenesisMatchupId(null);
     }
   }
 
@@ -2313,12 +2484,11 @@ export default function SeasonRoomPage() {
               </span>
             </div>
 
-            <h2 className="text-xl font-black">Create Weekly Matchup Thread</h2>
+            <h2 className="text-xl font-black">Create Weekly Matchup Threads</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Pick two teams in the league. The current stage and season year fill in automatically,
-              but you can edit the stage for a bowl, playoff game, or other custom matchup. Threads
-              are created under the configured PvP parent channel and every @genesis member is added
-              without pinging the role.
+              Add one or more PvP games for the week. Stage/year and the optional /stream instructions
+              apply to the whole batch. RTA generates a separate Genesis line and Discord thread for
+              every matchup.
             </p>
 
             <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
@@ -2367,6 +2537,137 @@ export default function SeasonRoomPage() {
               </label>
             </div>
 
+            {additionalPvpGames.map((game, index) => (
+              <div
+                key={game.id}
+                className="relative mt-3 rounded-2xl border border-white/10 bg-slate-950/50 p-4 pr-12"
+              >
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAdditionalPvpGames((current) =>
+                      current.filter((row) => row.id !== game.id)
+                    )
+                  }
+                  title="Remove this matchup from the batch"
+                  className="absolute right-3 top-3 flex h-7 w-7 items-center justify-center rounded-full border border-white/10 bg-white/5 text-sm font-black text-slate-400 transition hover:border-red-300/40 hover:bg-red-300/10 hover:text-red-200"
+                >
+                  ×
+                </button>
+
+                <p className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                  Game {index + 2}
+                </p>
+
+                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    X Team
+                    <select
+                      value={game.awayTeam}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? { ...row, awayTeam: event.target.value }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="">Select X team...</option>
+                      {leagueTeamNames.map((team) => (
+                        <option
+                          key={team}
+                          value={team}
+                          disabled={team === game.homeTeam}
+                        >
+                          {team}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Site
+                    <select
+                      value={game.separator}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? {
+                                  ...row,
+                                  separator: event.target.value as "@" | "vs.",
+                                }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-center text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="@">@</option>
+                      <option value="vs.">vs.</option>
+                    </select>
+                  </label>
+
+                  <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                    Y Team
+                    <select
+                      value={game.homeTeam}
+                      onChange={(event) =>
+                        setAdditionalPvpGames((current) =>
+                          current.map((row) =>
+                            row.id === game.id
+                              ? { ...row, homeTeam: event.target.value }
+                              : row
+                          )
+                        )
+                      }
+                      className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                    >
+                      <option value="">Select Y team...</option>
+                      {leagueTeamNames.map((team) => (
+                        <option
+                          key={team}
+                          value={team}
+                          disabled={team === game.awayTeam}
+                        >
+                          {team}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <p className="mt-3 text-xs text-slate-500">
+                  {pvpThreadTitleFor(
+                    game.awayTeam,
+                    game.separator,
+                    game.homeTeam
+                  )}
+                </p>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={() =>
+                setAdditionalPvpGames((current) => [
+                  ...current,
+                  {
+                    id: crypto.randomUUID(),
+                    awayTeam: "",
+                    homeTeam: "",
+                    separator: "@",
+                  },
+                ])
+              }
+              className="mt-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200 transition hover:bg-cyan-400/20"
+            >
+              + Add Another Game
+            </button>
+
             <div className="mt-4 flex flex-wrap items-end gap-3">
               <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-semibold text-slate-400">
                 Week / Stage / Bowl
@@ -2390,7 +2691,7 @@ export default function SeasonRoomPage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
-              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Thread preview</p>
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Game 1 thread preview</p>
               <p className="mt-1 break-words text-lg font-black text-white">{pvpThreadTitle}</p>
               <p className="mt-1 text-xs text-slate-500">{pvpThreadTitle.length}/100 characters</p>
             </div>
@@ -2507,16 +2808,17 @@ export default function SeasonRoomPage() {
                 onClick={createPvpThread}
                 disabled={
                   isCreatingPvpThread ||
-                  !pvpAwayTeam ||
-                  !pvpHomeTeam ||
-                  pvpAwayTeam === pvpHomeTeam ||
+                  !allPvpGamesReady ||
                   !pvpStageLabel.trim() ||
-                  !pvpYear.trim() ||
-                  pvpThreadTitle.length > 100
+                  !pvpYear.trim()
                 }
                 className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {isCreatingPvpThread ? "Creating..." : "Create PvP Thread"}
+                {isCreatingPvpThread
+                  ? "Creating..."
+                  : pvpGamesToCreate.length > 1
+                    ? `Create All PvP Threads (${pvpGamesToCreate.length})`
+                    : "Create PvP Thread"}
               </button>
 
               {pvpCreateStatus && (
@@ -2555,8 +2857,23 @@ export default function SeasonRoomPage() {
                     return (
                       <div
                         key={matchup.id}
-                        className="rounded-2xl border border-white/10 bg-slate-950/60 p-4"
+                        className="relative rounded-2xl border border-white/10 bg-slate-950/60 p-4 pr-12"
                       >
+                        <button
+                          type="button"
+                          onClick={() =>
+                            deleteGenesisMatchup(
+                              matchup.id,
+                              `${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}`
+                            )
+                          }
+                          disabled={deletingGenesisMatchupId === matchup.id}
+                          title="Delete this game and Discord thread"
+                          className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-full border border-red-300/20 bg-red-300/5 text-base font-black text-red-300 transition hover:bg-red-300/15 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          {deletingGenesisMatchupId === matchup.id ? "…" : "×"}
+                        </button>
+
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-black text-white">

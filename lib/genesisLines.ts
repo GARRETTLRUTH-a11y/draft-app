@@ -609,7 +609,8 @@ function gameMarginForTeam(game: GenesisHistoricalGame, team: string) {
 
 function historicalWeight(
   game: GenesisHistoricalGame,
-  currentSeasonYear: number
+  currentSeasonYear: number,
+  margin: number
 ) {
   const age =
     typeof game.seasonYear === "number"
@@ -618,7 +619,13 @@ function historicalWeight(
 
   const seasonWeight = Math.pow(0.82, age);
   const gameTypeWeight =
-    game.gameType === "pvp" ? 1 : game.gameType === "cpu" ? 0.15 : 0.25;
+    game.gameType === "pvp"
+      ? 1
+      : game.gameType === "cpu"
+        ? margin < 0
+          ? 0.32
+          : 0.02
+        : 0.2;
 
   return seasonWeight * gameTypeWeight;
 }
@@ -635,7 +642,7 @@ function weightedTeamForm(
   for (const game of games) {
     const margin = gameMarginForTeam(game, team);
     if (margin == null) continue;
-    const weight = historicalWeight(game, currentSeasonYear);
+    const weight = historicalWeight(game, currentSeasonYear, margin);
     numerator += clamp(margin, -35, 35) * weight;
     denominator += weight;
     count++;
@@ -776,6 +783,107 @@ function weightedCoachHeadToHead(
   };
 }
 
+function weightedCpuLossPenalty(
+  games: GenesisHistoricalGame[],
+  playerName: string | undefined,
+  teamName: string,
+  currentSeasonYear: number
+) {
+  const playerTarget = playerName ? normalize(playerName) : "";
+  const teamTarget = normalize(teamName);
+  let penalty = 0;
+  let count = 0;
+
+  for (const game of games) {
+    if (game.gameType !== "cpu") continue;
+
+    let margin: number | null = null;
+
+    if (playerTarget && game.playerA && normalize(game.playerA) === playerTarget) {
+      margin = game.scoreA - game.scoreB;
+    } else if (
+      playerTarget &&
+      game.playerB &&
+      normalize(game.playerB) === playerTarget
+    ) {
+      margin = game.scoreB - game.scoreA;
+    } else if (normalize(game.teamA) === teamTarget) {
+      margin = game.scoreA - game.scoreB;
+    } else if (normalize(game.teamB) === teamTarget) {
+      margin = game.scoreB - game.scoreA;
+    }
+
+    if (margin == null || margin >= 0) continue;
+
+    const age =
+      typeof game.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - game.seasonYear)
+        : 2;
+    const recency = Math.pow(0.78, age);
+    const lossSeverity = clamp(Math.abs(margin) / 10, 0.6, 2.5);
+
+    penalty -= lossSeverity * recency;
+    count++;
+  }
+
+  return {
+    adjustment: clamp(penalty, -5, 0),
+    count,
+  };
+}
+
+function postseasonAchievementValue(type: GenesisPostseasonAchievementType) {
+  switch (type) {
+    case "championship":
+      return 2.25;
+    case "championship_appearance":
+      return 1.5;
+    case "semifinal_appearance":
+      return 1;
+    case "playoff_appearance":
+      return 0.65;
+  }
+}
+
+function weightedPostseasonScore(
+  achievements: GenesisPostseasonAchievement[],
+  playerName: string | undefined,
+  teamName: string,
+  currentSeasonYear: number
+) {
+  const playerTarget = playerName ? normalize(playerName) : "";
+  const teamTarget = normalize(teamName);
+  let score = 0;
+  let count = 0;
+
+  for (const achievement of achievements) {
+    const playerMatch =
+      Boolean(playerTarget) &&
+      Boolean(achievement.player) &&
+      normalize(achievement.player || "") === playerTarget;
+    const teamMatch =
+      !achievement.player &&
+      Boolean(achievement.team) &&
+      normalize(achievement.team || "") === teamTarget;
+
+    if (!playerMatch && !teamMatch) continue;
+
+    const age =
+      typeof achievement.seasonYear === "number"
+        ? Math.max(0, currentSeasonYear - achievement.seasonYear)
+        : 2;
+    const recency = Math.pow(0.82, age);
+
+    score += postseasonAchievementValue(achievement.type) * recency;
+    count++;
+  }
+
+  return {
+    score: clamp(score, 0, 5),
+    count,
+  };
+}
+
 function directPvpAdjustment(margin: number, count: number) {
   if (count <= 0) return 0;
 
@@ -836,8 +944,45 @@ export function buildGenesisLine(
     seasonData.seasonYear
   );
 
+  const achievements = seasonData.genesisHistory?.postseasonAchievements || [];
+  const awayPostseason = weightedPostseasonScore(
+    achievements,
+    awayPlayer.name,
+    awayTeam,
+    seasonData.seasonYear
+  );
+  const homePostseason = weightedPostseasonScore(
+    achievements,
+    homePlayer.name,
+    homeTeam,
+    seasonData.seasonYear
+  );
+  const postseasonAdjustment = clamp(
+    awayPostseason.score - homePostseason.score,
+    -4.5,
+    4.5
+  );
+
+  const awayCpuLosses = weightedCpuLossPenalty(
+    games,
+    awayPlayer.name,
+    awayTeam,
+    seasonData.seasonYear
+  );
+  const homeCpuLosses = weightedCpuLossPenalty(
+    games,
+    homePlayer.name,
+    homeTeam,
+    seasonData.seasonYear
+  );
+  const cpuLossAdjustment = clamp(
+    awayCpuLosses.adjustment - homeCpuLosses.adjustment,
+    -5,
+    5
+  );
+
   const teamHistoryAdjustment =
-    (awayTeamForm.margin - homeTeamForm.margin) * 0.04;
+    (awayTeamForm.margin - homeTeamForm.margin) * 0.025;
   const playerHistoryAdjustment =
     (awayPlayerForm.margin - homePlayerForm.margin) * 0.1;
 
@@ -867,9 +1012,11 @@ export function buildGenesisLine(
   const historyAdjustment = clamp(
     teamHistoryAdjustment +
       playerHistoryAdjustment +
+      postseasonAdjustment +
+      cpuLossAdjustment +
       directMatchupAdjustment,
-    -14,
-    14
+    -16,
+    16
   );
 
   const homeFieldAdjustment = neutral ? 0 : -2.5;
@@ -910,7 +1057,9 @@ export function buildGenesisLine(
         completeRatings * 4 +
         Math.min(18, historyGamesUsed * 1.1) +
         Math.min(8, (awayPlayerForm.count + homePlayerForm.count) * 1.1) +
-        Math.min(12, directMatchupSource.count * 3),
+        Math.min(12, directMatchupSource.count * 3) +
+        Math.min(6, (awayPostseason.count + homePostseason.count) * 1.2) +
+        Math.min(4, (awayCpuLosses.count + homeCpuLosses.count) * 1.5),
       45,
       88
     )
@@ -944,6 +1093,18 @@ export function buildGenesisLine(
   if (directMatchupSource.count > 0) {
     notes.push(
       `Direct PvP history: ${directMatchupSource.count} matchup${directMatchupSource.count === 1 ? "" : "s"}, weighted average margin ${directMatchupSource.margin >= 0 ? "+" : ""}${directMatchupSource.margin.toFixed(1)} from ${awayTeam}'s perspective.`
+    );
+  }
+
+  if (awayPostseason.count + homePostseason.count > 0) {
+    notes.push(
+      `Postseason résumé contributes ${postseasonAdjustment >= 0 ? "+" : ""}${postseasonAdjustment.toFixed(1)} points from ${awayTeam}'s perspective; championships count more than appearances but less than direct PvP.`
+    );
+  }
+
+  if (awayCpuLosses.count + homeCpuLosses.count > 0) {
+    notes.push(
+      `CPU wins are treated as nearly neutral; CPU losses apply a ${cpuLossAdjustment >= 0 ? "+" : ""}${cpuLossAdjustment.toFixed(1)}-point relative adjustment from ${awayTeam}'s perspective.`
     );
   }
 

@@ -6,13 +6,11 @@ import { createGenesisPvpThread } from "@/lib/discordPvpThreads";
 import {
   buildGenesisLine,
   genesisStarterMessage,
-  syncGenesisHistory,
 } from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
 import {
   buildGenesisPickComponents,
   createGenesisPickMatchup,
-  settleGenesisPicksFromHistory,
   syncGenesisLeaderboard,
 } from "@/lib/genesisPicks";
 
@@ -124,36 +122,10 @@ export async function POST(request: Request) {
     const homeTeam = payload.homeTeam?.trim();
     const seasonData = season.season_data as SeasonData;
 
+    // The website refreshes Genesis history immediately before this
+    // request. Keep thread creation fast and deterministic: do not make a
+    // second Discord/OpenAI history pass while the user is waiting.
     let nextSeasonData = seasonData;
-    let syncResult:
-      | {
-          messagesScanned: number;
-          mode?: "full" | "incremental";
-          totalGames: number;
-          achievements: number;
-          lastSyncedAt: string;
-          settledPicks: number;
-        }
-      | undefined;
-
-    if (awayTeam && homeTeam) {
-      const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
-      const withHistory: SeasonData = {
-        ...seasonData,
-        genesisHistory: history,
-      };
-      const settled = settleGenesisPicksFromHistory(withHistory);
-      nextSeasonData = settled.seasonData;
-
-      syncResult = {
-        messagesScanned: history.messagesScanned,
-        mode: history.lastSyncMode,
-        totalGames: history.games.length,
-        achievements: history.postseasonAchievements?.length ?? 0,
-        lastSyncedAt: history.lastSyncedAt,
-        settledPicks: settled.settledCount,
-      };
-    }
 
     const line =
       awayTeam && homeTeam
@@ -233,7 +205,6 @@ export async function POST(request: Request) {
       genesisRoleTagged: result.genesisRoleTagged,
       taggedPlayers: result.taggedUserIds.length,
       line,
-      sync: syncResult,
       leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
       leaderboardWarning: leaderboard.warning,
     });

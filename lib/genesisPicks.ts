@@ -90,6 +90,12 @@ export function buildGenesisPickComponents(
           label: lineLabel(line.homeTeam, homeLine),
           custom_id: `genesis_pick:${seasonId}:${matchupId}:home`,
         },
+        {
+          type: 2,
+          style: 2,
+          label: "📺 Post Stream / Start Game",
+          custom_id: `genesis_stream:${seasonId}:${matchupId}`,
+        },
       ],
     },
   ];

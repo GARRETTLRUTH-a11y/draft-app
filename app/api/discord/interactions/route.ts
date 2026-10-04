@@ -317,6 +317,60 @@ async function postGenesisPickAnnouncement(
   return response.ok;
 }
 
+function normalizeGenesisTeam(value: string | undefined) {
+  return (value || "").trim().toLowerCase();
+}
+
+function validGenesisStreamUrl(raw: string) {
+  try {
+    const url = new URL(raw.trim());
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    const allowed =
+      host === "youtube.com" ||
+      host.endsWith(".youtube.com") ||
+      host === "youtu.be" ||
+      host === "twitch.tv" ||
+      host.endsWith(".twitch.tv");
+
+    return allowed ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function postGenesisStreamStartAnnouncement(input: {
+  threadId: string;
+  discordUserId: string;
+  streamUrl: string;
+  pickCount: number;
+}) {
+  const botToken = process.env.DISCORD_BOT_TOKEN;
+  if (!botToken) return false;
+
+  const response = await fetch(
+    `https://discord.com/api/v10/channels/${input.threadId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bot ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        content: [
+          `📺 <@${input.discordUserId}> posted the game stream: ${input.streamUrl}`,
+          "🔒 **GENESIS PICKS CLOSED — GAME STARTED**",
+          `**${input.pickCount}** pick${input.pickCount === 1 ? "" : "s"} locked in. No additional picks will be accepted.`,
+        ].join("\n"),
+        allowed_mentions: { users: [input.discordUserId], parse: [] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
 export async function POST(request: Request) {
   const publicKey = process.env.DISCORD_PUBLIC_KEY;
   if (!publicKey) {
@@ -372,6 +426,70 @@ export async function POST(request: Request) {
 
     if (customId === "link_account") {
       return createLinkToken(admin, discordUserId, discordUsername);
+    }
+
+    if (customId.startsWith("genesis_stream:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const parts = customId.split(":");
+      const seasonId = parts[1];
+      const matchupId = parts[2];
+      if (!seasonId || !matchupId) {
+        return ephemeral("That Genesis stream button is invalid.");
+      }
+
+      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      if ("error" in resolved) return respondToResolveError(resolved);
+
+      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (!matchup) {
+        return ephemeral("That Genesis matchup could not be found.");
+      }
+
+      const playerTeam = normalizeGenesisTeam(resolved.player.team);
+      const isMatchupPlayer =
+        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
+        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
+
+      if (!isMatchupPlayer) {
+        return ephemeral("Only one of the two players in this matchup can post the game stream and start it.");
+      }
+
+      if (matchup.status === "locked") {
+        return ephemeral("🔒 Genesis picks are already closed for this game.");
+      }
+      if (matchup.status === "settled") {
+        return ephemeral("This Genesis matchup is already final.");
+      }
+
+      return NextResponse.json({
+        type: 9,
+        data: {
+          custom_id: `genesis_stream_modal:${seasonId}:${matchupId}`,
+          title: "Post Stream & Start Game",
+          components: [
+            {
+              type: 1,
+              components: [
+                {
+                  type: 4,
+                  custom_id: "stream_url",
+                  label: "YouTube or Twitch stream URL",
+                  style: 1,
+                  required: true,
+                  min_length: 8,
+                  max_length: 400,
+                  placeholder: "https://youtube.com/... or https://twitch.tv/...",
+                },
+              ],
+            },
+          ],
+        },
+      });
     }
 
     if (customId.startsWith("genesis_pick:")) {
@@ -584,6 +702,101 @@ export async function POST(request: Request) {
   // Modal submit: the "Request an Extension" form
   if (interaction.type === 5 && typeof interaction.data?.custom_id === "string") {
     const customId = interaction.data.custom_id;
+
+    if (customId.startsWith("genesis_stream_modal:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const parts = customId.split(":");
+      const seasonId = parts[1];
+      const matchupId = parts[2];
+      if (!seasonId || !matchupId) {
+        return ephemeral("That Genesis stream form is invalid.");
+      }
+
+      const values = new Map<string, string>();
+      for (const row of interaction.data.components ?? []) {
+        for (const field of row.components ?? []) {
+          if (field.custom_id && typeof field.value === "string") {
+            values.set(field.custom_id, field.value);
+          }
+        }
+      }
+
+      const streamUrl = validGenesisStreamUrl(values.get("stream_url") ?? "");
+      if (!streamUrl) {
+        return ephemeral("Use a valid YouTube or Twitch stream link.");
+      }
+
+      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      if ("error" in resolved) return respondToResolveError(resolved);
+
+      const picksState = resolved.seasonData.genesisPicks;
+      const matchup = picksState?.matchups.find((item) => item.id === matchupId);
+      if (!picksState || !matchup) {
+        return ephemeral("That Genesis matchup could not be found.");
+      }
+
+      const playerTeam = normalizeGenesisTeam(resolved.player.team);
+      const isMatchupPlayer =
+        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
+        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
+
+      if (!isMatchupPlayer) {
+        return ephemeral("Only one of the two players in this matchup can post the game stream and start it.");
+      }
+
+      if (matchup.status === "locked") {
+        return ephemeral("🔒 Genesis picks are already closed for this game.");
+      }
+      if (matchup.status === "settled") {
+        return ephemeral("This Genesis matchup is already final.");
+      }
+
+      const lockedAt = new Date().toISOString();
+      const nextMatchups = picksState.matchups.map((item) =>
+        item.id === matchupId
+          ? {
+              ...item,
+              status: "locked" as const,
+              lockedAt,
+            }
+          : item
+      );
+
+      const nextSeasonData: SeasonData = {
+        ...resolved.seasonData,
+        genesisPicks: {
+          ...picksState,
+          matchups: nextMatchups,
+        },
+      };
+
+      const { error: updateError } = await admin
+        .from("seasons")
+        .update({
+          season_data: nextSeasonData,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", seasonId);
+
+      if (updateError) {
+        return ephemeral("Couldn't lock Genesis picks. Try again.");
+      }
+
+      const pickCount = Object.keys(matchup.picks || {}).length;
+      await postGenesisStreamStartAnnouncement({
+        threadId: matchup.threadId,
+        discordUserId,
+        streamUrl,
+        pickCount,
+      });
+
+      return ephemeral(
+        `📺 Stream posted. 🔒 Genesis picks are now closed with ${pickCount} pick${pickCount === 1 ? "" : "s"} locked in.`
+      );
+    }
 
     if (customId === "create_pvp_thread_modal") {
       if (!interaction.guild_id) {

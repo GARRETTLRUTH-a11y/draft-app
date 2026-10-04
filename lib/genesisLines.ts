@@ -88,6 +88,67 @@ function roundHalf(value: number) {
 function normalize(value: string) {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
+function sameHistoricalTeamPair(
+  game: GenesisHistoricalGame,
+  awayTeam: string,
+  homeTeam: string
+) {
+  const gameTeams = new Set([normalize(game.teamA), normalize(game.teamB)]);
+  return (
+    gameTeams.has(normalize(awayTeam)) &&
+    gameTeams.has(normalize(homeTeam)) &&
+    gameTeams.size === 2
+  );
+}
+
+function genesisModelGames(seasonData: SeasonData) {
+  const allGames = seasonData.genesisHistory?.games || [];
+  const voidedMatchups =
+    seasonData.genesisPicks?.matchups.filter(
+      (matchup) => matchup.status === "voided"
+    ) || [];
+
+  if (!voidedMatchups.length || !allGames.length) {
+    return { games: allGames, excludedVoidResults: 0 };
+  }
+
+  const excludedIds = new Set<string>();
+
+  for (const matchup of voidedMatchups) {
+    const createdMs = new Date(matchup.createdAt).getTime();
+
+    const matchingGame = allGames
+      .filter((game) => {
+        if (!sameHistoricalTeamPair(game, matchup.awayTeam, matchup.homeTeam)) {
+          return false;
+        }
+
+        if (
+          typeof game.seasonYear === "number" &&
+          game.seasonYear !== matchup.seasonYear
+        ) {
+          return false;
+        }
+
+        if (!game.sourceTimestamp) return false;
+        const sourceMs = new Date(game.sourceTimestamp).getTime();
+        if (!Number.isFinite(sourceMs) || !Number.isFinite(createdMs)) return false;
+
+        return sourceMs >= createdMs - 5 * 60 * 1000;
+      })
+      .sort((a, b) =>
+        (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "")
+      )[0];
+
+    if (matchingGame) excludedIds.add(matchingGame.id);
+  }
+
+  return {
+    games: allGames.filter((game) => !excludedIds.has(game.id)),
+    excludedVoidResults: excludedIds.size,
+  };
+}
+
 
 function messageText(message: DiscordMessage) {
   const embedText = (message.embeds || [])
@@ -1077,7 +1138,8 @@ export function buildGenesisLine(
     ((awayOffense - homeDefense) - (homeOffense - awayDefense)) * 0.16;
   const ratingMargin = overallComponent + matchupComponent;
 
-  const games = seasonData.genesisHistory?.games || [];
+  const modelHistory = genesisModelGames(seasonData);
+  const games = modelHistory.games;
   const awayTeamForm = weightedTeamForm(games, awayTeam, seasonData.seasonYear);
   const homeTeamForm = weightedTeamForm(games, homeTeam, seasonData.seasonYear);
   const awayPlayerForm = weightedPlayerPvpForm(
@@ -1223,6 +1285,11 @@ export function buildGenesisLine(
     : "Pick'em";
 
   const notes: string[] = [];
+  if (modelHistory.excludedVoidResults > 0) {
+    notes.push(
+      `${modelHistory.excludedVoidResults} auto-sim/force-win result${modelHistory.excludedVoidResults === 1 ? " was" : "s were"} excluded from Genesis performance history.`
+    );
+  }
   notes.push(
     completeRatings === 6
       ? "Uses complete OVR/OFF/DEF ratings for both teams."

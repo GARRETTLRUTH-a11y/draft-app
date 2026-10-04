@@ -1,42 +1,18 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
-import type { SeasonData } from "@/lib/season";
-import { syncGenesisLeaderboard } from "@/lib/genesisPicks";
+import type { GenesisVoidReason, SeasonData } from "@/lib/season";
+import {
+  postGenesisVoidToThread,
+  syncGenesisLeaderboard,
+  voidGenesisMatchup,
+} from "@/lib/genesisPicks";
 
 type Payload = {
   seasonId?: string;
   matchupId?: string;
+  reason?: GenesisVoidReason;
 };
-
-async function postLockNotice(input: {
-  threadId: string;
-  pickCount: number;
-}) {
-  const botToken = process.env.DISCORD_BOT_TOKEN;
-  if (!botToken) return false;
-
-  const response = await fetch(
-    `https://discord.com/api/v10/channels/${input.threadId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bot ${botToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        content: [
-          "🔒 **GENESIS PICKS CLOSED — GAME STARTED**",
-          `**${input.pickCount}** pick${input.pickCount === 1 ? "" : "s"} locked in.`,
-          "No additional picks will be accepted for this matchup.",
-        ].join("\n"),
-        allowed_mentions: { parse: [] as string[] },
-      }),
-    }
-  );
-
-  return response.ok;
-}
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -60,10 +36,18 @@ export async function POST(request: Request) {
 
   const seasonId = payload.seasonId?.trim();
   const matchupId = payload.matchupId?.trim();
+  const reason = payload.reason;
 
   if (!seasonId || !matchupId) {
     return NextResponse.json(
       { error: "seasonId and matchupId are required." },
+      { status: 400 }
+    );
+  }
+
+  if (reason !== "auto_sim" && reason !== "force_win") {
+    return NextResponse.json(
+      { error: "Void reason must be auto_sim or force_win." },
       { status: 400 }
     );
   }
@@ -88,63 +72,19 @@ export async function POST(request: Request) {
 
   if (season.user_id !== userData.user.id) {
     return NextResponse.json(
-      { error: "Only the season commissioner can lock Genesis picks." },
+      { error: "Only the season commissioner can void Genesis matchups." },
       { status: 403 }
     );
   }
 
   const seasonData = season.season_data as SeasonData;
-  const picksState = seasonData.genesisPicks;
-  const matchup = picksState?.matchups.find((item) => item.id === matchupId);
+  const voided = voidGenesisMatchup(seasonData, matchupId, reason);
 
-  if (!picksState || !matchup) {
-    return NextResponse.json(
-      { error: "Genesis matchup not found." },
-      { status: 404 }
-    );
+  if ("error" in voided) {
+    return NextResponse.json({ error: voided.error }, { status: 409 });
   }
 
-  if (matchup.status === "settled") {
-    return NextResponse.json(
-      { error: "That Genesis matchup is already finalized." },
-      { status: 409 }
-    );
-  }
-
-  if (matchup.status === "voided") {
-    return NextResponse.json(
-      { error: "That Genesis matchup was voided for an Auto Sim or Force Win." },
-      { status: 409 }
-    );
-  }
-
-  if (matchup.status === "locked") {
-    return NextResponse.json({
-      ok: true,
-      alreadyLocked: true,
-      pickCount: Object.keys(matchup.picks || {}).length,
-    });
-  }
-
-  const lockedAt = new Date().toISOString();
-  const matchups = picksState.matchups.map((item) =>
-    item.id === matchupId
-      ? {
-          ...item,
-          status: "locked" as const,
-          lockedAt,
-        }
-      : item
-  );
-
-  let nextSeasonData: SeasonData = {
-    ...seasonData,
-    genesisPicks: {
-      ...picksState,
-      matchups,
-    },
-  };
-
+  let nextSeasonData: SeasonData = voided.seasonData;
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;
 
@@ -160,15 +100,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: updateError.message }, { status: 500 });
   }
 
-  const pickCount = Object.keys(matchup.picks || {}).length;
-  const discordPosted = await postLockNotice({
-    threadId: matchup.threadId,
-    pickCount,
+  const discordPosted = await postGenesisVoidToThread({
+    matchup: voided.matchup,
+    reason,
   });
 
   return NextResponse.json({
     ok: true,
-    pickCount,
+    matchupId,
+    reason,
     discordPosted,
     leaderboardWarning: leaderboard.warning,
   });

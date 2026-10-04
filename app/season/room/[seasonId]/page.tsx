@@ -187,6 +187,7 @@ export default function SeasonRoomPage() {
   >({});
   const [finalizingGenesisMatchupId, setFinalizingGenesisMatchupId] = useState<string | null>(null);
   const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
+  const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
@@ -315,7 +316,10 @@ export default function SeasonRoomPage() {
   const activeGenesisMatchups = useMemo(
     () =>
       [...(seasonData?.genesisPicks?.matchups ?? [])]
-        .filter((matchup) => matchup.status !== "settled")
+        .filter(
+          (matchup) =>
+            matchup.status === "open" || matchup.status === "locked"
+        )
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [seasonData?.genesisPicks?.matchups]
   );
@@ -1049,6 +1053,79 @@ export default function SeasonRoomPage() {
       );
     } finally {
       setLockingGenesisMatchupId(null);
+    }
+  }
+
+  async function voidGenesisMatchup(
+    matchupId: string,
+    reason: "auto_sim" | "force_win"
+  ) {
+    if (!season) return;
+
+    const reasonLabel = reason === "auto_sim" ? "Auto Sim" : "Force Win";
+    const confirmed = window.confirm(
+      `Void this Genesis line as ${reasonLabel}? All submitted picks will be canceled and this result will not count toward pick accuracy or future Genesis performance history.`
+    );
+    if (!confirmed) return;
+
+    setVoidingGenesisMatchupId(matchupId);
+    setGenesisFinalizeStatus(`Voiding Genesis line — ${reasonLabel}...`);
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/void", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          matchupId,
+          reason,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        discordPosted?: boolean;
+        leaderboardWarning?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisFinalizeStatus(result.error || "Could not void Genesis matchup.");
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisFinalScoreInputs((current) => {
+        const next = { ...current };
+        delete next[matchupId];
+        return next;
+      });
+
+      let status = `✅ Genesis line voided — ${reasonLabel}. Picks canceled with no effect on standings or future line history.`;
+      if (result.discordPosted === false) {
+        status += " The matchup was voided, but the Discord notice could not be posted.";
+      }
+      if (result.leaderboardWarning) {
+        status += ` Leaderboard warning: ${result.leaderboardWarning}`;
+      }
+      setGenesisFinalizeStatus(status);
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not void Genesis matchup: ${error.message}`
+          : "Could not void Genesis matchup."
+      );
+    } finally {
+      setVoidingGenesisMatchupId(null);
     }
   }
 
@@ -2430,7 +2507,7 @@ export default function SeasonRoomPage() {
                   <div>
                     <h3 className="text-base font-black text-white">🏁 Finalize Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Lock picks when the game starts, then enter the final score afterward to grade ATS picks and update #genesis-picks.
+                      Lock picks when the game starts, enter the final score afterward, or void the line for an Auto Sim / Force Win.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
@@ -2484,6 +2561,26 @@ export default function SeasonRoomPage() {
                                   : "🔒 Lock Picks / Game Started"}
                               </button>
                             )}
+
+                            <button
+                              onClick={() => voidGenesisMatchup(matchup.id, "auto_sim")}
+                              disabled={voidingGenesisMatchupId === matchup.id}
+                              className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {voidingGenesisMatchupId === matchup.id
+                                ? "Voiding..."
+                                : "🚫 Auto Sim"}
+                            </button>
+
+                            <button
+                              onClick={() => voidGenesisMatchup(matchup.id, "force_win")}
+                              disabled={voidingGenesisMatchupId === matchup.id}
+                              className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {voidingGenesisMatchupId === matchup.id
+                                ? "Voiding..."
+                                : "🚫 Force Win"}
+                            </button>
                             <label className="flex flex-col gap-1 text-[11px] font-bold text-slate-400">
                               {matchup.awayTeam}
                               <input

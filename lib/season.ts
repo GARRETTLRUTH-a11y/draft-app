@@ -65,6 +65,7 @@ export type GenesisHistory = {
 };
 
 export type GenesisPickSide = "away" | "home";
+export type GenesisVoidReason = "auto_sim" | "force_win";
 
 export type GenesisPick = {
   discordUserId: string;
@@ -89,13 +90,15 @@ export type GenesisPickMatchup = {
   // Signed from the away team's perspective: -4.5 means away -4.5,
   // +4.5 means away +4.5, 0 means pick'em.
   awayLine: number;
-  status: "open" | "locked" | "settled";
+  status: "open" | "locked" | "settled" | "voided";
   picks: Record<string, GenesisPick>;
   finalAwayScore?: number;
   finalHomeScore?: number;
   atsWinner?: GenesisPickSide | "push";
   lockedAt?: string;
   resultPromptSentAt?: string;
+  voidReason?: GenesisVoidReason;
+  voidedAt?: string;
   settledAt?: string;
   sourceGameId?: string;
 };

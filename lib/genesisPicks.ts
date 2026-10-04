@@ -135,7 +135,10 @@ export function saveGenesisPick(
     return { error: "That Genesis matchup could not be found." } as const;
   }
 
-  if (matchup.status !== "open") {
+  if (matchup.status === "locked") {
+    return { error: "Picks are closed because this game has started." } as const;
+  }
+  if (matchup.status === "settled") {
     return { error: "Picks are closed because this matchup is already final." } as const;
   }
 
@@ -317,6 +320,9 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   const openCount = state.matchups.filter(
     (matchup) => matchup.status === "open"
   ).length;
+  const lockedCount = state.matchups.filter(
+    (matchup) => matchup.status === "locked"
+  ).length;
 
   const lines = [
     "🏆 **GENESIS PICKS LEADERBOARD**",
@@ -337,7 +343,7 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
 
   lines.push(
     "",
-    `Settled matchups: **${settledCount}** · Open matchups: **${openCount}**`,
+    `Settled matchups: **${settledCount}** · Locked/in progress: **${lockedCount}** · Open picks: **${openCount}**`,
     "Pushes do not count toward accuracy."
   );
 

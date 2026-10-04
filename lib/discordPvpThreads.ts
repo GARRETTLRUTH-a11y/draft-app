@@ -44,7 +44,8 @@ function buildTaggedStarterMessage(
 export async function createGenesisPvpThread(
   threadName: string,
   starterMessage?: string,
-  taggedUserIds: string[] = []
+  taggedUserIds: string[] = [],
+  components: unknown[] = []
 ): Promise<PvpThreadCreateResult> {
   const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
   if (!parentResponse.ok) {
@@ -96,6 +97,7 @@ export async function createGenesisPvpThread(
         message: {
           content: taggedMessage,
           allowed_mentions: allowedMentions,
+          ...(components.length ? { components } : {}),
         },
         ...(pvpTag ? { applied_tags: [pvpTag.id] } : {}),
       }
@@ -123,6 +125,7 @@ export async function createGenesisPvpThread(
       body: JSON.stringify({
         content: taggedMessage,
         allowed_mentions: allowedMentions,
+        ...(components.length ? { components } : {}),
       }),
     });
 

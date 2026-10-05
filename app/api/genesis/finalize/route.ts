@@ -128,7 +128,9 @@ export async function POST(request: Request) {
     (item) => item.id === matchupId
   );
   if (settledMatchup) {
-    const summary = await syncGenesisPickSummary(settledMatchup);
+    const summary = await syncGenesisPickSummary(settledMatchup, {
+      createIfMissing: false,
+    });
     if (
       summary.matchup.pickSummaryMessageId !==
       settledMatchup.pickSummaryMessageId

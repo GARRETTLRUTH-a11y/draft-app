@@ -100,13 +100,18 @@ export async function POST(request: Request) {
     );
   }
 
+  const kickoffChanged =
+    currentMatchup.scheduledKickoffAt !== scheduledKickoffAt;
+
   const updatedMatchup: GenesisPickMatchup = {
     ...currentMatchup,
     scheduledKickoffAt,
     autoLockAtKickoff: scheduledKickoffAt
       ? payload.autoLockAtKickoff !== false
       : undefined,
-    kickoffReminderSentAt: undefined,
+    kickoffReminderSentAt: kickoffChanged
+      ? undefined
+      : currentMatchup.kickoffReminderSentAt,
   };
 
   const discordSchedule = await syncGenesisKickoffScheduleMessage(updatedMatchup);

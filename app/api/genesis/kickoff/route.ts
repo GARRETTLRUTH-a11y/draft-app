@@ -4,12 +4,108 @@ import { supabase } from "@/lib/supabaseClient";
 import type { GenesisPickMatchup, SeasonData } from "@/lib/season";
 import { syncGenesisKickoffScheduleMessage } from "@/lib/genesisPicks";
 
+const SUPPORTED_KICKOFF_TIME_ZONES = new Set([
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+]);
+
 type Payload = {
   seasonId?: string;
   matchupId?: string;
-  scheduledKickoffAt?: string | null;
+  scheduledKickoffLocal?: string | null;
+  scheduledKickoffTimeZone?: string | null;
   autoLockAtKickoff?: boolean;
 };
+
+function zonedLocalToIso(localValue: string, timeZone: string) {
+  const match = localValue.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+  );
+  if (!match) return null;
+
+  const [, y, mo, d, h, mi] = match;
+  const targetParts = {
+    year: Number(y),
+    month: Number(mo),
+    day: Number(d),
+    hour: Number(h),
+    minute: Number(mi),
+  };
+
+  const targetUtc = Date.UTC(
+    targetParts.year,
+    targetParts.month - 1,
+    targetParts.day,
+    targetParts.hour,
+    targetParts.minute,
+    0,
+    0
+  );
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const partsAt = (timestamp: number) => {
+    const parts = formatter.formatToParts(new Date(timestamp));
+    const values = Object.fromEntries(
+      parts
+        .filter((part) =>
+          ["year", "month", "day", "hour", "minute"].includes(part.type)
+        )
+        .map((part) => [part.type, Number(part.value)])
+    ) as Record<string, number>;
+
+    return {
+      year: values.year,
+      month: values.month,
+      day: values.day,
+      hour: values.hour,
+      minute: values.minute,
+    };
+  };
+
+  let guess = targetUtc;
+  for (let index = 0; index < 4; index++) {
+    const shown = partsAt(guess);
+    const shownAsUtc = Date.UTC(
+      shown.year,
+      shown.month - 1,
+      shown.day,
+      shown.hour,
+      shown.minute,
+      0,
+      0
+    );
+    const delta = targetUtc - shownAsUtc;
+    guess += delta;
+    if (delta === 0) break;
+  }
+
+  const finalParts = partsAt(guess);
+  if (
+    finalParts.year !== targetParts.year ||
+    finalParts.month !== targetParts.month ||
+    finalParts.day !== targetParts.day ||
+    finalParts.hour !== targetParts.hour ||
+    finalParts.minute !== targetParts.minute
+  ) {
+    return null;
+  }
+
+  return new Date(guess).toISOString();
+}
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -33,7 +129,10 @@ export async function POST(request: Request) {
 
   const seasonId = payload.seasonId?.trim();
   const matchupId = payload.matchupId?.trim();
-  const scheduledKickoffAt = payload.scheduledKickoffAt?.trim() || undefined;
+  const scheduledKickoffLocal =
+    payload.scheduledKickoffLocal?.trim() || undefined;
+  const scheduledKickoffTimeZone =
+    payload.scheduledKickoffTimeZone?.trim() || undefined;
 
   if (!seasonId || !matchupId) {
     return NextResponse.json(
@@ -43,11 +142,27 @@ export async function POST(request: Request) {
   }
 
   if (
-    scheduledKickoffAt &&
-    !Number.isFinite(new Date(scheduledKickoffAt).getTime())
+    scheduledKickoffLocal &&
+    (!scheduledKickoffTimeZone ||
+      !SUPPORTED_KICKOFF_TIME_ZONES.has(scheduledKickoffTimeZone))
   ) {
     return NextResponse.json(
-      { error: "Scheduled kickoff time is invalid." },
+      { error: "Choose a supported kickoff time zone." },
+      { status: 400 }
+    );
+  }
+
+  const scheduledKickoffAt =
+    scheduledKickoffLocal && scheduledKickoffTimeZone
+      ? zonedLocalToIso(scheduledKickoffLocal, scheduledKickoffTimeZone)
+      : undefined;
+
+  if (scheduledKickoffLocal && !scheduledKickoffAt) {
+    return NextResponse.json(
+      {
+        error:
+          "That kickoff time is invalid in the selected time zone. Check the date/time, especially around daylight-saving changes.",
+      },
       { status: 400 }
     );
   }
@@ -101,11 +216,15 @@ export async function POST(request: Request) {
   }
 
   const kickoffChanged =
-    currentMatchup.scheduledKickoffAt !== scheduledKickoffAt;
+    currentMatchup.scheduledKickoffAt !== scheduledKickoffAt ||
+    currentMatchup.scheduledKickoffTimeZone !== scheduledKickoffTimeZone;
 
   const updatedMatchup: GenesisPickMatchup = {
     ...currentMatchup,
     scheduledKickoffAt,
+    scheduledKickoffTimeZone: scheduledKickoffAt
+      ? scheduledKickoffTimeZone
+      : undefined,
     autoLockAtKickoff: scheduledKickoffAt
       ? payload.autoLockAtKickoff !== false
       : undefined,
@@ -143,6 +262,7 @@ export async function POST(request: Request) {
     ok: true,
     matchupId,
     scheduledKickoffAt: savedMatchup.scheduledKickoffAt,
+    scheduledKickoffTimeZone: savedMatchup.scheduledKickoffTimeZone,
     autoLockAtKickoff: savedMatchup.autoLockAtKickoff,
     discordWarning: discordSchedule.warning,
   });

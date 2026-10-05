@@ -2832,11 +2832,8 @@ export default function SeasonRoomPage() {
               every matchup.
             </p>
 
-            <details
-              className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4"
-              defaultOpen={mappedTeamRoleCount < leagueTeamNames.length}
-            >
-              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+            <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="font-black text-white">🏷️ Team → Discord Role Mapping</p>
                   <p className="mt-1 text-xs text-slate-400">
@@ -2846,7 +2843,7 @@ export default function SeasonRoomPage() {
                 <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
                   {mappedTeamRoleCount}/{leagueTeamNames.length} mapped
                 </span>
-              </summary>
+              </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2">
                 <button
@@ -2919,7 +2916,7 @@ export default function SeasonRoomPage() {
                   );
                 })}
               </div>
-            </details>
+            </div>
 
             <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
               <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">

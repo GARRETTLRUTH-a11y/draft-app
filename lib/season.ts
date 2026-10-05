@@ -92,7 +92,11 @@ export type GenesisPickMatchup = {
   awayLine: number;
   status: "open" | "locked" | "settled" | "voided";
   picks: Record<string, GenesisPick>;
+  starterMessageId?: string;
   pickSummaryMessageId?: string;
+  scheduledKickoffAt?: string;
+  autoLockAtKickoff?: boolean;
+  kickoffReminderSentAt?: string;
   finalAwayScore?: number;
   finalHomeScore?: number;
   atsWinner?: GenesisPickSide | "push";

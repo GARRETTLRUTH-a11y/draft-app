@@ -5,6 +5,7 @@ import type { GenesisVoidReason, SeasonData } from "@/lib/season";
 import {
   postGenesisVoidToThread,
   syncGenesisLeaderboard,
+  syncGenesisPickSummary,
   voidGenesisMatchup,
 } from "@/lib/genesisPicks";
 
@@ -85,6 +86,27 @@ export async function POST(request: Request) {
   }
 
   let nextSeasonData: SeasonData = voided.seasonData;
+  const voidedMatchup = nextSeasonData.genesisPicks?.matchups.find(
+    (item) => item.id === matchupId
+  );
+  if (voidedMatchup) {
+    const summary = await syncGenesisPickSummary(voidedMatchup);
+    if (
+      summary.matchup.pickSummaryMessageId !==
+      voidedMatchup.pickSummaryMessageId
+    ) {
+      nextSeasonData = {
+        ...nextSeasonData,
+        genesisPicks: {
+          ...nextSeasonData.genesisPicks!,
+          matchups: nextSeasonData.genesisPicks!.matchups.map((item) =>
+            item.id === matchupId ? summary.matchup : item
+          ),
+        },
+      };
+    }
+  }
+
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;
 

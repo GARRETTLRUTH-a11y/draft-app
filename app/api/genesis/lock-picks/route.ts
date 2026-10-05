@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import type { SeasonData } from "@/lib/season";
-import { syncGenesisLeaderboard } from "@/lib/genesisPicks";
+import {
+  syncGenesisLeaderboard,
+  syncGenesisPickSummary,
+} from "@/lib/genesisPicks";
 
 type Payload = {
   seasonId?: string;
@@ -145,6 +148,23 @@ export async function POST(request: Request) {
     },
   };
 
+  const lockedMatchup = matchups.find((item) => item.id === matchupId)!;
+  const summary = await syncGenesisPickSummary(lockedMatchup);
+  if (
+    summary.matchup.pickSummaryMessageId !==
+    lockedMatchup.pickSummaryMessageId
+  ) {
+    nextSeasonData = {
+      ...nextSeasonData,
+      genesisPicks: {
+        ...nextSeasonData.genesisPicks!,
+        matchups: matchups.map((item) =>
+          item.id === matchupId ? summary.matchup : item
+        ),
+      },
+    };
+  }
+
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;
 
@@ -171,5 +191,6 @@ export async function POST(request: Request) {
     pickCount,
     discordPosted,
     leaderboardWarning: leaderboard.warning,
+    pickSummaryWarning: summary.warning,
   });
 }

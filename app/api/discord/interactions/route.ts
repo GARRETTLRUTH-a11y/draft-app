@@ -15,6 +15,7 @@ import {
   postGenesisFinalToThread,
   settleGenesisMatchupByScore,
   syncGenesisLeaderboard,
+  syncGenesisPickSummary,
 } from "@/lib/genesisPicks";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
@@ -380,38 +381,6 @@ async function markPlayerReady(
   );
 }
 
-async function postGenesisPickAnnouncement(
-  threadId: string,
-  discordUserId: string,
-  team: string,
-  signedLine: number
-) {
-  const botToken = process.env.DISCORD_BOT_TOKEN;
-  if (!botToken) return false;
-
-  const lineText =
-    signedLine === 0
-      ? "PK"
-      : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-
-  const response = await fetch(
-    `https://discord.com/api/v10/channels/${threadId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bot ${botToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        content: `🎯 <@${discordUserId}> picked **${team} ${lineText}**`,
-        allowed_mentions: { users: [discordUserId], parse: [] },
-      }),
-    }
-  );
-
-  return response.ok;
-}
-
 function normalizeGenesisTeam(value: string | undefined) {
   return (value || "").trim().toLowerCase();
 }
@@ -569,13 +538,32 @@ export async function POST(request: Request) {
         : item
     );
 
-    const nextSeasonData: SeasonData = {
+    let nextSeasonData: SeasonData = {
       ...seasonData,
       genesisPicks: {
         ...picksState,
         matchups: nextMatchups,
       },
     };
+
+    const lockedSummaryMatchup = nextMatchups.find(
+      (item) => item.id === matchup.id
+    )!;
+    const pickSummary = await syncGenesisPickSummary(lockedSummaryMatchup);
+    if (
+      pickSummary.matchup.pickSummaryMessageId !==
+      lockedSummaryMatchup.pickSummaryMessageId
+    ) {
+      nextSeasonData = {
+        ...nextSeasonData,
+        genesisPicks: {
+          ...nextSeasonData.genesisPicks!,
+          matchups: nextMatchups.map((item) =>
+            item.id === matchup.id ? pickSummary.matchup : item
+          ),
+        },
+      };
+    }
 
     const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
     const syncedSeasonData = leaderboard.seasonData;
@@ -864,21 +852,45 @@ export async function POST(request: Request) {
         return ephemeral("Couldn't save your Genesis pick. Try again.");
       }
 
+      const savedMatchup = nextMatchups.find((item) => item.id === matchupId)!;
+      const summary = await syncGenesisPickSummary(savedMatchup);
+
+      if (
+        summary.matchup.pickSummaryMessageId !==
+        savedMatchup.pickSummaryMessageId
+      ) {
+        const summarySeasonData: SeasonData = {
+          ...nextSeasonData,
+          genesisPicks: {
+            ...nextSeasonData.genesisPicks!,
+            matchups: nextMatchups.map((item) =>
+              item.id === matchupId ? summary.matchup : item
+            ),
+          },
+        };
+
+        await admin
+          .from("seasons")
+          .update({
+            season_data: summarySeasonData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", seasonId);
+      }
+
       const team = side === "away" ? matchup.awayTeam : matchup.homeTeam;
       const signedLine = side === "away" ? matchup.awayLine : -matchup.awayLine;
       const lineText =
         signedLine === 0
           ? "PK"
           : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-      await postGenesisPickAnnouncement(
-        matchup.threadId,
-        discordUserId,
-        team,
-        signedLine
-      );
 
       return ephemeral(
-        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.`
+        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.${
+          summary.warning
+            ? ` Pick saved, but the quiet thread summary could not update: ${summary.warning}`
+            : ""
+        }`
       );
     }
 
@@ -1044,7 +1056,32 @@ export async function POST(request: Request) {
         return ephemeral(settled.error);
       }
 
-      const leaderboard = await syncGenesisLeaderboard(settled.seasonData);
+      let settledSeasonData = settled.seasonData;
+      const settledSummaryMatchup = settledSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (settledSummaryMatchup) {
+        const pickSummary = await syncGenesisPickSummary(
+          settledSummaryMatchup,
+          { createIfMissing: false }
+        );
+        if (
+          pickSummary.matchup.pickSummaryMessageId !==
+          settledSummaryMatchup.pickSummaryMessageId
+        ) {
+          settledSeasonData = {
+            ...settledSeasonData,
+            genesisPicks: {
+              ...settledSeasonData.genesisPicks!,
+              matchups: settledSeasonData.genesisPicks!.matchups.map((item) =>
+                item.id === matchupId ? pickSummary.matchup : item
+              ),
+            },
+          };
+        }
+      }
+
+      const leaderboard = await syncGenesisLeaderboard(settledSeasonData);
       const nextSeasonData = leaderboard.seasonData;
 
       const { error: updateError } = await admin
@@ -1136,13 +1173,32 @@ export async function POST(request: Request) {
           : item
       );
 
-      const nextSeasonData: SeasonData = {
+      let nextSeasonData: SeasonData = {
         ...resolved.seasonData,
         genesisPicks: {
           ...picksState,
           matchups: nextMatchups,
         },
       };
+
+      const lockedSummaryMatchup = nextMatchups.find(
+        (item) => item.id === matchupId
+      )!;
+      const pickSummary = await syncGenesisPickSummary(lockedSummaryMatchup);
+      if (
+        pickSummary.matchup.pickSummaryMessageId !==
+        lockedSummaryMatchup.pickSummaryMessageId
+      ) {
+        nextSeasonData = {
+          ...nextSeasonData,
+          genesisPicks: {
+            ...nextSeasonData.genesisPicks!,
+            matchups: nextMatchups.map((item) =>
+              item.id === matchupId ? pickSummary.matchup : item
+            ),
+          },
+        };
+      }
 
       const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
       const syncedSeasonData = leaderboard.seasonData;

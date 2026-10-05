@@ -283,6 +283,29 @@ export async function syncGenesisStarterButtons(
   return { ok: response.ok, skipped: false };
 }
 
+function genesisKickoffZoneDisplay(matchup: GenesisPickMatchup) {
+  if (!matchup.scheduledKickoffAt || !matchup.scheduledKickoffTimeZone) {
+    return null;
+  }
+
+  const date = new Date(matchup.scheduledKickoffAt);
+  if (!Number.isFinite(date.getTime())) return null;
+
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: matchup.scheduledKickoffTimeZone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(date);
+  } catch {
+    return matchup.scheduledKickoffTimeZone;
+  }
+}
+
 export async function syncGenesisKickoffScheduleMessage(
   matchup: GenesisPickMatchup
 ): Promise<{ matchup: GenesisPickMatchup; warning?: string }> {
@@ -319,9 +342,11 @@ export async function syncGenesisKickoffScheduleMessage(
   }
 
   const unix = Math.floor(kickoffMs / 1000);
+  const zoneDisplay = genesisKickoffZoneDisplay(matchup);
   const content = [
     "⏰ **GENESIS KICKOFF SCHEDULED**",
     `Kickoff: <t:${unix}:F> (<t:${unix}:R>)`,
+    ...(zoneDisplay ? [`Commissioner entry: **${zoneDisplay}**`] : []),
     matchup.autoLockAtKickoff === false
       ? "Genesis picks will stay open until /stream or a commissioner lock closes them."
       : "Genesis picks will automatically lock at kickoff if they are still open.",
@@ -397,6 +422,9 @@ export async function postGenesisKickoffReminder(
         content: [
           "⏰ **GENESIS KICKOFF REMINDER**",
           `Kickoff: <t:${unix}:F> (<t:${unix}:R>)`,
+          ...(genesisKickoffZoneDisplay(matchup)
+            ? [`Scheduled as: **${genesisKickoffZoneDisplay(matchup)}**`]
+            : []),
           matchup.autoLockAtKickoff === false
             ? "Genesis picks remain open until /stream or a commissioner lock closes them."
             : "Genesis picks will automatically lock at the scheduled kickoff time if they are still open.",

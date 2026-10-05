@@ -57,6 +57,7 @@ export async function deleteGenesisPvpThread(threadId: string) {
 
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
+  starterMessageId?: string;
   taggedUserIds: string[];
   genesisRoleTagged: boolean;
 };
@@ -152,7 +153,13 @@ export async function createGenesisPvpThread(
     throw new Error(`Could not create thread: ${body || createResponse.statusText}`);
   }
 
-  const thread = (await createResponse.json()) as { id: string; name?: string };
+  const thread = (await createResponse.json()) as {
+    id: string;
+    name?: string;
+    message?: { id?: string };
+  };
+  let starterMessageId =
+    isForumOrMedia ? thread.message?.id || thread.id : undefined;
 
   if (!isForumOrMedia) {
     const starterResponse = await discordApi(`/channels/${thread.id}/messages`, {
@@ -170,6 +177,9 @@ export async function createGenesisPvpThread(
         `Thread created, but could not post matchup message: ${body || starterResponse.statusText}`
       );
     }
+
+    const starter = (await starterResponse.json()) as { id?: string };
+    starterMessageId = starter.id;
   }
 
   // Public forum/text threads are visible to everyone who can access the
@@ -177,6 +187,7 @@ export async function createGenesisPvpThread(
   // thread member because Discord emits one noisy system message per add.
   return {
     thread,
+    starterMessageId,
     taggedUserIds: uniqueTaggedUsers,
     genesisRoleTagged: true,
   };

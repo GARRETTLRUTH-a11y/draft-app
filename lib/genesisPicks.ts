@@ -654,7 +654,7 @@ function matchingFinalGame(
 export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
   const state = seasonData.genesisPicks;
   if (!state?.matchups?.length || !seasonData.genesisHistory?.games?.length) {
-    return { seasonData, settledCount: 0 };
+    return { seasonData, settledCount: 0, settledMatchupIds: [] as string[] };
   }
 
   let settledCount = 0;

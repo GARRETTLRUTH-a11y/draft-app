@@ -58,14 +58,12 @@ function zonedLocalToIso(localValue: string, timeZone: string) {
   });
 
   const partsAt = (timestamp: number) => {
-    const parts = formatter.formatToParts(new Date(timestamp));
-    const values = Object.fromEntries(
-      parts
-        .filter((part) =>
-          ["year", "month", "day", "hour", "minute"].includes(part.type)
-        )
-        .map((part) => [part.type, Number(part.value)])
-    ) as Record<string, number>;
+    const values: Record<string, number> = {};
+    for (const part of formatter.formatToParts(new Date(timestamp))) {
+      if (["year", "month", "day", "hour", "minute"].includes(part.type)) {
+        values[part.type] = Number(part.value);
+      }
+    }
 
     return {
       year: values.year,

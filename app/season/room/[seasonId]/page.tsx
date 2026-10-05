@@ -188,6 +188,21 @@ type PvpBatchGame = {
   separator: "@" | "vs.";
 };
 
+type DiscordRoleOption = {
+  id: string;
+  name: string;
+  color: number;
+  position: number;
+};
+
+function normalizeDiscordRoleLabel(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
 export default function SeasonRoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -275,6 +290,10 @@ export default function SeasonRoomPage() {
   const [ratingOffenseInput, setRatingOffenseInput] = useState("");
   const [ratingDefenseInput, setRatingDefenseInput] = useState("");
   const [ratingEditorError, setRatingEditorError] = useState("");
+  const [discordTeamRoles, setDiscordTeamRoles] = useState<DiscordRoleOption[]>([]);
+  const [isLoadingDiscordTeamRoles, setIsLoadingDiscordTeamRoles] = useState(false);
+  const [discordTeamRolesStatus, setDiscordTeamRolesStatus] = useState("");
+  const [savingDiscordTeamRoleTeam, setSavingDiscordTeamRoleTeam] = useState<string | null>(null);
 
   async function loadParticipants(roomSeasonId = seasonId) {
     if (!roomSeasonId) return;
@@ -416,6 +435,10 @@ export default function SeasonRoomPage() {
       ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
     [players]
   );
+
+  const mappedTeamRoleCount = leagueTeamNames.filter(
+    (team) => Boolean(seasonData?.discordTeamRoleIds?.[team])
+  ).length;
 
   useEffect(() => {
     if (!seasonData) return;
@@ -625,6 +648,22 @@ export default function SeasonRoomPage() {
 
   // Non-owners are always in "player" mode. The host toggles between the two.
   const showCommissionerControls = isOwner && adminView === "commissioner";
+
+  useEffect(() => {
+    if (
+      !showCommissionerControls ||
+      !season ||
+      discordTeamRoles.length > 0 ||
+      isLoadingDiscordTeamRoles
+    ) {
+      return;
+    }
+
+    void loadDiscordTeamRoles();
+    // Role loading is intentionally one-shot per commissioner page visit.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCommissionerControls, season?.id]);
+
   const showPlayerStatus =
     Boolean(myParticipant && myPlayer) && (!isOwner || adminView === "player");
 
@@ -746,6 +785,118 @@ export default function SeasonRoomPage() {
     const nextSeasonData = mutate(fresh);
     const saved = await saveRoomSeason(nextSeasonData);
     return saved ? nextSeasonData : null;
+  }
+
+  async function loadDiscordTeamRoles() {
+    if (!season || isLoadingDiscordTeamRoles) return;
+
+    setIsLoadingDiscordTeamRoles(true);
+    setDiscordTeamRolesStatus("");
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setDiscordTeamRolesStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch(
+        `/api/discord/team-roles?seasonId=${encodeURIComponent(season.id)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const result = (await response.json()) as {
+        roles?: DiscordRoleOption[];
+        error?: string;
+      };
+
+      if (!response.ok) {
+        setDiscordTeamRolesStatus(
+          result.error || "Could not load Discord roles."
+        );
+        return;
+      }
+
+      setDiscordTeamRoles(result.roles || []);
+      setDiscordTeamRolesStatus(
+        `Loaded ${result.roles?.length || 0} assignable Discord roles.`
+      );
+    } catch (error) {
+      setDiscordTeamRolesStatus(
+        error instanceof Error
+          ? `Could not load Discord roles: ${error.message}`
+          : "Could not load Discord roles."
+      );
+    } finally {
+      setIsLoadingDiscordTeamRoles(false);
+    }
+  }
+
+  async function saveDiscordTeamRole(team: string, roleId: string) {
+    setSavingDiscordTeamRoleTeam(team);
+
+    const saved = await updateSeasonData((fresh) => {
+      const nextRoleMap = { ...(fresh.discordTeamRoleIds || {}) };
+      if (roleId) {
+        nextRoleMap[team] = roleId;
+      } else {
+        delete nextRoleMap[team];
+      }
+
+      return {
+        ...fresh,
+        discordTeamRoleIds: nextRoleMap,
+      };
+    });
+
+    if (saved) {
+      const roleName = discordTeamRoles.find((role) => role.id === roleId)?.name;
+      setMessage(
+        roleId
+          ? `Mapped ${team} → @${roleName || roleId}.`
+          : `Cleared the Discord role mapping for ${team}.`
+      );
+    }
+
+    setSavingDiscordTeamRoleTeam(null);
+  }
+
+  async function autoMapExactDiscordRoles() {
+    if (!discordTeamRoles.length) {
+      await loadDiscordTeamRoles();
+      return;
+    }
+
+    let added = 0;
+    const saved = await updateSeasonData((fresh) => {
+      const nextRoleMap = { ...(fresh.discordTeamRoleIds || {}) };
+
+      for (const team of leagueTeamNames) {
+        if (nextRoleMap[team]) continue;
+        const normalizedTeam = normalizeDiscordRoleLabel(team);
+        const match = discordTeamRoles.find(
+          (role) => normalizeDiscordRoleLabel(role.name) === normalizedTeam
+        );
+        if (!match) continue;
+        nextRoleMap[team] = match.id;
+        added++;
+      }
+
+      return {
+        ...fresh,
+        discordTeamRoleIds: nextRoleMap,
+      };
+    });
+
+    if (saved) {
+      setMessage(
+        added > 0
+          ? `Auto-mapped ${added} team role${added === 1 ? "" : "s"}. Use the dropdowns for the remaining teams.`
+          : "No additional exact-name role matches were found. Use the dropdowns for the remaining teams."
+      );
+    }
   }
 
   function openTeamRatings(player: SeasonPlayer) {
@@ -2680,6 +2831,95 @@ export default function SeasonRoomPage() {
               apply to the whole batch. RTA generates a separate Genesis line and Discord thread for
               every matchup.
             </p>
+
+            <details
+              className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4"
+              defaultOpen={mappedTeamRoleCount < leagueTeamNames.length}
+            >
+              <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="font-black text-white">🏷️ Team → Discord Role Mapping</p>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Map each dynasty team to its real Discord role once. RTA uses the saved role ID for thread tags and player-only game controls even when the Discord role name is different.
+                  </p>
+                </div>
+                <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
+                  {mappedTeamRoleCount}/{leagueTeamNames.length} mapped
+                </span>
+              </summary>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={loadDiscordTeamRoles}
+                  disabled={isLoadingDiscordTeamRoles}
+                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isLoadingDiscordTeamRoles ? "Loading Roles..." : "Refresh Discord Roles"}
+                </button>
+                <button
+                  type="button"
+                  onClick={autoMapExactDiscordRoles}
+                  disabled={isLoadingDiscordTeamRoles || discordTeamRoles.length === 0 || isSaving}
+                  className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Auto-map Exact Matches
+                </button>
+                {discordTeamRolesStatus && (
+                  <span className="text-xs font-semibold text-slate-400">
+                    {discordTeamRolesStatus}
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                {leagueTeamNames.map((team) => {
+                  const selectedRoleId =
+                    seasonData.discordTeamRoleIds?.[team] || "";
+                  const selectedRole = discordTeamRoles.find(
+                    (role) => role.id === selectedRoleId
+                  );
+
+                  return (
+                    <label
+                      key={team}
+                      className="rounded-xl border border-white/10 bg-slate-900/70 p-3"
+                    >
+                      <span className="block text-xs font-black text-white">
+                        {team}
+                      </span>
+                      <select
+                        value={selectedRoleId}
+                        onChange={(event) =>
+                          saveDiscordTeamRole(team, event.target.value)
+                        }
+                        disabled={
+                          isLoadingDiscordTeamRoles ||
+                          savingDiscordTeamRoleTeam === team
+                        }
+                        className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
+                      >
+                        <option value="">Not mapped — exact-name fallback</option>
+                        {discordTeamRoles.map((role) => (
+                          <option key={role.id} value={role.id}>
+                            @{role.name}
+                          </option>
+                        ))}
+                      </select>
+                      <span className="mt-1 block text-[11px] text-slate-500">
+                        {savingDiscordTeamRoleTeam === team
+                          ? "Saving..."
+                          : selectedRole
+                            ? `Using @${selectedRole.name}`
+                            : selectedRoleId
+                              ? "Saved role is no longer in the current Discord role list."
+                              : "Choose the role held by the user who controls this team."}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </details>
 
             <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
               <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">

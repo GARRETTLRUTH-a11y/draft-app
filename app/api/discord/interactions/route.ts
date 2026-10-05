@@ -473,6 +473,19 @@ async function resolveGenesisMatchupById(
   return { seasonId, seasonData, matchup };
 }
 
+async function resolveGenesisRoleIdForTeam(
+  team: string,
+  guildId: string | undefined,
+  teamRoleMap?: Record<string, string>
+) {
+  const mappedRoleId = teamRoleMap?.[team];
+  if (mappedRoleId) return mappedRoleId;
+  if (!guildId) return undefined;
+
+  const fallbackRoleIds = await resolveGenesisTeamRoleIds([team], guildId);
+  return fallbackRoleIds[0];
+}
+
 async function authorizeGenesisMatchupRole(
   matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number],
   guildId: string | undefined,
@@ -1131,6 +1144,21 @@ export async function POST(request: Request) {
       }
       if (matchup.status === "voided") {
         return ephemeral("🚫 This Genesis line was voided; picks do not count.");
+      }
+
+      const selectedTeam =
+        side === "away" ? matchup.awayTeam : matchup.homeTeam;
+      const selectedTeamRoleId = await resolveGenesisRoleIdForTeam(
+        selectedTeam,
+        interaction.guild_id,
+        seasonData.discordTeamRoleIds
+      );
+      const memberRoles = new Set(interaction.member?.roles || []);
+
+      if (selectedTeamRoleId && memberRoles.has(selectedTeamRoleId)) {
+        return ephemeral(
+          `🚫 You can't make a Genesis pick on your own team (**${selectedTeam}**). You may pick the opponent instead.`
+        );
       }
 
       const previous = matchup.picks[discordUserId];

@@ -102,6 +102,106 @@ export function buildGenesisPickComponents(
   ];
 }
 
+function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
+  const picks = Object.values(matchup.picks || {}).sort((a, b) =>
+    a.pickedAt.localeCompare(b.pickedAt)
+  );
+
+  const statusLine =
+    matchup.status === "open"
+      ? `🟢 **Picks open** · ${picks.length} submitted`
+      : matchup.status === "locked"
+        ? `🔒 **Picks closed** · ${picks.length} locked in`
+        : matchup.status === "voided"
+          ? "🚫 **VOID — picks canceled**"
+          : `🏁 **Final** · ${picks.length} picks`;
+
+  const lines = [
+    "🎯 **GENESIS PICKS**",
+    `**${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}**`,
+    statusLine,
+    "",
+  ];
+
+  if (!picks.length) {
+    lines.push("No picks yet.");
+  } else {
+    for (const pick of picks) {
+      const team =
+        pick.side === "away" ? matchup.awayTeam : matchup.homeTeam;
+      const signedLine =
+        pick.side === "away" ? matchup.awayLine : -matchup.awayLine;
+      const lineText =
+        signedLine === 0
+          ? "PK"
+          : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+      const username = (pick.discordUsername || "Discord user")
+        .replace(/[\`*_~|>]/g, "")
+        .slice(0, 40);
+
+      lines.push(`• ${username} — **${team} ${lineText}**`);
+    }
+  }
+
+  lines.push("", "_This message updates in place to reduce notifications._");
+  return lines.join("\n").slice(0, 2000);
+}
+
+export async function syncGenesisPickSummary(
+  matchup: GenesisPickMatchup
+): Promise<{ matchup: GenesisPickMatchup; warning?: string }> {
+  const content = genesisPickSummaryContent(matchup);
+  let messageId = matchup.pickSummaryMessageId;
+
+  if (messageId) {
+    const editResponse = await discordApi(
+      `/channels/${matchup.threadId}/messages/${messageId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] as string[] },
+        }),
+      }
+    );
+
+    if (editResponse.ok) {
+      return { matchup };
+    }
+
+    messageId = undefined;
+  }
+
+  const postResponse = await discordApi(
+    `/channels/${matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  if (!postResponse.ok) {
+    const body = await postResponse.text();
+    return {
+      matchup,
+      warning:
+        `Could not create the Genesis picks summary: ${body || postResponse.statusText}`,
+    };
+  }
+
+  const message = (await postResponse.json()) as { id: string };
+
+  return {
+    matchup: {
+      ...matchup,
+      pickSummaryMessageId: message.id,
+    },
+  };
+}
+
 export function createGenesisPickMatchup(input: {
   id: string;
   threadId: string;

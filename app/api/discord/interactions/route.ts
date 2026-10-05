@@ -1146,18 +1146,26 @@ export async function POST(request: Request) {
         return ephemeral("🚫 This Genesis line was voided; picks do not count.");
       }
 
-      const selectedTeam =
-        side === "away" ? matchup.awayTeam : matchup.homeTeam;
-      const selectedTeamRoleId = await resolveGenesisRoleIdForTeam(
-        selectedTeam,
-        interaction.guild_id,
-        seasonData.discordTeamRoleIds
-      );
+      const [awayTeamRoleId, homeTeamRoleId] = await Promise.all([
+        resolveGenesisRoleIdForTeam(
+          matchup.awayTeam,
+          interaction.guild_id,
+          seasonData.discordTeamRoleIds
+        ),
+        resolveGenesisRoleIdForTeam(
+          matchup.homeTeam,
+          interaction.guild_id,
+          seasonData.discordTeamRoleIds
+        ),
+      ]);
       const memberRoles = new Set(interaction.member?.roles || []);
+      const isMatchupParticipant =
+        Boolean(awayTeamRoleId && memberRoles.has(awayTeamRoleId)) ||
+        Boolean(homeTeamRoleId && memberRoles.has(homeTeamRoleId));
 
-      if (selectedTeamRoleId && memberRoles.has(selectedTeamRoleId)) {
+      if (isMatchupParticipant) {
         return ephemeral(
-          `🚫 You can't make a Genesis pick on your own team (**${selectedTeam}**). You may pick the opponent instead.`
+          `🚫 You can't make a Genesis pick on **${matchup.awayTeam} vs. ${matchup.homeTeam}** because your team is playing in this matchup.`
         );
       }
 

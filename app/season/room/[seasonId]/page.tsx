@@ -67,6 +67,26 @@ const MANAGE_PLAYERS_TEAM_ORDER = [
   "Wisconsin",
 ];
 
+const DEFAULT_KICKOFF_TIME_ZONE = "America/New_York";
+
+const KICKOFF_TIME_ZONES = [
+  { value: "America/New_York", label: "Eastern (ET)" },
+  { value: "America/Chicago", label: "Central (CT)" },
+  { value: "America/Denver", label: "Mountain (MT)" },
+  { value: "America/Los_Angeles", label: "Pacific (PT)" },
+  { value: "America/Phoenix", label: "Arizona (MST)" },
+  { value: "America/Anchorage", label: "Alaska (AKT)" },
+  { value: "Pacific/Honolulu", label: "Hawaii (HST)" },
+] as const;
+
+function kickoffTimeZoneLabel(timeZone: string) {
+  return (
+    KICKOFF_TIME_ZONES.find((option) => option.value === timeZone)?.label ||
+    timeZone
+  );
+}
+
+
 function formatClock(totalSeconds: number) {
   const clamped = Math.max(0, totalSeconds);
   const hours = Math.floor(clamped / 3600);
@@ -79,23 +99,50 @@ function formatClock(totalSeconds: number) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
-function toLocalDateTimeInputValue(iso?: string) {
+function toLocalDateTimeInputValue(
+  iso?: string,
+  timeZone = DEFAULT_KICKOFF_TIME_ZONE
+) {
   if (!iso) return "";
   const date = new Date(iso);
   if (!Number.isFinite(date.getTime())) return "";
 
-  const pad = (value: number) => String(value).padStart(2, "0");
-  return [
-    date.getFullYear(),
-    "-",
-    pad(date.getMonth() + 1),
-    "-",
-    pad(date.getDate()),
-    "T",
-    pad(date.getHours()),
-    ":",
-    pad(date.getMinutes()),
-  ].join("");
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    if (["year", "month", "day", "hour", "minute"].includes(part.type)) {
+      values[part.type] = part.value;
+    }
+  }
+
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
+}
+
+function formatKickoffInTimeZone(
+  iso: string,
+  timeZone = DEFAULT_KICKOFF_TIME_ZONE
+) {
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return iso;
+
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date);
 }
 
 
@@ -219,7 +266,7 @@ export default function SeasonRoomPage() {
   const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
   const [deletingGenesisMatchupId, setDeletingGenesisMatchupId] = useState<string | null>(null);
   const [genesisKickoffInputs, setGenesisKickoffInputs] = useState<
-    Record<string, { local: string; autoLock: boolean }>
+    Record<string, { local: string; timeZone: string; autoLock: boolean }>
   >({});
   const [savingGenesisKickoffId, setSavingGenesisKickoffId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
@@ -1147,19 +1194,18 @@ export default function SeasonRoomPage() {
     }
 
     const draft = genesisKickoffInputs[matchupId] || {
-      local: toLocalDateTimeInputValue(matchup.scheduledKickoffAt),
+      local: toLocalDateTimeInputValue(
+        matchup.scheduledKickoffAt,
+        matchup.scheduledKickoffTimeZone || DEFAULT_KICKOFF_TIME_ZONE
+      ),
+      timeZone:
+        matchup.scheduledKickoffTimeZone || DEFAULT_KICKOFF_TIME_ZONE,
       autoLock: matchup.autoLockAtKickoff !== false,
     };
     const local = clearSchedule ? "" : draft.local;
 
     if (!clearSchedule && !local) {
       setGenesisFinalizeStatus("Choose a scheduled kickoff time first.");
-      return;
-    }
-
-    const kickoffDate = local ? new Date(local) : null;
-    if (kickoffDate && !Number.isFinite(kickoffDate.getTime())) {
-      setGenesisFinalizeStatus("Choose a valid kickoff date and time.");
       return;
     }
 
@@ -1185,7 +1231,8 @@ export default function SeasonRoomPage() {
         body: JSON.stringify({
           seasonId: season.id,
           matchupId,
-          scheduledKickoffAt: kickoffDate ? kickoffDate.toISOString() : null,
+          scheduledKickoffLocal: local || null,
+          scheduledKickoffTimeZone: local ? draft.timeZone : null,
           autoLockAtKickoff: draft.autoLock,
         }),
       });
@@ -1193,6 +1240,7 @@ export default function SeasonRoomPage() {
       const result = (await response.json()) as {
         error?: string;
         scheduledKickoffAt?: string;
+        scheduledKickoffTimeZone?: string;
         autoLockAtKickoff?: boolean;
         discordWarning?: string;
       };
@@ -1213,7 +1261,16 @@ export default function SeasonRoomPage() {
 
       let status = clearSchedule
         ? "✅ Scheduled kickoff cleared."
-        : `✅ Kickoff scheduled for ${kickoffDate!.toLocaleString()}.${
+        : `✅ Kickoff scheduled for ${
+            result.scheduledKickoffAt
+              ? formatKickoffInTimeZone(
+                  result.scheduledKickoffAt,
+                  result.scheduledKickoffTimeZone || draft.timeZone
+                )
+              : local
+          } (${kickoffTimeZoneLabel(
+            result.scheduledKickoffTimeZone || draft.timeZone
+          )}).${
             draft.autoLock
               ? " Genesis will auto-lock at kickoff."
               : " Genesis will wait for /stream or a commissioner lock."
@@ -2987,7 +3044,14 @@ export default function SeasonRoomPage() {
                     };
                     const pickCount = Object.keys(matchup.picks || {}).length;
                     const kickoffDraft = genesisKickoffInputs[matchup.id] || {
-                      local: toLocalDateTimeInputValue(matchup.scheduledKickoffAt),
+                      local: toLocalDateTimeInputValue(
+                        matchup.scheduledKickoffAt,
+                        matchup.scheduledKickoffTimeZone ||
+                          DEFAULT_KICKOFF_TIME_ZONE
+                      ),
+                      timeZone:
+                        matchup.scheduledKickoffTimeZone ||
+                        DEFAULT_KICKOFF_TIME_ZONE,
                       autoLock: matchup.autoLockAtKickoff !== false,
                     };
 
@@ -3021,7 +3085,14 @@ export default function SeasonRoomPage() {
                             </p>
                             {matchup.scheduledKickoffAt && (
                               <p className="mt-1 text-xs font-semibold text-cyan-200">
-                                ⏰ Kickoff: {new Date(matchup.scheduledKickoffAt).toLocaleString()}
+                                ⏰ Kickoff: {formatKickoffInTimeZone(
+                                  matchup.scheduledKickoffAt,
+                                  matchup.scheduledKickoffTimeZone ||
+                                    DEFAULT_KICKOFF_TIME_ZONE
+                                )} · {kickoffTimeZoneLabel(
+                                  matchup.scheduledKickoffTimeZone ||
+                                    DEFAULT_KICKOFF_TIME_ZONE
+                                )}
                                 {matchup.autoLockAtKickoff === false
                                   ? " · manual lock"
                                   : " · auto-lock enabled"}
@@ -3053,12 +3124,37 @@ export default function SeasonRoomPage() {
                                         ...current,
                                         [matchup.id]: {
                                           local: event.target.value,
+                                          timeZone: kickoffDraft.timeZone,
                                           autoLock: kickoffDraft.autoLock,
                                         },
                                       }))
                                     }
                                     className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
                                   />
+                                </label>
+
+                                <label className="flex min-w-[10rem] flex-col gap-1 text-[11px] font-bold text-slate-400">
+                                  Time zone
+                                  <select
+                                    value={kickoffDraft.timeZone}
+                                    onChange={(event) =>
+                                      setGenesisKickoffInputs((current) => ({
+                                        ...current,
+                                        [matchup.id]: {
+                                          local: kickoffDraft.local,
+                                          timeZone: event.target.value,
+                                          autoLock: kickoffDraft.autoLock,
+                                        },
+                                      }))
+                                    }
+                                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                                  >
+                                    {KICKOFF_TIME_ZONES.map((option) => (
+                                      <option key={option.value} value={option.value}>
+                                        {option.label}
+                                      </option>
+                                    ))}
+                                  </select>
                                 </label>
 
                                 <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs font-semibold text-slate-300">
@@ -3070,6 +3166,7 @@ export default function SeasonRoomPage() {
                                         ...current,
                                         [matchup.id]: {
                                           local: kickoffDraft.local,
+                                          timeZone: kickoffDraft.timeZone,
                                           autoLock: event.target.checked,
                                         },
                                       }))
@@ -3106,7 +3203,7 @@ export default function SeasonRoomPage() {
                                 )}
                               </div>
                               <p className="mt-2 text-[11px] text-slate-500">
-                                RTA will update one kickoff notice in the Discord thread, remind the players about 30 minutes before kickoff, and auto-lock only if that option is checked.
+                                Enter the time in the selected zone. Discord will display the equivalent local time for each user. RTA will update one kickoff notice, remind the players about 30 minutes before kickoff, and auto-lock only if that option is checked.
                               </p>
                             </div>
                           )}

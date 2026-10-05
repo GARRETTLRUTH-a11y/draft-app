@@ -6,6 +6,7 @@ import {
   postGenesisVoidToThread,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
+  syncGenesisStarterButtons,
   voidGenesisMatchup,
 } from "@/lib/genesisPicks";
 
@@ -107,6 +108,13 @@ export async function POST(request: Request) {
         },
       };
     }
+  }
+
+  const finalVoidMatchup = nextSeasonData.genesisPicks?.matchups.find(
+    (item) => item.id === matchupId
+  );
+  if (finalVoidMatchup) {
+    await syncGenesisStarterButtons(seasonId, finalVoidMatchup);
   }
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);

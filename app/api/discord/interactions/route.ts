@@ -938,24 +938,20 @@ export async function POST(request: Request) {
         return ephemeral("That Genesis final-score button is invalid.");
       }
 
-      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      const resolved = await resolveGenesisMatchupById(
+        admin,
+        seasonId,
+        matchupId
+      );
       if ("error" in resolved) return respondToResolveError(resolved);
 
-      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
-        (item) => item.id === matchupId
+      const matchup = resolved.matchup;
+      const roleAuth = await authorizeGenesisMatchupRole(
+        matchup,
+        interaction.guild_id,
+        interaction.member?.roles
       );
-      if (!matchup) {
-        return ephemeral("That Genesis matchup could not be found.");
-      }
-
-      const playerTeam = normalizeGenesisTeam(resolved.player.team);
-      const isMatchupPlayer =
-        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
-        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
-
-      if (!isMatchupPlayer) {
-        return ephemeral("Only one of the two players in this matchup can submit the final score.");
-      }
+      if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
       if (matchup.status === "settled") {
         return ephemeral("This Genesis matchup is already final.");
@@ -1017,24 +1013,20 @@ export async function POST(request: Request) {
         return ephemeral("That Genesis stream button is invalid.");
       }
 
-      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      const resolved = await resolveGenesisMatchupById(
+        admin,
+        seasonId,
+        matchupId
+      );
       if ("error" in resolved) return respondToResolveError(resolved);
 
-      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
-        (item) => item.id === matchupId
+      const matchup = resolved.matchup;
+      const roleAuth = await authorizeGenesisMatchupRole(
+        matchup,
+        interaction.guild_id,
+        interaction.member?.roles
       );
-      if (!matchup) {
-        return ephemeral("That Genesis matchup could not be found.");
-      }
-
-      const playerTeam = normalizeGenesisTeam(resolved.player.team);
-      const isMatchupPlayer =
-        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
-        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
-
-      if (!isMatchupPlayer) {
-        return ephemeral("Only one of the two players in this matchup can post the game stream and start it.");
-      }
+      if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
       if (matchup.status === "locked") {
         return ephemeral("🔒 Genesis picks are already closed for this game.");
@@ -1347,24 +1339,20 @@ export async function POST(request: Request) {
         return ephemeral("College football games cannot end in a tie.");
       }
 
-      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      const resolved = await resolveGenesisMatchupById(
+        admin,
+        seasonId,
+        matchupId
+      );
       if ("error" in resolved) return respondToResolveError(resolved);
 
-      const matchup = resolved.seasonData.genesisPicks?.matchups.find(
-        (item) => item.id === matchupId
+      const matchup = resolved.matchup;
+      const roleAuth = await authorizeGenesisMatchupRole(
+        matchup,
+        interaction.guild_id,
+        interaction.member?.roles
       );
-      if (!matchup) {
-        return ephemeral("That Genesis matchup could not be found.");
-      }
-
-      const playerTeam = normalizeGenesisTeam(resolved.player.team);
-      const isMatchupPlayer =
-        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
-        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
-
-      if (!isMatchupPlayer) {
-        return ephemeral("Only one of the two players in this matchup can submit the final score.");
-      }
+      if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
       const settled = settleGenesisMatchupByScore(
         resolved.seasonData,
@@ -1463,23 +1451,25 @@ export async function POST(request: Request) {
         return ephemeral("Use a valid YouTube or Twitch stream link.");
       }
 
-      const resolved = await resolvePlayer(admin, discordUserId, seasonId);
+      const resolved = await resolveGenesisMatchupById(
+        admin,
+        seasonId,
+        matchupId
+      );
       if ("error" in resolved) return respondToResolveError(resolved);
 
       const picksState = resolved.seasonData.genesisPicks;
-      const matchup = picksState?.matchups.find((item) => item.id === matchupId);
-      if (!picksState || !matchup) {
+      const matchup = resolved.matchup;
+      if (!picksState) {
         return ephemeral("That Genesis matchup could not be found.");
       }
 
-      const playerTeam = normalizeGenesisTeam(resolved.player.team);
-      const isMatchupPlayer =
-        playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
-        playerTeam === normalizeGenesisTeam(matchup.homeTeam);
-
-      if (!isMatchupPlayer) {
-        return ephemeral("Only one of the two players in this matchup can post the game stream and start it.");
-      }
+      const roleAuth = await authorizeGenesisMatchupRole(
+        matchup,
+        interaction.guild_id,
+        interaction.member?.roles
+      );
+      if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
       if (matchup.status === "locked") {
         return ephemeral("🔒 Genesis picks are already closed for this game.");
@@ -1496,6 +1486,7 @@ export async function POST(request: Request) {
         item.id === matchupId
           ? {
               ...item,
+              teamRoleIds: roleAuth.teamRoleIds,
               status: "locked" as const,
               lockedAt,
             }

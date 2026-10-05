@@ -194,6 +194,9 @@ export type SeasonData = {
   genesisHistory?: GenesisHistory;
   // Social ATS picks and the persistent Discord leaderboard.
   genesisPicks?: GenesisPicksState;
+  // Commissioner-defined mapping from the dynasty team name used by the
+  // season to the authoritative Discord role ID for that team.
+  discordTeamRoleIds?: Record<string, string>;
 };
 
 // The timezone reminder times are entered/interpreted in.

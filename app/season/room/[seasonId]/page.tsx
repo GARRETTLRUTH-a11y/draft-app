@@ -2969,9 +2969,9 @@ export default function SeasonRoomPage() {
               <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-black text-white">🏁 Finalize Genesis Games</h3>
+                    <h3 className="text-base font-black text-white">🏈 Active Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Lock picks when the game starts, enter the final score afterward, or void the line for an Auto Sim / Force Win.
+                      Set kickoff after the players agree on a time, then lock, finalize, void, or remake the matchup as needed.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
@@ -2986,6 +2986,10 @@ export default function SeasonRoomPage() {
                       home: "",
                     };
                     const pickCount = Object.keys(matchup.picks || {}).length;
+                    const kickoffDraft = genesisKickoffInputs[matchup.id] || {
+                      local: toLocalDateTimeInputValue(matchup.scheduledKickoffAt),
+                      autoLock: matchup.autoLockAtKickoff !== false,
+                    };
 
                     return (
                       <div
@@ -3035,6 +3039,77 @@ export default function SeasonRoomPage() {
                                 : "🟢 Picks open"}
                             </p>
                           </div>
+
+                          {matchup.status === "open" && (
+                            <div className="w-full rounded-xl border border-cyan-400/20 bg-cyan-400/[0.05] p-3">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <label className="flex min-w-[15rem] flex-1 flex-col gap-1 text-[11px] font-bold text-slate-400">
+                                  Scheduled kickoff
+                                  <input
+                                    type="datetime-local"
+                                    value={kickoffDraft.local}
+                                    onChange={(event) =>
+                                      setGenesisKickoffInputs((current) => ({
+                                        ...current,
+                                        [matchup.id]: {
+                                          local: event.target.value,
+                                          autoLock: kickoffDraft.autoLock,
+                                        },
+                                      }))
+                                    }
+                                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                                  />
+                                </label>
+
+                                <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs font-semibold text-slate-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={kickoffDraft.autoLock}
+                                    onChange={(event) =>
+                                      setGenesisKickoffInputs((current) => ({
+                                        ...current,
+                                        [matchup.id]: {
+                                          local: kickoffDraft.local,
+                                          autoLock: event.target.checked,
+                                        },
+                                      }))
+                                    }
+                                    className="h-4 w-4 accent-cyan-400"
+                                  />
+                                  Auto-lock picks at kickoff
+                                </label>
+
+                                <button
+                                  type="button"
+                                  onClick={() => saveGenesisKickoff(matchup.id)}
+                                  disabled={savingGenesisKickoffId === matchup.id}
+                                  className="rounded-xl bg-cyan-300 px-4 py-2 font-black text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {savingGenesisKickoffId === matchup.id
+                                    ? "Saving..."
+                                    : matchup.scheduledKickoffAt
+                                      ? "Update Kickoff"
+                                      : "Save Kickoff"}
+                                </button>
+
+                                {matchup.scheduledKickoffAt && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      saveGenesisKickoff(matchup.id, true)
+                                    }
+                                    disabled={savingGenesisKickoffId === matchup.id}
+                                    className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-slate-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Clear
+                                  </button>
+                                )}
+                              </div>
+                              <p className="mt-2 text-[11px] text-slate-500">
+                                RTA will update one kickoff notice in the Discord thread, remind the players about 30 minutes before kickoff, and auto-lock only if that option is checked.
+                              </p>
+                            </div>
+                          )}
 
                           <div className="flex flex-wrap items-end gap-2">
                             {matchup.status === "open" && (

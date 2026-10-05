@@ -699,14 +699,20 @@ export async function POST(request: Request) {
       return ephemeral("Choose a kickoff time zone from the list.");
     }
 
-    const resolved = await resolveGenesisMatchupForUserInThread(
+    const resolved = await resolveGenesisMatchupForThread(
       admin,
-      discordUserId,
       interaction.channel_id
     );
     if ("error" in resolved) return respondToResolveError(resolved);
 
     const { seasonId, seasonData, matchup } = resolved;
+    const roleAuth = await authorizeGenesisMatchupRole(
+      matchup,
+      interaction.guild_id,
+      interaction.member?.roles
+    );
+    if (!roleAuth.ok) return ephemeral(roleAuth.error);
+
     const picksState = seasonData.genesisPicks;
     if (!picksState) {
       return ephemeral("That Genesis matchup could not be found.");
@@ -740,6 +746,7 @@ export async function POST(request: Request) {
       ...matchup,
       scheduledKickoffAt,
       scheduledKickoffTimeZone: timeZone,
+      teamRoleIds: roleAuth.teamRoleIds,
       autoLockAtKickoff: matchup.autoLockAtKickoff !== false,
       kickoffReminderSentAt: kickoffChanged
         ? undefined
@@ -804,14 +811,20 @@ export async function POST(request: Request) {
       return ephemeral("Use a valid YouTube or Twitch stream link.");
     }
 
-    const resolved = await resolveGenesisMatchupForUserInThread(
+    const resolved = await resolveGenesisMatchupForThread(
       admin,
-      discordUserId,
       interaction.channel_id
     );
     if ("error" in resolved) return respondToResolveError(resolved);
 
     const { seasonId, seasonData, matchup } = resolved;
+    const roleAuth = await authorizeGenesisMatchupRole(
+      matchup,
+      interaction.guild_id,
+      interaction.member?.roles
+    );
+    if (!roleAuth.ok) return ephemeral(roleAuth.error);
+
     const picksState = seasonData.genesisPicks;
     if (!picksState) {
       return ephemeral("That Genesis matchup could not be found.");
@@ -832,6 +845,7 @@ export async function POST(request: Request) {
       item.id === matchup.id
         ? {
             ...item,
+            teamRoleIds: roleAuth.teamRoleIds,
             status: "locked" as const,
             lockedAt,
           }

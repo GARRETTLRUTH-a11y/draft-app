@@ -658,6 +658,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
   }
 
   let settledCount = 0;
+  const settledMatchupIds: string[] = [];
 
   const matchups = state.matchups.map((matchup) => {
     if (matchup.status === "settled" || matchup.status === "voided") return matchup;
@@ -675,6 +676,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
           : "home";
 
     settledCount++;
+    settledMatchupIds.push(matchup.id);
 
     return {
       ...matchup,
@@ -696,6 +698,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
       },
     },
     settledCount,
+    settledMatchupIds,
   };
 }
 

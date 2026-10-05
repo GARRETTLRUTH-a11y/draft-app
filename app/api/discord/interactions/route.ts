@@ -476,7 +476,8 @@ async function resolveGenesisMatchupById(
 async function authorizeGenesisMatchupRole(
   matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number],
   guildId: string | undefined,
-  memberRoleIds: string[] | undefined
+  memberRoleIds: string[] | undefined,
+  teamRoleMap?: Record<string, string>
 ): Promise<
   | { ok: true; teamRoleIds: string[] }
   | { ok: false; error: string }
@@ -488,19 +489,39 @@ async function authorizeGenesisMatchupRole(
     };
   }
 
-  let teamRoleIds = [...new Set((matchup.teamRoleIds || []).filter(Boolean))];
-  if (!teamRoleIds.length) {
-    teamRoleIds = await resolveGenesisTeamRoleIds(
-      [matchup.awayTeam, matchup.homeTeam],
-      guildId
-    );
+  const mappedAwayRoleId = teamRoleMap?.[matchup.awayTeam];
+  const mappedHomeRoleId = teamRoleMap?.[matchup.homeTeam];
+  const mappedRoleIds = [
+    mappedAwayRoleId,
+    mappedHomeRoleId,
+  ].filter((value): value is string => Boolean(value));
+
+  let teamRoleIds: string[];
+  if (mappedRoleIds.length) {
+    const fallbackNames = [
+      !mappedAwayRoleId ? matchup.awayTeam : undefined,
+      !mappedHomeRoleId ? matchup.homeTeam : undefined,
+    ].filter((value): value is string => Boolean(value));
+    const fallbackRoleIds = fallbackNames.length
+      ? await resolveGenesisTeamRoleIds(fallbackNames, guildId)
+      : [];
+
+    teamRoleIds = [...new Set([...mappedRoleIds, ...fallbackRoleIds])];
+  } else {
+    teamRoleIds = [...new Set((matchup.teamRoleIds || []).filter(Boolean))];
+    if (!teamRoleIds.length) {
+      teamRoleIds = await resolveGenesisTeamRoleIds(
+        [matchup.awayTeam, matchup.homeTeam],
+        guildId
+      );
+    }
   }
 
   if (!teamRoleIds.length) {
     return {
       ok: false,
       error:
-        "I couldn't find Discord roles matching either team in this matchup. Ask the commissioner to confirm the team role names.",
+        "No Discord team roles are mapped for this matchup. Ask the commissioner to set the Team → Discord Role mapping on the season page.",
     };
   }
 
@@ -509,7 +530,7 @@ async function authorizeGenesisMatchupRole(
     return {
       ok: false,
       error:
-        "Only a member with one of the two team roles in this matchup can use this game control.",
+        "Only a member with one of the two mapped team roles in this matchup can use this game control.",
     };
   }
 
@@ -550,10 +571,6 @@ async function markPlayerReady(
   return ephemeral(
     `✅ You're marked ready to advance for ${periodHeading(nextSeasonData.periodLabel, week, nextSeasonData.seasonYear)}.`
   );
-}
-
-function normalizeGenesisTeam(value: string | undefined) {
-  return (value || "").trim().toLowerCase();
 }
 
 function validGenesisStreamUrl(raw: string) {
@@ -709,7 +726,8 @@ export async function POST(request: Request) {
     const roleAuth = await authorizeGenesisMatchupRole(
       matchup,
       interaction.guild_id,
-      interaction.member?.roles
+      interaction.member?.roles,
+      seasonData.discordTeamRoleIds
     );
     if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -821,7 +839,8 @@ export async function POST(request: Request) {
     const roleAuth = await authorizeGenesisMatchupRole(
       matchup,
       interaction.guild_id,
-      interaction.member?.roles
+      interaction.member?.roles,
+      seasonData.discordTeamRoleIds
     );
     if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -949,7 +968,8 @@ export async function POST(request: Request) {
       const roleAuth = await authorizeGenesisMatchupRole(
         matchup,
         interaction.guild_id,
-        interaction.member?.roles
+        interaction.member?.roles,
+        resolved.seasonData.discordTeamRoleIds
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -1024,7 +1044,8 @@ export async function POST(request: Request) {
       const roleAuth = await authorizeGenesisMatchupRole(
         matchup,
         interaction.guild_id,
-        interaction.member?.roles
+        interaction.member?.roles,
+        resolved.seasonData.discordTeamRoleIds
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -1350,7 +1371,8 @@ export async function POST(request: Request) {
       const roleAuth = await authorizeGenesisMatchupRole(
         matchup,
         interaction.guild_id,
-        interaction.member?.roles
+        interaction.member?.roles,
+        resolved.seasonData.discordTeamRoleIds
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -1467,7 +1489,8 @@ export async function POST(request: Request) {
       const roleAuth = await authorizeGenesisMatchupRole(
         matchup,
         interaction.guild_id,
-        interaction.member?.roles
+        interaction.member?.roles,
+        resolved.seasonData.discordTeamRoleIds
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 

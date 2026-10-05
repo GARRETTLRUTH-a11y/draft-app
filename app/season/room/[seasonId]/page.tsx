@@ -2897,11 +2897,17 @@ export default function SeasonRoomPage() {
                         className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
                       >
                         <option value="">Not mapped — exact-name fallback</option>
-                        {discordTeamRoles.map((role) => (
-                          <option key={role.id} value={role.id}>
-                            @{role.name}
-                          </option>
-                        ))}
+                        {[...discordTeamRoles]
+                          .sort((a, b) =>
+                            a.name.localeCompare(b.name, undefined, {
+                              sensitivity: "base",
+                            })
+                          )
+                          .map((role) => (
+                            <option key={role.id} value={role.id}>
+                              @{role.name}
+                            </option>
+                          ))}
                       </select>
                       <span className="mt-1 block text-[11px] text-slate-500">
                         {savingDiscordTeamRoleTeam === team

@@ -65,7 +65,7 @@ export async function POST(request: Request) {
         error:
           error instanceof Error
             ? error.message
-            : "Could not register the Discord /stream command.",
+            : "Could not register the Discord Genesis game commands.",
       },
       { status: 502 }
     );

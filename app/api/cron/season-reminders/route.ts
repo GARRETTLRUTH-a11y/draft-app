@@ -2,7 +2,14 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
-import { postGenesisFinalScorePrompt } from "@/lib/genesisPicks";
+import {
+  postGenesisFinalScorePrompt,
+  postGenesisKickoffReminder,
+  postGenesisScheduledLockNotice,
+  syncGenesisLeaderboard,
+  syncGenesisPickSummary,
+  syncGenesisStarterButtons,
+} from "@/lib/genesisPicks";
 import {
   buildWeekSummary,
   formatAdvanceWindow,
@@ -23,6 +30,7 @@ import {
 // cron-job.org) hitting this route instead of/alongside GitHub Actions.
 const FIRE_WINDOW_MINUTES = 90;
 const GENESIS_FINAL_PROMPT_DELAY_MS = 60 * 60 * 1000;
+const GENESIS_KICKOFF_REMINDER_LEAD_MS = 30 * 60 * 1000;
 
 function nowInTimeZone(timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -113,6 +121,8 @@ export async function GET(request: Request) {
 
   let sentCount = 0;
   let genesisFinalPromptCount = 0;
+  let genesisKickoffReminderCount = 0;
+  let genesisScheduledLockCount = 0;
   const nowMs = Date.now();
 
   for (const row of seasons || []) {
@@ -176,11 +186,60 @@ export async function GET(request: Request) {
     }
 
     let nextGenesisPicks = seasonData.genesisPicks;
+    let genesisLeaderboardNeedsRefresh = false;
 
     if (seasonData.genesisPicks?.matchups?.length) {
       const nextMatchups: NonNullable<SeasonData["genesisPicks"]>["matchups"] = [];
 
-      for (const matchup of seasonData.genesisPicks.matchups) {
+      for (const originalMatchup of seasonData.genesisPicks.matchups) {
+        let matchup = originalMatchup;
+
+        const kickoffMs = matchup.scheduledKickoffAt
+          ? new Date(matchup.scheduledKickoffAt).getTime()
+          : Number.NaN;
+
+        const kickoffReminderDue =
+          matchup.status === "open" &&
+          !matchup.kickoffReminderSentAt &&
+          Number.isFinite(kickoffMs) &&
+          nowMs >= kickoffMs - GENESIS_KICKOFF_REMINDER_LEAD_MS &&
+          nowMs < kickoffMs;
+
+        if (kickoffReminderDue) {
+          const posted = await postGenesisKickoffReminder(matchup);
+          if (posted) {
+            genesisKickoffReminderCount++;
+            changed = true;
+            matchup = {
+              ...matchup,
+              kickoffReminderSentAt: new Date().toISOString(),
+            };
+          }
+        }
+
+        const scheduledLockDue =
+          matchup.status === "open" &&
+          matchup.autoLockAtKickoff !== false &&
+          Number.isFinite(kickoffMs) &&
+          nowMs >= kickoffMs;
+
+        if (scheduledLockDue) {
+          matchup = {
+            ...matchup,
+            status: "locked",
+            lockedAt: matchup.scheduledKickoffAt || new Date().toISOString(),
+          };
+
+          const summary = await syncGenesisPickSummary(matchup);
+          matchup = summary.matchup;
+          await syncGenesisStarterButtons(row.id, matchup);
+          await postGenesisScheduledLockNotice(matchup);
+
+          genesisScheduledLockCount++;
+          genesisLeaderboardNeedsRefresh = true;
+          changed = true;
+        }
+
         const lockedMs = matchup.lockedAt
           ? new Date(matchup.lockedAt).getTime()
           : Number.NaN;
@@ -191,30 +250,33 @@ export async function GET(request: Request) {
           Number.isFinite(lockedMs) &&
           nowMs - lockedMs >= GENESIS_FINAL_PROMPT_DELAY_MS;
 
-        if (!finalPromptDue) {
-          nextMatchups.push(matchup);
-          continue;
+        if (finalPromptDue) {
+          const posted = await postGenesisFinalScorePrompt(row.id, matchup);
+          if (posted) {
+            genesisFinalPromptCount++;
+            changed = true;
+            matchup = {
+              ...matchup,
+              resultPromptSentAt: new Date().toISOString(),
+            };
+          }
         }
 
-        const posted = await postGenesisFinalScorePrompt(row.id, matchup);
-
-        if (posted) {
-          genesisFinalPromptCount++;
-          changed = true;
-          nextMatchups.push({
-            ...matchup,
-            resultPromptSentAt: new Date().toISOString(),
-          });
-        } else {
-          // Leave resultPromptSentAt empty so the next scheduler run retries.
-          nextMatchups.push(matchup);
-        }
+        nextMatchups.push(matchup);
       }
 
       nextGenesisPicks = {
         ...seasonData.genesisPicks,
         matchups: nextMatchups,
       };
+
+      if (genesisLeaderboardNeedsRefresh) {
+        const leaderboard = await syncGenesisLeaderboard({
+          ...seasonData,
+          genesisPicks: nextGenesisPicks,
+        });
+        nextGenesisPicks = leaderboard.seasonData.genesisPicks;
+      }
     }
 
     if (changed) {
@@ -235,5 +297,7 @@ export async function GET(request: Request) {
     ok: true,
     sent: sentCount,
     genesisFinalPrompts: genesisFinalPromptCount,
+    genesisKickoffReminders: genesisKickoffReminderCount,
+    genesisScheduledLocks: genesisScheduledLockCount,
   });
 }

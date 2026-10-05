@@ -1056,7 +1056,32 @@ export async function POST(request: Request) {
         return ephemeral(settled.error);
       }
 
-      const leaderboard = await syncGenesisLeaderboard(settled.seasonData);
+      let settledSeasonData = settled.seasonData;
+      const settledSummaryMatchup = settledSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (settledSummaryMatchup) {
+        const pickSummary = await syncGenesisPickSummary(
+          settledSummaryMatchup,
+          { createIfMissing: false }
+        );
+        if (
+          pickSummary.matchup.pickSummaryMessageId !==
+          settledSummaryMatchup.pickSummaryMessageId
+        ) {
+          settledSeasonData = {
+            ...settledSeasonData,
+            genesisPicks: {
+              ...settledSeasonData.genesisPicks!,
+              matchups: settledSeasonData.genesisPicks!.matchups.map((item) =>
+                item.id === matchupId ? pickSummary.matchup : item
+              ),
+            },
+          };
+        }
+      }
+
+      const leaderboard = await syncGenesisLeaderboard(settledSeasonData);
       const nextSeasonData = leaderboard.seasonData;
 
       const { error: updateError } = await admin

@@ -148,7 +148,8 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
 }
 
 export async function syncGenesisPickSummary(
-  matchup: GenesisPickMatchup
+  matchup: GenesisPickMatchup,
+  options: { createIfMissing?: boolean } = {}
 ): Promise<{ matchup: GenesisPickMatchup; warning?: string }> {
   const content = genesisPickSummaryContent(matchup);
   let messageId = matchup.pickSummaryMessageId;
@@ -179,6 +180,10 @@ export async function syncGenesisPickSummary(
     }
 
     messageId = undefined;
+  }
+
+  if (options.createIfMissing === false) {
+    return { matchup };
   }
 
   const postResponse = await discordApi(

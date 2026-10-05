@@ -15,6 +15,7 @@ import {
   postGenesisFinalToThread,
   settleGenesisMatchupByScore,
   syncGenesisLeaderboard,
+  syncGenesisPickSummary,
 } from "@/lib/genesisPicks";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
@@ -378,38 +379,6 @@ async function markPlayerReady(
   return ephemeral(
     `✅ You're marked ready to advance for ${periodHeading(nextSeasonData.periodLabel, week, nextSeasonData.seasonYear)}.`
   );
-}
-
-async function postGenesisPickAnnouncement(
-  threadId: string,
-  discordUserId: string,
-  team: string,
-  signedLine: number
-) {
-  const botToken = process.env.DISCORD_BOT_TOKEN;
-  if (!botToken) return false;
-
-  const lineText =
-    signedLine === 0
-      ? "PK"
-      : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-
-  const response = await fetch(
-    `https://discord.com/api/v10/channels/${threadId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bot ${botToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        content: `🎯 <@${discordUserId}> picked **${team} ${lineText}**`,
-        allowed_mentions: { users: [discordUserId], parse: [] },
-      }),
-    }
-  );
-
-  return response.ok;
 }
 
 function normalizeGenesisTeam(value: string | undefined) {
@@ -864,21 +833,45 @@ export async function POST(request: Request) {
         return ephemeral("Couldn't save your Genesis pick. Try again.");
       }
 
+      const savedMatchup = nextMatchups.find((item) => item.id === matchupId)!;
+      const summary = await syncGenesisPickSummary(savedMatchup);
+
+      if (
+        summary.matchup.pickSummaryMessageId !==
+        savedMatchup.pickSummaryMessageId
+      ) {
+        const summarySeasonData: SeasonData = {
+          ...nextSeasonData,
+          genesisPicks: {
+            ...nextSeasonData.genesisPicks!,
+            matchups: nextMatchups.map((item) =>
+              item.id === matchupId ? summary.matchup : item
+            ),
+          },
+        };
+
+        await admin
+          .from("seasons")
+          .update({
+            season_data: summarySeasonData,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", seasonId);
+      }
+
       const team = side === "away" ? matchup.awayTeam : matchup.homeTeam;
       const signedLine = side === "away" ? matchup.awayLine : -matchup.awayLine;
       const lineText =
         signedLine === 0
           ? "PK"
           : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-      await postGenesisPickAnnouncement(
-        matchup.threadId,
-        discordUserId,
-        team,
-        signedLine
-      );
 
       return ephemeral(
-        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.`
+        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.${
+          summary.warning
+            ? ` Pick saved, but the quiet thread summary could not update: ${summary.warning}`
+            : ""
+        }`
       );
     }
 

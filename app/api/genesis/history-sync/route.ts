@@ -14,6 +14,7 @@ export const maxDuration = 300;
 
 type Payload = {
   seasonId?: string;
+  mode?: "full" | "incremental";
 };
 
 export async function POST(request: Request) {
@@ -68,7 +69,8 @@ export async function POST(request: Request) {
 
   try {
     const seasonData = season.season_data as SeasonData;
-    const history = await syncGenesisHistory(seasonData, { mode: "full" });
+    const requestedMode = payload.mode === "incremental" ? "incremental" : "full";
+    const history = await syncGenesisHistory(seasonData, { mode: requestedMode });
     const withHistory: SeasonData = { ...seasonData, genesisHistory: history };
     const settled = settleGenesisPicksFromHistory(withHistory);
     let nextSeasonData = settled.seasonData;

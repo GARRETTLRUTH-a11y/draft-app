@@ -150,19 +150,24 @@ export async function POST(request: Request) {
     );
   }
 
-  const scheduledKickoffAt =
-    scheduledKickoffLocal && scheduledKickoffTimeZone
-      ? zonedLocalToIso(scheduledKickoffLocal, scheduledKickoffTimeZone)
-      : undefined;
-
-  if (scheduledKickoffLocal && !scheduledKickoffAt) {
-    return NextResponse.json(
-      {
-        error:
-          "That kickoff time is invalid in the selected time zone. Check the date/time, especially around daylight-saving changes.",
-      },
-      { status: 400 }
+  let scheduledKickoffAt: string | undefined;
+  if (scheduledKickoffLocal && scheduledKickoffTimeZone) {
+    const converted = zonedLocalToIso(
+      scheduledKickoffLocal,
+      scheduledKickoffTimeZone
     );
+
+    if (!converted) {
+      return NextResponse.json(
+        {
+          error:
+            "That kickoff time is invalid in the selected time zone. Check the date/time, especially around daylight-saving changes.",
+        },
+        { status: 400 }
+      );
+    }
+
+    scheduledKickoffAt = converted;
   }
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;

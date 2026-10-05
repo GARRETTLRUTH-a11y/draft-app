@@ -59,17 +59,62 @@ export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
   starterMessageId?: string;
   taggedUserIds: string[];
+  taggedRoleIds: string[];
   genesisRoleTagged: boolean;
 };
+
+function normalizeRoleName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export async function resolveGenesisTeamRoleIds(
+  teamNames: string[],
+  guildId?: string
+) {
+  const uniqueTeamNames = [...new Set(teamNames.map((name) => name.trim()).filter(Boolean))];
+  if (!uniqueTeamNames.length) return [] as string[];
+
+  let resolvedGuildId = guildId;
+  if (!resolvedGuildId) {
+    const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
+    if (!parentResponse.ok) return [] as string[];
+    const parent = (await parentResponse.json()) as { guild_id?: string };
+    resolvedGuildId = parent.guild_id;
+  }
+
+  if (!resolvedGuildId) return [] as string[];
+
+  const rolesResponse = await discordApi(`/guilds/${resolvedGuildId}/roles`);
+  if (!rolesResponse.ok) return [] as string[];
+
+  const roles = (await rolesResponse.json()) as { id: string; name: string }[];
+  const wanted = new Set(uniqueTeamNames.map(normalizeRoleName));
+
+  return [
+    ...new Set(
+      roles
+        .filter((role) => wanted.has(normalizeRoleName(role.name)))
+        .map((role) => role.id)
+        .filter(Boolean)
+    ),
+  ];
+}
 
 function buildTaggedStarterMessage(
   threadName: string,
   starterMessage: string | undefined,
-  taggedUserIds: string[]
+  taggedUserIds: string[],
+  taggedRoleIds: string[]
 ) {
   const uniqueUsers = [...new Set(taggedUserIds.filter(Boolean))];
+  const uniqueRoles = [...new Set(taggedRoleIds.filter(Boolean))];
   const mentions = [
     `<@&${GENESIS_ROLE_ID}>`,
+    ...uniqueRoles.map((roleId) => `<@&${roleId}>`),
     ...uniqueUsers.map((userId) => `<@${userId}>`),
   ].join(" ");
 
@@ -81,7 +126,8 @@ export async function createGenesisPvpThread(
   threadName: string,
   starterMessage?: string,
   taggedUserIds: string[] = [],
-  components: unknown[] = []
+  components: unknown[] = [],
+  taggedRoleNames: string[] = []
 ): Promise<PvpThreadCreateResult> {
   const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
   if (!parentResponse.ok) {
@@ -115,14 +161,19 @@ export async function createGenesisPvpThread(
   }
 
   const uniqueTaggedUsers = [...new Set(taggedUserIds.filter(Boolean))];
+  const taggedRoleIds = await resolveGenesisTeamRoleIds(
+    taggedRoleNames,
+    parent.guild_id
+  );
   const taggedMessage = buildTaggedStarterMessage(
     threadName,
     starterMessage,
-    uniqueTaggedUsers
+    uniqueTaggedUsers,
+    taggedRoleIds
   );
   const allowedMentions = {
     parse: [] as string[],
-    roles: [GENESIS_ROLE_ID],
+    roles: [...new Set([GENESIS_ROLE_ID, ...taggedRoleIds])],
     users: uniqueTaggedUsers,
   };
 
@@ -189,6 +240,7 @@ export async function createGenesisPvpThread(
     thread,
     starterMessageId,
     taggedUserIds: uniqueTaggedUsers,
+    taggedRoleIds,
     genesisRoleTagged: true,
   };
 }

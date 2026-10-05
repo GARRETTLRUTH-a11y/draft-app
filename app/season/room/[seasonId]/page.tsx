@@ -117,13 +117,12 @@ function toLocalDateTimeInputValue(
     hourCycle: "h23",
   }).formatToParts(date);
 
-  const values = Object.fromEntries(
-    parts
-      .filter((part) =>
-        ["year", "month", "day", "hour", "minute"].includes(part.type)
-      )
-      .map((part) => [part.type, part.value])
-  ) as Record<string, string>;
+  const values: Record<string, string> = {};
+  for (const part of parts) {
+    if (["year", "month", "day", "hour", "minute"].includes(part.type)) {
+      values[part.type] = part.value;
+    }
+  }
 
   return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}`;
 }

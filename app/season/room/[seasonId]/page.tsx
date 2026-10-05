@@ -119,6 +119,7 @@ type PvpBatchGame = {
   awayTeam: string;
   homeTeam: string;
   separator: "@" | "vs.";
+  kickoffLocal: string;
 };
 
 export default function SeasonRoomPage() {
@@ -183,7 +184,9 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
+  const [pvpKickoffLocal, setPvpKickoffLocal] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
+  const [autoLockPicksAtKickoff, setAutoLockPicksAtKickoff] = useState(true);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -390,10 +393,11 @@ export default function SeasonRoomPage() {
         awayTeam: pvpAwayTeam,
         homeTeam: pvpHomeTeam,
         separator: pvpSeparator,
+        kickoffLocal: pvpKickoffLocal,
       } satisfies PvpBatchGame,
       ...additionalPvpGames,
     ],
-    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, pvpKickoffLocal, additionalPvpGames]
   );
 
   const allPvpGamesReady =
@@ -403,6 +407,8 @@ export default function SeasonRoomPage() {
         Boolean(game.awayTeam) &&
         Boolean(game.homeTeam) &&
         game.awayTeam !== game.homeTeam &&
+        (!game.kickoffLocal ||
+          Number.isFinite(new Date(game.kickoffLocal).getTime())) &&
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
@@ -1016,6 +1022,10 @@ export default function SeasonRoomPage() {
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
               postStreamInstructions: postPvpStreamInstructions,
+              scheduledKickoffAt: game.kickoffLocal
+                ? new Date(game.kickoffLocal).toISOString()
+                : undefined,
+              autoLockAtKickoff: autoLockPicksAtKickoff,
             }),
           });
 
@@ -1029,6 +1039,7 @@ export default function SeasonRoomPage() {
             leaderboardWarning?: string;
             streamInstructionsPosted?: boolean;
             streamInstructionsWarning?: string;
+            matchupHistoryWarning?: string;
           };
 
           if (!response.ok) {
@@ -1047,6 +1058,11 @@ export default function SeasonRoomPage() {
               `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.streamInstructionsWarning}`
             );
           }
+          if (result.matchupHistoryWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.matchupHistoryWarning}`
+            );
+          }
 
           // Remove successful rows immediately so a partial batch failure can
           // be retried without accidentally recreating threads that succeeded.
@@ -1054,6 +1070,7 @@ export default function SeasonRoomPage() {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
             setPvpSeparator("@");
+            setPvpKickoffLocal("");
           } else {
             setAdditionalPvpGames((current) =>
               current.filter((row) => row.id !== game.id)

@@ -272,6 +272,7 @@ export default function SeasonRoomPage() {
   const [genesisLine, setGenesisLine] = useState<GenesisLinePreview | null>(null);
   const [isGeneratingGenesisLine, setIsGeneratingGenesisLine] = useState(false);
   const [isSyncingGenesisHistory, setIsSyncingGenesisHistory] = useState(false);
+  const [genesisHistorySyncMode, setGenesisHistorySyncMode] = useState<"full" | "incremental" | null>(null);
   const [genesisHistoryStatus, setGenesisHistoryStatus] = useState("");
   const [genesisFinalScoreInputs, setGenesisFinalScoreInputs] = useState<
     Record<string, { away: string; home: string }>
@@ -980,11 +981,16 @@ export default function SeasonRoomPage() {
     }
   }
 
-  async function syncGenesisHistory() {
+  async function syncGenesisHistory(mode: "full" | "incremental" = "full") {
     if (!season) return;
 
     setIsSyncingGenesisHistory(true);
-    setGenesisHistoryStatus("Rebuilding Discord history from the configured sources...");
+    setGenesisHistorySyncMode(mode);
+    setGenesisHistoryStatus(
+      mode === "incremental"
+        ? "Checking Discord for new Genesis history since the last sync..."
+        : "Rebuilding Discord history from the configured sources..."
+    );
     setGenesisLine(null);
 
     try {
@@ -1001,7 +1007,7 @@ export default function SeasonRoomPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ seasonId: season.id }),
+        body: JSON.stringify({ seasonId: season.id, mode }),
       });
 
       const responseText = await response.text();
@@ -1032,9 +1038,16 @@ export default function SeasonRoomPage() {
       }
 
       await loadRoomSeason(season.id);
-      setGenesisHistoryStatus(
-        `✅ History rebuilt: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages.`
-      );
+
+      if (result.syncMode === "incremental") {
+        setGenesisHistoryStatus(
+          `✅ Checked for new history: scanned ${result.messagesScanned ?? 0} new Discord message${(result.messagesScanned ?? 0) === 1 ? "" : "s"} · ${result.games ?? 0} total games and ${result.achievements ?? 0} postseason achievements stored.`
+        );
+      } else {
+        setGenesisHistoryStatus(
+          `✅ Full history sync complete: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages.`
+        );
+      }
     } catch (error) {
       setGenesisHistoryStatus(
         error instanceof Error
@@ -1043,6 +1056,7 @@ export default function SeasonRoomPage() {
       );
     } finally {
       setIsSyncingGenesisHistory(false);
+      setGenesisHistorySyncMode(null);
     }
   }
 
@@ -3146,11 +3160,22 @@ export default function SeasonRoomPage() {
 
                 <div className="flex flex-wrap gap-2">
                   <button
-                    onClick={syncGenesisHistory}
+                    onClick={() => syncGenesisHistory("incremental")}
+                    disabled={isSyncingGenesisHistory}
+                    className="rounded-xl bg-fuchsia-300 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-fuchsia-200 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isSyncingGenesisHistory && genesisHistorySyncMode === "incremental"
+                      ? "Checking for New History..."
+                      : "Check for New History"}
+                  </button>
+                  <button
+                    onClick={() => syncGenesisHistory("full")}
                     disabled={isSyncingGenesisHistory}
                     className="rounded-xl border border-fuchsia-400/30 bg-fuchsia-400/10 px-3 py-2 text-xs font-bold text-fuchsia-200 transition hover:bg-fuchsia-400/20 disabled:cursor-not-allowed disabled:opacity-40"
                   >
-                    {isSyncingGenesisHistory ? "Rebuilding History..." : "Rebuild Discord History"}
+                    {isSyncingGenesisHistory && genesisHistorySyncMode === "full"
+                      ? "Rebuilding History..."
+                      : "Rebuild Full History"}
                   </button>
                   <button
                     onClick={generateGenesisLine}

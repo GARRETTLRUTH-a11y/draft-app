@@ -346,7 +346,7 @@ export async function syncGenesisKickoffScheduleMessage(
   const content = [
     "⏰ **GENESIS KICKOFF SCHEDULED**",
     `Kickoff: <t:${unix}:F> (<t:${unix}:R>)`,
-    ...(zoneDisplay ? [`Commissioner entry: **${zoneDisplay}**`] : []),
+    ...(zoneDisplay ? [`Scheduled as: **${zoneDisplay}**`] : []),
     matchup.autoLockAtKickoff === false
       ? "Genesis picks will stay open until /stream or a commissioner lock closes them."
       : "Genesis picks will automatically lock at kickoff if they are still open.",

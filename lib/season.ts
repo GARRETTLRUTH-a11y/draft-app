@@ -95,6 +95,7 @@ export type GenesisPickMatchup = {
   starterMessageId?: string;
   pickSummaryMessageId?: string;
   scheduledKickoffAt?: string;
+  scheduledKickoffTimeZone?: string;
   autoLockAtKickoff?: boolean;
   kickoffScheduleMessageId?: string;
   kickoffReminderSentAt?: string;

@@ -191,7 +191,10 @@ export async function POST(request: Request) {
         await postGenesisPvpThreadMessage(
           result.thread.id,
           [
-            "📺 **STREAM / GAME START INSTRUCTIONS**",
+            "📅 **KICKOFF / GAME START INSTRUCTIONS**",
+            "Either matchup player can use **/kickoff** in this thread to set or update the scheduled kickoff. Choose the date, time, and time zone when you run the command.",
+            "RTA will show the kickoff in each Discord user's local time, post a reminder about 30 minutes before kickoff, and auto-lock Genesis picks at kickoff unless the commissioner disabled auto-lock.",
+            "",
             "When the game is about to start, one of the two matchup players should use **/stream** in this thread and paste the YouTube or Twitch link.",
             "",
             "Using **/stream** will:",

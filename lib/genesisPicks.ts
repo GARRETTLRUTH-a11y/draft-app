@@ -283,6 +283,104 @@ export async function syncGenesisStarterButtons(
   return { ok: response.ok, skipped: false };
 }
 
+export async function syncGenesisKickoffScheduleMessage(
+  matchup: GenesisPickMatchup
+): Promise<{ matchup: GenesisPickMatchup; warning?: string }> {
+  const existingId = matchup.kickoffScheduleMessageId;
+
+  if (!matchup.scheduledKickoffAt) {
+    if (!existingId) return { matchup };
+
+    const deleteResponse = await discordApi(
+      `/channels/${matchup.threadId}/messages/${existingId}`,
+      { method: "DELETE" }
+    );
+
+    if (!deleteResponse.ok && deleteResponse.status !== 404) {
+      const body = await deleteResponse.text();
+      return {
+        matchup,
+        warning:
+          `Kickoff was cleared, but the Discord schedule message could not be removed: ${body || deleteResponse.statusText}`,
+      };
+    }
+
+    return {
+      matchup: {
+        ...matchup,
+        kickoffScheduleMessageId: undefined,
+      },
+    };
+  }
+
+  const kickoffMs = new Date(matchup.scheduledKickoffAt).getTime();
+  if (!Number.isFinite(kickoffMs)) {
+    return { matchup, warning: "Kickoff time is invalid." };
+  }
+
+  const unix = Math.floor(kickoffMs / 1000);
+  const content = [
+    "⏰ **GENESIS KICKOFF SCHEDULED**",
+    `Kickoff: <t:${unix}:F> (<t:${unix}:R>)`,
+    matchup.autoLockAtKickoff === false
+      ? "Genesis picks will stay open until /stream or a commissioner lock closes them."
+      : "Genesis picks will automatically lock at kickoff if they are still open.",
+    "RTA will post a reminder about 30 minutes before kickoff.",
+  ].join("\n");
+
+  if (existingId) {
+    const editResponse = await discordApi(
+      `/channels/${matchup.threadId}/messages/${existingId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] as string[] },
+        }),
+      }
+    );
+
+    if (editResponse.ok) return { matchup };
+
+    if (editResponse.status !== 404) {
+      const body = await editResponse.text();
+      return {
+        matchup,
+        warning:
+          `Kickoff was saved, but the Discord schedule message could not be updated: ${body || editResponse.statusText}`,
+      };
+    }
+  }
+
+  const postResponse = await discordApi(
+    `/channels/${matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content,
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  if (!postResponse.ok) {
+    const body = await postResponse.text();
+    return {
+      matchup,
+      warning:
+        `Kickoff was saved, but the Discord schedule message could not be posted: ${body || postResponse.statusText}`,
+    };
+  }
+
+  const message = (await postResponse.json()) as { id?: string };
+  return {
+    matchup: {
+      ...matchup,
+      kickoffScheduleMessageId: message.id,
+    },
+  };
+}
+
 export async function postGenesisKickoffReminder(
   matchup: GenesisPickMatchup
 ) {

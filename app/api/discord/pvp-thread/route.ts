@@ -109,7 +109,7 @@ export async function POST(request: Request) {
         : [];
 
     const starterMessage = line
-      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.`
+      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.\n🚫 If your team is playing in this matchup, you cannot pick your own team.`
       : undefined;
 
     const mappedAwayRoleId = awayTeam

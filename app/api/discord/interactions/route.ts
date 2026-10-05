@@ -10,7 +10,11 @@ import {
 } from "@/lib/season";
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
-import { createGenesisPvpThread, PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
+import {
+  createGenesisPvpThread,
+  PVP_PARENT_CHANNEL_ID,
+  resolveGenesisTeamRoleIds,
+} from "@/lib/discordPvpThreads";
 import {
   postGenesisFinalToThread,
   settleGenesisMatchupByScore,
@@ -269,6 +273,7 @@ type DiscordInteraction = {
   member?: {
     user?: { id?: string; username?: string; global_name?: string | null };
     permissions?: string;
+    roles?: string[];
     nick?: string | null;
   };
   user?: { id?: string; username?: string; global_name?: string | null };
@@ -394,51 +399,24 @@ async function resolveActiveSeasonForUser(
   return { seasonId: seasonRow.id, seasonData, player };
 }
 
-async function resolveGenesisMatchupForUserInThread(
+async function resolveGenesisMatchupForThread(
   admin: SupabaseClient,
-  discordUserId: string,
   threadId: string
 ): Promise<
   | {
       seasonId: string;
       seasonData: SeasonData;
-      player: SeasonPlayer;
       matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number];
     }
   | ResolveError
 > {
-  const { data: link } = await admin
-    .from("discord_links")
-    .select("user_id")
-    .eq("discord_user_id", discordUserId)
-    .maybeSingle();
-
-  if (!link) {
-    return {
-      error: "Your Discord account isn't linked yet. Click the button below to connect it, then try again.",
-      needsLink: true,
-    };
-  }
-
-  const { data: participants } = await admin
-    .from("season_participants")
-    .select("season_id, player_name")
-    .eq("user_id", link.user_id);
-
-  if (!participants?.length) {
-    return { error: "You haven't claimed a team in a Genesis season yet." };
-  }
-
   const { data: seasons, error: seasonError } = await admin
     .from("seasons")
     .select("id, season_data")
-    .in(
-      "id",
-      participants.map((participant) => participant.season_id)
-    );
+    .order("updated_at", { ascending: false });
 
   if (seasonError || !seasons?.length) {
-    return { error: "Couldn't find your Genesis season." };
+    return { error: "Couldn't find the Genesis season for this game thread." };
   }
 
   for (const row of seasons) {
@@ -448,39 +426,94 @@ async function resolveGenesisMatchupForUserInThread(
     );
     if (!matchup) continue;
 
-    const participant = participants.find(
-      (item) => item.season_id === row.id
-    );
-    const player = seasonData.players.find(
-      (item) =>
-        item.name.toLowerCase() === participant?.player_name.toLowerCase()
-    );
-    if (!player) continue;
-
-    const playerTeam = normalizeGenesisTeam(player.team);
-    const isMatchupPlayer =
-      playerTeam === normalizeGenesisTeam(matchup.awayTeam) ||
-      playerTeam === normalizeGenesisTeam(matchup.homeTeam);
-
-    if (!isMatchupPlayer) {
-      return {
-        error:
-          "Only one of the two players in this matchup can use RTA's game-thread controls.",
-      };
-    }
-
     return {
       seasonId: row.id,
       seasonData,
-      player,
       matchup,
     };
   }
 
   return {
     error:
-      "Use this command inside your Genesis PvP game thread. I couldn't match this channel to one of your active matchups.",
+      "Use this command inside a Genesis PvP game thread. I couldn't match this channel to an active matchup.",
   };
+}
+
+async function resolveGenesisMatchupById(
+  admin: SupabaseClient,
+  seasonId: string,
+  matchupId: string
+): Promise<
+  | {
+      seasonId: string;
+      seasonData: SeasonData;
+      matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number];
+    }
+  | ResolveError
+> {
+  const { data: seasonRow, error: seasonError } = await admin
+    .from("seasons")
+    .select("season_data")
+    .eq("id", seasonId)
+    .maybeSingle();
+
+  if (seasonError || !seasonRow) {
+    return { error: "Couldn't find that Genesis season." };
+  }
+
+  const seasonData = seasonRow.season_data as SeasonData;
+  const matchup = seasonData.genesisPicks?.matchups.find(
+    (item) => item.id === matchupId
+  );
+
+  if (!matchup) {
+    return { error: "That Genesis matchup could not be found." };
+  }
+
+  return { seasonId, seasonData, matchup };
+}
+
+async function authorizeGenesisMatchupRole(
+  matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number],
+  guildId: string | undefined,
+  memberRoleIds: string[] | undefined
+): Promise<
+  | { ok: true; teamRoleIds: string[] }
+  | { ok: false; error: string }
+> {
+  if (!guildId) {
+    return {
+      ok: false,
+      error: "Genesis game controls can only be used inside the league Discord server.",
+    };
+  }
+
+  let teamRoleIds = [...new Set((matchup.teamRoleIds || []).filter(Boolean))];
+  if (!teamRoleIds.length) {
+    teamRoleIds = await resolveGenesisTeamRoleIds(
+      [matchup.awayTeam, matchup.homeTeam],
+      guildId
+    );
+  }
+
+  if (!teamRoleIds.length) {
+    return {
+      ok: false,
+      error:
+        "I couldn't find Discord roles matching either team in this matchup. Ask the commissioner to confirm the team role names.",
+    };
+  }
+
+  const memberRoles = new Set(memberRoleIds || []);
+  if (!teamRoleIds.some((roleId) => memberRoles.has(roleId))) {
+    return {
+      ok: false,
+      error:
+        "Only a member with one of the two team roles in this matchup can use this game control.",
+    };
+  }
+
+  return { ok: true, teamRoleIds };
 }
 
 function respondToResolveError(resolved: ResolveError) {

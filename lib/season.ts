@@ -96,6 +96,9 @@ export type GenesisPickMatchup = {
   pickSummaryMessageId?: string;
   scheduledKickoffAt?: string;
   scheduledKickoffTimeZone?: string;
+  // Discord roles corresponding to the two matchup teams. These are used
+  // to authorize game-thread controls without requiring a linked website account.
+  teamRoleIds?: string[];
   autoLockAtKickoff?: boolean;
   kickoffScheduleMessageId?: string;
   kickoffReminderSentAt?: string;

@@ -112,12 +112,28 @@ export async function POST(request: Request) {
       ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.`
       : undefined;
 
+    const mappedAwayRoleId = awayTeam
+      ? nextSeasonData.discordTeamRoleIds?.[awayTeam]
+      : undefined;
+    const mappedHomeRoleId = homeTeam
+      ? nextSeasonData.discordTeamRoleIds?.[homeTeam]
+      : undefined;
+    const mappedTeamRoleIds = [
+      mappedAwayRoleId,
+      mappedHomeRoleId,
+    ].filter((value): value is string => Boolean(value));
+    const fallbackRoleNames = [
+      awayTeam && !mappedAwayRoleId ? awayTeam : undefined,
+      homeTeam && !mappedHomeRoleId ? homeTeam : undefined,
+    ].filter((value): value is string => Boolean(value));
+
     const result = await createGenesisPvpThread(
       threadName,
       starterMessage,
       [],
       pickComponents,
-      awayTeam && homeTeam ? [awayTeam, homeTeam] : []
+      fallbackRoleNames,
+      mappedTeamRoleIds
     );
 
     let matchupHistoryWarning: string | undefined;

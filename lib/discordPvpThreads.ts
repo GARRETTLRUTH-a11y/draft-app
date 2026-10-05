@@ -71,6 +71,59 @@ function normalizeRoleName(value: string) {
     .trim();
 }
 
+export type GenesisDiscordRole = {
+  id: string;
+  name: string;
+  color: number;
+  position: number;
+};
+
+export async function listGenesisDiscordRoles(): Promise<GenesisDiscordRole[]> {
+  const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
+  if (!parentResponse.ok) {
+    const body = await parentResponse.text();
+    throw new Error(
+      `Could not read the PvP parent channel: ${body || parentResponse.statusText}`
+    );
+  }
+
+  const parent = (await parentResponse.json()) as { guild_id?: string };
+  if (!parent.guild_id) {
+    throw new Error("The configured PvP parent channel is not inside a Discord server.");
+  }
+
+  const rolesResponse = await discordApi(`/guilds/${parent.guild_id}/roles`);
+  if (!rolesResponse.ok) {
+    const body = await rolesResponse.text();
+    throw new Error(
+      `Could not read Discord roles: ${body || rolesResponse.statusText}`
+    );
+  }
+
+  const roles = (await rolesResponse.json()) as {
+    id: string;
+    name: string;
+    color?: number;
+    position?: number;
+    managed?: boolean;
+  }[];
+
+  return roles
+    .filter(
+      (role) =>
+        role.id !== parent.guild_id &&
+        role.name !== "@everyone" &&
+        role.managed !== true
+    )
+    .map((role) => ({
+      id: role.id,
+      name: role.name,
+      color: role.color || 0,
+      position: role.position || 0,
+    }))
+    .sort((a, b) => b.position - a.position || a.name.localeCompare(b.name));
+}
+
 export async function resolveGenesisTeamRoleIds(
   teamNames: string[],
   guildId?: string
@@ -127,7 +180,8 @@ export async function createGenesisPvpThread(
   starterMessage?: string,
   taggedUserIds: string[] = [],
   components: unknown[] = [],
-  taggedRoleNames: string[] = []
+  taggedRoleNames: string[] = [],
+  explicitTaggedRoleIds: string[] = []
 ): Promise<PvpThreadCreateResult> {
   const parentResponse = await discordApi(`/channels/${PVP_PARENT_CHANNEL_ID}`);
   if (!parentResponse.ok) {
@@ -161,10 +215,13 @@ export async function createGenesisPvpThread(
   }
 
   const uniqueTaggedUsers = [...new Set(taggedUserIds.filter(Boolean))];
-  const taggedRoleIds = await resolveGenesisTeamRoleIds(
+  const resolvedRoleIds = await resolveGenesisTeamRoleIds(
     taggedRoleNames,
     parent.guild_id
   );
+  const taggedRoleIds = [
+    ...new Set([...explicitTaggedRoleIds, ...resolvedRoleIds].filter(Boolean)),
+  ];
   const taggedMessage = buildTaggedStarterMessage(
     threadName,
     starterMessage,

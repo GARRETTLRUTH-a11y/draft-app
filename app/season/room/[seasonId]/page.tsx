@@ -79,6 +79,26 @@ function formatClock(totalSeconds: number) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+function toLocalDateTimeInputValue(iso?: string) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+  ].join("");
+}
+
+
 type RoomSeason = {
   id: string;
   user_id: string;
@@ -119,7 +139,6 @@ type PvpBatchGame = {
   awayTeam: string;
   homeTeam: string;
   separator: "@" | "vs.";
-  kickoffLocal: string;
 };
 
 export default function SeasonRoomPage() {
@@ -184,9 +203,7 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
-  const [pvpKickoffLocal, setPvpKickoffLocal] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
-  const [autoLockPicksAtKickoff, setAutoLockPicksAtKickoff] = useState(true);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -201,6 +218,10 @@ export default function SeasonRoomPage() {
   const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
   const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
   const [deletingGenesisMatchupId, setDeletingGenesisMatchupId] = useState<string | null>(null);
+  const [genesisKickoffInputs, setGenesisKickoffInputs] = useState<
+    Record<string, { local: string; autoLock: boolean }>
+  >({});
+  const [savingGenesisKickoffId, setSavingGenesisKickoffId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
@@ -393,11 +414,10 @@ export default function SeasonRoomPage() {
         awayTeam: pvpAwayTeam,
         homeTeam: pvpHomeTeam,
         separator: pvpSeparator,
-        kickoffLocal: pvpKickoffLocal,
       } satisfies PvpBatchGame,
       ...additionalPvpGames,
     ],
-    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, pvpKickoffLocal, additionalPvpGames]
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
   );
 
   const allPvpGamesReady =
@@ -407,8 +427,6 @@ export default function SeasonRoomPage() {
         Boolean(game.awayTeam) &&
         Boolean(game.homeTeam) &&
         game.awayTeam !== game.homeTeam &&
-        (!game.kickoffLocal ||
-          Number.isFinite(new Date(game.kickoffLocal).getTime())) &&
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
@@ -1022,10 +1040,6 @@ export default function SeasonRoomPage() {
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
               postStreamInstructions: postPvpStreamInstructions,
-              scheduledKickoffAt: game.kickoffLocal
-                ? new Date(game.kickoffLocal).toISOString()
-                : undefined,
-              autoLockAtKickoff: autoLockPicksAtKickoff,
             }),
           });
 
@@ -1070,7 +1084,6 @@ export default function SeasonRoomPage() {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
             setPvpSeparator("@");
-            setPvpKickoffLocal("");
           } else {
             setAdditionalPvpGames((current) =>
               current.filter((row) => row.id !== game.id)
@@ -1116,6 +1129,109 @@ export default function SeasonRoomPage() {
       );
     } finally {
       setIsCreatingPvpThread(false);
+    }
+  }
+
+  async function saveGenesisKickoff(
+    matchupId: string,
+    clearSchedule = false
+  ) {
+    if (!season) return;
+
+    const matchup = season.season_data.genesisPicks?.matchups.find(
+      (item) => item.id === matchupId
+    );
+    if (!matchup) {
+      setGenesisFinalizeStatus("Genesis matchup not found.");
+      return;
+    }
+
+    const draft = genesisKickoffInputs[matchupId] || {
+      local: toLocalDateTimeInputValue(matchup.scheduledKickoffAt),
+      autoLock: matchup.autoLockAtKickoff !== false,
+    };
+    const local = clearSchedule ? "" : draft.local;
+
+    if (!clearSchedule && !local) {
+      setGenesisFinalizeStatus("Choose a scheduled kickoff time first.");
+      return;
+    }
+
+    const kickoffDate = local ? new Date(local) : null;
+    if (kickoffDate && !Number.isFinite(kickoffDate.getTime())) {
+      setGenesisFinalizeStatus("Choose a valid kickoff date and time.");
+      return;
+    }
+
+    setSavingGenesisKickoffId(matchupId);
+    setGenesisFinalizeStatus(
+      clearSchedule ? "Clearing scheduled kickoff..." : "Saving scheduled kickoff..."
+    );
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setGenesisFinalizeStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      const response = await fetch("/api/genesis/kickoff", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          seasonId: season.id,
+          matchupId,
+          scheduledKickoffAt: kickoffDate ? kickoffDate.toISOString() : null,
+          autoLockAtKickoff: draft.autoLock,
+        }),
+      });
+
+      const result = (await response.json()) as {
+        error?: string;
+        scheduledKickoffAt?: string;
+        autoLockAtKickoff?: boolean;
+        discordWarning?: string;
+      };
+
+      if (!response.ok) {
+        setGenesisFinalizeStatus(
+          result.error || "Could not save the scheduled kickoff."
+        );
+        return;
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisKickoffInputs((current) => {
+        const next = { ...current };
+        delete next[matchupId];
+        return next;
+      });
+
+      let status = clearSchedule
+        ? "✅ Scheduled kickoff cleared."
+        : `✅ Kickoff scheduled for ${kickoffDate!.toLocaleString()}.${
+            draft.autoLock
+              ? " Genesis will auto-lock at kickoff."
+              : " Genesis will wait for /stream or a commissioner lock."
+          }`;
+
+      if (result.discordWarning) {
+        status += ` Discord warning: ${result.discordWarning}`;
+      }
+
+      setGenesisFinalizeStatus(status);
+    } catch (error) {
+      setGenesisFinalizeStatus(
+        error instanceof Error
+          ? `Could not save kickoff: ${error.message}`
+          : "Could not save the scheduled kickoff."
+      );
+    } finally {
+      setSavingGenesisKickoffId(null);
     }
   }
 
@@ -2554,19 +2670,6 @@ export default function SeasonRoomPage() {
               </label>
             </div>
 
-            <label className="mt-3 flex max-w-sm flex-col gap-1 text-xs font-semibold text-slate-400">
-              Scheduled kickoff (optional)
-              <input
-                type="datetime-local"
-                value={pvpKickoffLocal}
-                onChange={(event) => setPvpKickoffLocal(event.target.value)}
-                className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
-              />
-              <span className="font-normal text-slate-500">
-                RTA posts a reminder 30 minutes before kickoff.
-              </span>
-            </label>
-
             {additionalPvpGames.map((game, index) => (
               <div
                 key={game.id}
@@ -2670,24 +2773,6 @@ export default function SeasonRoomPage() {
                   </label>
                 </div>
 
-                <label className="mt-3 flex max-w-sm flex-col gap-1 text-xs font-semibold text-slate-400">
-                  Scheduled kickoff (optional)
-                  <input
-                    type="datetime-local"
-                    value={game.kickoffLocal}
-                    onChange={(event) =>
-                      setAdditionalPvpGames((current) =>
-                        current.map((row) =>
-                          row.id === game.id
-                            ? { ...row, kickoffLocal: event.target.value }
-                            : row
-                        )
-                      )
-                    }
-                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
-                  />
-                </label>
-
                 <p className="mt-3 text-xs text-slate-500">
                   {pvpThreadTitleFor(
                     game.awayTeam,
@@ -2708,7 +2793,6 @@ export default function SeasonRoomPage() {
                     awayTeam: "",
                     homeTeam: "",
                     separator: "@",
-                    kickoffLocal: "",
                   },
                 ])
               }
@@ -2837,25 +2921,6 @@ export default function SeasonRoomPage() {
               <label className="flex cursor-pointer items-start gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
                 <input
                   type="checkbox"
-                  checked={autoLockPicksAtKickoff}
-                  onChange={(event) =>
-                    setAutoLockPicksAtKickoff(event.target.checked)
-                  }
-                  className="mt-0.5 h-4 w-4 accent-cyan-400"
-                />
-                <span>
-                  <span className="font-bold text-white">
-                    Auto-lock Genesis picks at scheduled kickoff
-                  </span>
-                  <span className="mt-0.5 block text-xs text-slate-400">
-                    Applies only to games with a scheduled kickoff. /stream can still lock them earlier.
-                  </span>
-                </span>
-              </label>
-
-              <label className="flex cursor-pointer items-start gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
-                <input
-                  type="checkbox"
                   checked={postPvpStreamInstructions}
                   onChange={(event) =>
                     setPostPvpStreamInstructions(event.target.checked)
@@ -2904,9 +2969,9 @@ export default function SeasonRoomPage() {
               <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-black text-white">🏁 Finalize Genesis Games</h3>
+                    <h3 className="text-base font-black text-white">🏈 Active Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Lock picks when the game starts, enter the final score afterward, or void the line for an Auto Sim / Force Win.
+                      Set kickoff after the players agree on a time, then lock, finalize, void, or remake the matchup as needed.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
@@ -2921,6 +2986,10 @@ export default function SeasonRoomPage() {
                       home: "",
                     };
                     const pickCount = Object.keys(matchup.picks || {}).length;
+                    const kickoffDraft = genesisKickoffInputs[matchup.id] || {
+                      local: toLocalDateTimeInputValue(matchup.scheduledKickoffAt),
+                      autoLock: matchup.autoLockAtKickoff !== false,
+                    };
 
                     return (
                       <div
@@ -2970,6 +3039,77 @@ export default function SeasonRoomPage() {
                                 : "🟢 Picks open"}
                             </p>
                           </div>
+
+                          {matchup.status === "open" && (
+                            <div className="w-full rounded-xl border border-cyan-400/20 bg-cyan-400/[0.05] p-3">
+                              <div className="flex flex-wrap items-end gap-3">
+                                <label className="flex min-w-[15rem] flex-1 flex-col gap-1 text-[11px] font-bold text-slate-400">
+                                  Scheduled kickoff
+                                  <input
+                                    type="datetime-local"
+                                    value={kickoffDraft.local}
+                                    onChange={(event) =>
+                                      setGenesisKickoffInputs((current) => ({
+                                        ...current,
+                                        [matchup.id]: {
+                                          local: event.target.value,
+                                          autoLock: kickoffDraft.autoLock,
+                                        },
+                                      }))
+                                    }
+                                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2 text-white outline-none focus:border-cyan-300"
+                                  />
+                                </label>
+
+                                <label className="flex cursor-pointer items-center gap-2 pb-2 text-xs font-semibold text-slate-300">
+                                  <input
+                                    type="checkbox"
+                                    checked={kickoffDraft.autoLock}
+                                    onChange={(event) =>
+                                      setGenesisKickoffInputs((current) => ({
+                                        ...current,
+                                        [matchup.id]: {
+                                          local: kickoffDraft.local,
+                                          autoLock: event.target.checked,
+                                        },
+                                      }))
+                                    }
+                                    className="h-4 w-4 accent-cyan-400"
+                                  />
+                                  Auto-lock picks at kickoff
+                                </label>
+
+                                <button
+                                  type="button"
+                                  onClick={() => saveGenesisKickoff(matchup.id)}
+                                  disabled={savingGenesisKickoffId === matchup.id}
+                                  className="rounded-xl bg-cyan-300 px-4 py-2 font-black text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {savingGenesisKickoffId === matchup.id
+                                    ? "Saving..."
+                                    : matchup.scheduledKickoffAt
+                                      ? "Update Kickoff"
+                                      : "Save Kickoff"}
+                                </button>
+
+                                {matchup.scheduledKickoffAt && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      saveGenesisKickoff(matchup.id, true)
+                                    }
+                                    disabled={savingGenesisKickoffId === matchup.id}
+                                    className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-black text-slate-300 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                                  >
+                                    Clear
+                                  </button>
+                                )}
+                              </div>
+                              <p className="mt-2 text-[11px] text-slate-500">
+                                RTA will update one kickoff notice in the Discord thread, remind the players about 30 minutes before kickoff, and auto-lock only if that option is checked.
+                              </p>
+                            </div>
+                          )}
 
                           <div className="flex flex-wrap items-end gap-2">
                             {matchup.status === "open" && (

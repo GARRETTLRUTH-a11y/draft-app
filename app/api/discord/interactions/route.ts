@@ -14,6 +14,7 @@ import { createGenesisPvpThread, PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpT
 import {
   postGenesisFinalToThread,
   settleGenesisMatchupByScore,
+  syncGenesisKickoffScheduleMessage,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
   syncGenesisStarterButtons,
@@ -123,6 +124,142 @@ function parseModalDate(raw: string): string | null {
   }
 
   return null;
+}
+
+const GENESIS_KICKOFF_TIME_ZONES = new Set([
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Phoenix",
+  "America/Anchorage",
+  "Pacific/Honolulu",
+]);
+
+function parseKickoffTime(raw: string): string | null {
+  const match = raw
+    .trim()
+    .toUpperCase()
+    .match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/);
+  if (!match) return null;
+
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const meridiem = match[3];
+
+  if (!Number.isInteger(minute) || minute < 0 || minute > 59) return null;
+
+  if (meridiem) {
+    if (hour < 1 || hour > 12) return null;
+    if (meridiem === "AM") {
+      hour = hour === 12 ? 0 : hour;
+    } else {
+      hour = hour === 12 ? 12 : hour + 12;
+    }
+  } else if (hour < 0 || hour > 23) {
+    return null;
+  }
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function zonedKickoffToIso(localValue: string, timeZone: string) {
+  const match = localValue.match(
+    /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/
+  );
+  if (!match) return null;
+
+  const [, y, mo, d, h, mi] = match;
+  const targetParts = {
+    year: Number(y),
+    month: Number(mo),
+    day: Number(d),
+    hour: Number(h),
+    minute: Number(mi),
+  };
+
+  const targetUtc = Date.UTC(
+    targetParts.year,
+    targetParts.month - 1,
+    targetParts.day,
+    targetParts.hour,
+    targetParts.minute,
+    0,
+    0
+  );
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const partsAt = (timestamp: number) => {
+    const values: Record<string, number> = {};
+    for (const part of formatter.formatToParts(new Date(timestamp))) {
+      if (["year", "month", "day", "hour", "minute"].includes(part.type)) {
+        values[part.type] = Number(part.value);
+      }
+    }
+
+    return {
+      year: values.year,
+      month: values.month,
+      day: values.day,
+      hour: values.hour,
+      minute: values.minute,
+    };
+  };
+
+  let guess = targetUtc;
+  for (let index = 0; index < 4; index++) {
+    const shown = partsAt(guess);
+    const shownAsUtc = Date.UTC(
+      shown.year,
+      shown.month - 1,
+      shown.day,
+      shown.hour,
+      shown.minute,
+      0,
+      0
+    );
+    const delta = targetUtc - shownAsUtc;
+    guess += delta;
+    if (delta === 0) break;
+  }
+
+  const finalParts = partsAt(guess);
+  if (
+    finalParts.year !== targetParts.year ||
+    finalParts.month !== targetParts.month ||
+    finalParts.day !== targetParts.day ||
+    finalParts.hour !== targetParts.hour ||
+    finalParts.minute !== targetParts.minute
+  ) {
+    return null;
+  }
+
+  return new Date(guess).toISOString();
+}
+
+function formatKickoffInZone(iso: string, timeZone: string) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short",
+    }).format(new Date(iso));
+  } catch {
+    return iso;
+  }
 }
 
 type DiscordInteraction = {
@@ -328,7 +465,7 @@ async function resolveGenesisMatchupForUserInThread(
     if (!isMatchupPlayer) {
       return {
         error:
-          "Only one of the two players in this matchup can post the game stream and start it.",
+          "Only one of the two players in this matchup can use RTA's game-thread controls.",
       };
     }
 
@@ -342,7 +479,7 @@ async function resolveGenesisMatchupForUserInThread(
 
   return {
     error:
-      "Use /stream inside your Genesis PvP game thread. I couldn't match this channel to one of your active matchups.",
+      "Use this command inside your Genesis PvP game thread. I couldn't match this channel to one of your active matchups.",
   };
 }
 
@@ -483,6 +620,135 @@ export async function POST(request: Request) {
     if ("error" in resolved) return respondToResolveError(resolved);
 
     return markPlayerReady(admin, resolved.seasonId, resolved.seasonData, resolved.player);
+  }
+
+  // Slash command: /kickoff <date> <time> <timezone>
+  // Either matchup player can set or update kickoff from inside the game thread.
+  if (interaction.type === 2 && interaction.data?.name === "kickoff") {
+    if (!discordUserId) {
+      return ephemeral("Couldn't identify your Discord account.");
+    }
+    if (!interaction.channel_id) {
+      return ephemeral("Use /kickoff inside the Genesis PvP game thread.");
+    }
+
+    const rawDate = interaction.data.options?.find(
+      (option) => option.name === "date"
+    )?.value;
+    const rawTime = interaction.data.options?.find(
+      (option) => option.name === "time"
+    )?.value;
+    const rawTimeZone = interaction.data.options?.find(
+      (option) => option.name === "timezone"
+    )?.value;
+
+    const date =
+      typeof rawDate === "string" ? parseModalDate(rawDate) : null;
+    const time =
+      typeof rawTime === "string" ? parseKickoffTime(rawTime) : null;
+    const timeZone =
+      typeof rawTimeZone === "string" &&
+      GENESIS_KICKOFF_TIME_ZONES.has(rawTimeZone)
+        ? rawTimeZone
+        : null;
+
+    if (!date) {
+      return ephemeral(
+        "Enter the kickoff date as YYYY-MM-DD or M/D/YYYY."
+      );
+    }
+    if (!time) {
+      return ephemeral(
+        "Enter the kickoff time as HH:MM (24-hour) or H:MM AM/PM."
+      );
+    }
+    if (!timeZone) {
+      return ephemeral("Choose a kickoff time zone from the list.");
+    }
+
+    const resolved = await resolveGenesisMatchupForUserInThread(
+      admin,
+      discordUserId,
+      interaction.channel_id
+    );
+    if ("error" in resolved) return respondToResolveError(resolved);
+
+    const { seasonId, seasonData, matchup } = resolved;
+    const picksState = seasonData.genesisPicks;
+    if (!picksState) {
+      return ephemeral("That Genesis matchup could not be found.");
+    }
+
+    if (matchup.status === "locked") {
+      return ephemeral("🔒 This game has already started and Genesis picks are closed.");
+    }
+    if (matchup.status === "settled") {
+      return ephemeral("This Genesis matchup is already final.");
+    }
+    if (matchup.status === "voided") {
+      return ephemeral("🚫 This Genesis matchup was voided for an Auto Sim or Force Win.");
+    }
+
+    const scheduledKickoffAt = zonedKickoffToIso(
+      `${date}T${time}`,
+      timeZone
+    );
+    if (!scheduledKickoffAt) {
+      return ephemeral(
+        "That kickoff is invalid in the selected time zone. Check the date/time, especially around daylight-saving changes."
+      );
+    }
+
+    const kickoffChanged =
+      matchup.scheduledKickoffAt !== scheduledKickoffAt ||
+      matchup.scheduledKickoffTimeZone !== timeZone;
+
+    const scheduledMatchup = {
+      ...matchup,
+      scheduledKickoffAt,
+      scheduledKickoffTimeZone: timeZone,
+      autoLockAtKickoff: matchup.autoLockAtKickoff !== false,
+      kickoffReminderSentAt: kickoffChanged
+        ? undefined
+        : matchup.kickoffReminderSentAt,
+    };
+
+    const schedule = await syncGenesisKickoffScheduleMessage(scheduledMatchup);
+    const nextSeasonData: SeasonData = {
+      ...seasonData,
+      genesisPicks: {
+        ...picksState,
+        matchups: picksState.matchups.map((item) =>
+          item.id === matchup.id ? schedule.matchup : item
+        ),
+      },
+    };
+
+    const { error: updateError } = await admin
+      .from("seasons")
+      .update({
+        season_data: nextSeasonData,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", seasonId);
+
+    if (updateError) {
+      return ephemeral("Couldn't save the kickoff time. Try again.");
+    }
+
+    const unix = Math.floor(new Date(scheduledKickoffAt).getTime() / 1000);
+    return ephemeral(
+      [
+        `✅ Kickoff scheduled for <t:${unix}:F> (<t:${unix}:R>).`,
+        `Entered as **${formatKickoffInZone(scheduledKickoffAt, timeZone)}**.`,
+        schedule.matchup.autoLockAtKickoff === false
+          ? "Genesis will stay open until /stream or a commissioner lock."
+          : "Genesis will automatically lock at kickoff if the game has not already been started with /stream.",
+        ...(schedule.warning
+          ? [`Discord schedule warning: ${schedule.warning}`]
+          : []),
+      ].join("\n")
+    );
   }
 
   // Slash command: /stream <YouTube/Twitch URL>

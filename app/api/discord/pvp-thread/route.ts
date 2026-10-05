@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import {
   createGenesisPvpThread,
@@ -29,47 +29,6 @@ type PvpThreadPayload = {
   neutral?: boolean;
   postStreamInstructions?: boolean;
 };
-
-function normalizeTeam(value: string) {
-  return value.trim().toLowerCase();
-}
-
-async function resolveMatchupDiscordUserIds(
-  admin: SupabaseClient,
-  seasonId: string,
-  seasonData: SeasonData,
-  awayTeam?: string,
-  homeTeam?: string
-) {
-  if (!awayTeam || !homeTeam) return [] as string[];
-
-  const selectedTeams = new Set([
-    normalizeTeam(awayTeam),
-    normalizeTeam(homeTeam),
-  ]);
-
-  const playerNames = seasonData.players
-    .filter((player) => player.team && selectedTeams.has(normalizeTeam(player.team)))
-    .map((player) => player.name);
-
-  if (!playerNames.length) return [] as string[];
-
-  const { data: participants } = await admin
-    .from("season_participants")
-    .select("user_id, player_name")
-    .eq("season_id", seasonId)
-    .in("player_name", playerNames);
-
-  const userIds = [...new Set((participants || []).map((row) => row.user_id).filter(Boolean))];
-  if (!userIds.length) return [] as string[];
-
-  const { data: links } = await admin
-    .from("discord_links")
-    .select("user_id, discord_user_id")
-    .in("user_id", userIds);
-
-  return [...new Set((links || []).map((row) => row.discord_user_id).filter(Boolean))] as string[];
-}
 
 export async function POST(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -143,14 +102,6 @@ export async function POST(request: Request) {
           )
         : undefined;
 
-    const matchupDiscordUserIds = await resolveMatchupDiscordUserIds(
-      admin,
-      seasonId,
-      nextSeasonData,
-      awayTeam,
-      homeTeam
-    );
-
     const matchupId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     const pickComponents =
       line && awayTeam && homeTeam
@@ -164,8 +115,9 @@ export async function POST(request: Request) {
     const result = await createGenesisPvpThread(
       threadName,
       starterMessage,
-      matchupDiscordUserIds,
-      pickComponents
+      [],
+      pickComponents,
+      awayTeam && homeTeam ? [awayTeam, homeTeam] : []
     );
 
     let matchupHistoryWarning: string | undefined;
@@ -218,16 +170,19 @@ export async function POST(request: Request) {
 
     if (line && awayTeam && homeTeam) {
       const currentPicks = nextSeasonData.genesisPicks || { matchups: [] };
-      const matchup = createGenesisPickMatchup({
-        id: matchupId,
-        threadId: result.thread.id,
-        threadName: result.thread.name || threadName,
-        createdAt: new Date().toISOString(),
-        seasonYear: nextSeasonData.seasonYear,
-        stage: nextSeasonData.periodLabel || undefined,
-        line,
-        starterMessageId: result.starterMessageId,
-      });
+      const matchup = {
+        ...createGenesisPickMatchup({
+          id: matchupId,
+          threadId: result.thread.id,
+          threadName: result.thread.name || threadName,
+          createdAt: new Date().toISOString(),
+          seasonYear: nextSeasonData.seasonYear,
+          stage: nextSeasonData.periodLabel || undefined,
+          line,
+          starterMessageId: result.starterMessageId,
+        }),
+        teamRoleIds: result.taggedRoleIds,
+      };
 
       const summary = await syncGenesisPickSummary(matchup);
       pickSummaryWarning = summary.warning;
@@ -262,6 +217,7 @@ export async function POST(request: Request) {
       threadName: result.thread.name || threadName,
       genesisRoleTagged: result.genesisRoleTagged,
       taggedPlayers: result.taggedUserIds.length,
+      taggedTeamRoles: result.taggedRoleIds.length,
       line,
       leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
       leaderboardWarning: leaderboard.warning,

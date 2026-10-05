@@ -79,6 +79,26 @@ function formatClock(totalSeconds: number) {
   return hours > 0 ? `${hours}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+function toLocalDateTimeInputValue(iso?: string) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (!Number.isFinite(date.getTime())) return "";
+
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    date.getFullYear(),
+    "-",
+    pad(date.getMonth() + 1),
+    "-",
+    pad(date.getDate()),
+    "T",
+    pad(date.getHours()),
+    ":",
+    pad(date.getMinutes()),
+  ].join("");
+}
+
+
 type RoomSeason = {
   id: string;
   user_id: string;
@@ -119,7 +139,6 @@ type PvpBatchGame = {
   awayTeam: string;
   homeTeam: string;
   separator: "@" | "vs.";
-  kickoffLocal: string;
 };
 
 export default function SeasonRoomPage() {
@@ -184,9 +203,7 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
-  const [pvpKickoffLocal, setPvpKickoffLocal] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
-  const [autoLockPicksAtKickoff, setAutoLockPicksAtKickoff] = useState(true);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -201,6 +218,10 @@ export default function SeasonRoomPage() {
   const [lockingGenesisMatchupId, setLockingGenesisMatchupId] = useState<string | null>(null);
   const [voidingGenesisMatchupId, setVoidingGenesisMatchupId] = useState<string | null>(null);
   const [deletingGenesisMatchupId, setDeletingGenesisMatchupId] = useState<string | null>(null);
+  const [genesisKickoffInputs, setGenesisKickoffInputs] = useState<
+    Record<string, { local: string; autoLock: boolean }>
+  >({});
+  const [savingGenesisKickoffId, setSavingGenesisKickoffId] = useState<string | null>(null);
   const [genesisFinalizeStatus, setGenesisFinalizeStatus] = useState("");
   const [ratingEditorPlayerId, setRatingEditorPlayerId] = useState<number | null>(null);
   const [ratingOverallInput, setRatingOverallInput] = useState("");
@@ -393,11 +414,10 @@ export default function SeasonRoomPage() {
         awayTeam: pvpAwayTeam,
         homeTeam: pvpHomeTeam,
         separator: pvpSeparator,
-        kickoffLocal: pvpKickoffLocal,
       } satisfies PvpBatchGame,
       ...additionalPvpGames,
     ],
-    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, pvpKickoffLocal, additionalPvpGames]
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
   );
 
   const allPvpGamesReady =
@@ -407,8 +427,6 @@ export default function SeasonRoomPage() {
         Boolean(game.awayTeam) &&
         Boolean(game.homeTeam) &&
         game.awayTeam !== game.homeTeam &&
-        (!game.kickoffLocal ||
-          Number.isFinite(new Date(game.kickoffLocal).getTime())) &&
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
@@ -1022,10 +1040,6 @@ export default function SeasonRoomPage() {
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
               postStreamInstructions: postPvpStreamInstructions,
-              scheduledKickoffAt: game.kickoffLocal
-                ? new Date(game.kickoffLocal).toISOString()
-                : undefined,
-              autoLockAtKickoff: autoLockPicksAtKickoff,
             }),
           });
 
@@ -1070,7 +1084,6 @@ export default function SeasonRoomPage() {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
             setPvpSeparator("@");
-            setPvpKickoffLocal("");
           } else {
             setAdditionalPvpGames((current) =>
               current.filter((row) => row.id !== game.id)
@@ -2708,7 +2721,6 @@ export default function SeasonRoomPage() {
                     awayTeam: "",
                     homeTeam: "",
                     separator: "@",
-                    kickoffLocal: "",
                   },
                 ])
               }

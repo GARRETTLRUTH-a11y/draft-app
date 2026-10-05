@@ -169,6 +169,15 @@ export async function syncGenesisPickSummary(
       return { matchup };
     }
 
+    if (editResponse.status !== 404) {
+      const body = await editResponse.text();
+      return {
+        matchup,
+        warning:
+          `Could not update the Genesis picks summary: ${body || editResponse.statusText}`,
+      };
+    }
+
     messageId = undefined;
   }
 

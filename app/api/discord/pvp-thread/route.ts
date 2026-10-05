@@ -15,6 +15,7 @@ import {
   buildGenesisPickComponents,
   createGenesisPickMatchup,
   syncGenesisLeaderboard,
+  syncGenesisPickSummary,
 } from "@/lib/genesisPicks";
 
 export const maxDuration = 300;
@@ -194,6 +195,8 @@ export async function POST(request: Request) {
       }
     }
 
+    let pickSummaryWarning: string | undefined;
+
     if (line && awayTeam && homeTeam) {
       const currentPicks = nextSeasonData.genesisPicks || { matchups: [] };
       const matchup = createGenesisPickMatchup({
@@ -206,11 +209,14 @@ export async function POST(request: Request) {
         line,
       });
 
+      const summary = await syncGenesisPickSummary(matchup);
+      pickSummaryWarning = summary.warning;
+
       nextSeasonData = {
         ...nextSeasonData,
         genesisPicks: {
           ...currentPicks,
-          matchups: [...currentPicks.matchups, matchup],
+          matchups: [...currentPicks.matchups, summary.matchup],
         },
       };
     }
@@ -241,6 +247,7 @@ export async function POST(request: Request) {
       leaderboardWarning: leaderboard.warning,
       streamInstructionsPosted,
       streamInstructionsWarning,
+      pickSummaryWarning,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown Discord error.";

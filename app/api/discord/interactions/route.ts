@@ -538,13 +538,32 @@ export async function POST(request: Request) {
         : item
     );
 
-    const nextSeasonData: SeasonData = {
+    let nextSeasonData: SeasonData = {
       ...seasonData,
       genesisPicks: {
         ...picksState,
         matchups: nextMatchups,
       },
     };
+
+    const lockedSummaryMatchup = nextMatchups.find(
+      (item) => item.id === matchup.id
+    )!;
+    const pickSummary = await syncGenesisPickSummary(lockedSummaryMatchup);
+    if (
+      pickSummary.matchup.pickSummaryMessageId !==
+      lockedSummaryMatchup.pickSummaryMessageId
+    ) {
+      nextSeasonData = {
+        ...nextSeasonData,
+        genesisPicks: {
+          ...nextSeasonData.genesisPicks!,
+          matchups: nextMatchups.map((item) =>
+            item.id === matchup.id ? pickSummary.matchup : item
+          ),
+        },
+      };
+    }
 
     const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
     const syncedSeasonData = leaderboard.seasonData;
@@ -1129,13 +1148,32 @@ export async function POST(request: Request) {
           : item
       );
 
-      const nextSeasonData: SeasonData = {
+      let nextSeasonData: SeasonData = {
         ...resolved.seasonData,
         genesisPicks: {
           ...picksState,
           matchups: nextMatchups,
         },
       };
+
+      const lockedSummaryMatchup = nextMatchups.find(
+        (item) => item.id === matchupId
+      )!;
+      const pickSummary = await syncGenesisPickSummary(lockedSummaryMatchup);
+      if (
+        pickSummary.matchup.pickSummaryMessageId !==
+        lockedSummaryMatchup.pickSummaryMessageId
+      ) {
+        nextSeasonData = {
+          ...nextSeasonData,
+          genesisPicks: {
+            ...nextSeasonData.genesisPicks!,
+            matchups: nextMatchups.map((item) =>
+              item.id === matchupId ? pickSummary.matchup : item
+            ),
+          },
+        };
+      }
 
       const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
       const syncedSeasonData = leaderboard.seasonData;

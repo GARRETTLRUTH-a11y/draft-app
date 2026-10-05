@@ -119,6 +119,7 @@ type PvpBatchGame = {
   awayTeam: string;
   homeTeam: string;
   separator: "@" | "vs.";
+  kickoffLocal: string;
 };
 
 export default function SeasonRoomPage() {
@@ -183,7 +184,9 @@ export default function SeasonRoomPage() {
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
   const [pvpYear, setPvpYear] = useState("");
+  const [pvpKickoffLocal, setPvpKickoffLocal] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
+  const [autoLockPicksAtKickoff, setAutoLockPicksAtKickoff] = useState(true);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
@@ -390,10 +393,11 @@ export default function SeasonRoomPage() {
         awayTeam: pvpAwayTeam,
         homeTeam: pvpHomeTeam,
         separator: pvpSeparator,
+        kickoffLocal: pvpKickoffLocal,
       } satisfies PvpBatchGame,
       ...additionalPvpGames,
     ],
-    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
+    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, pvpKickoffLocal, additionalPvpGames]
   );
 
   const allPvpGamesReady =
@@ -403,6 +407,8 @@ export default function SeasonRoomPage() {
         Boolean(game.awayTeam) &&
         Boolean(game.homeTeam) &&
         game.awayTeam !== game.homeTeam &&
+        (!game.kickoffLocal ||
+          Number.isFinite(new Date(game.kickoffLocal).getTime())) &&
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
@@ -1016,6 +1022,10 @@ export default function SeasonRoomPage() {
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
               postStreamInstructions: postPvpStreamInstructions,
+              scheduledKickoffAt: game.kickoffLocal
+                ? new Date(game.kickoffLocal).toISOString()
+                : undefined,
+              autoLockAtKickoff: autoLockPicksAtKickoff,
             }),
           });
 
@@ -1029,6 +1039,7 @@ export default function SeasonRoomPage() {
             leaderboardWarning?: string;
             streamInstructionsPosted?: boolean;
             streamInstructionsWarning?: string;
+            matchupHistoryWarning?: string;
           };
 
           if (!response.ok) {
@@ -1047,6 +1058,11 @@ export default function SeasonRoomPage() {
               `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.streamInstructionsWarning}`
             );
           }
+          if (result.matchupHistoryWarning) {
+            warnings.push(
+              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.matchupHistoryWarning}`
+            );
+          }
 
           // Remove successful rows immediately so a partial batch failure can
           // be retried without accidentally recreating threads that succeeded.
@@ -1054,6 +1070,7 @@ export default function SeasonRoomPage() {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
             setPvpSeparator("@");
+            setPvpKickoffLocal("");
           } else {
             setAdditionalPvpGames((current) =>
               current.filter((row) => row.id !== game.id)
@@ -2537,6 +2554,19 @@ export default function SeasonRoomPage() {
               </label>
             </div>
 
+            <label className="mt-3 flex max-w-sm flex-col gap-1 text-xs font-semibold text-slate-400">
+              Scheduled kickoff (optional)
+              <input
+                type="datetime-local"
+                value={pvpKickoffLocal}
+                onChange={(event) => setPvpKickoffLocal(event.target.value)}
+                className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+              />
+              <span className="font-normal text-slate-500">
+                RTA posts a reminder 30 minutes before kickoff.
+              </span>
+            </label>
+
             {additionalPvpGames.map((game, index) => (
               <div
                 key={game.id}
@@ -2640,6 +2670,24 @@ export default function SeasonRoomPage() {
                   </label>
                 </div>
 
+                <label className="mt-3 flex max-w-sm flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Scheduled kickoff (optional)
+                  <input
+                    type="datetime-local"
+                    value={game.kickoffLocal}
+                    onChange={(event) =>
+                      setAdditionalPvpGames((current) =>
+                        current.map((row) =>
+                          row.id === game.id
+                            ? { ...row, kickoffLocal: event.target.value }
+                            : row
+                        )
+                      )
+                    }
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                  />
+                </label>
+
                 <p className="mt-3 text-xs text-slate-500">
                   {pvpThreadTitleFor(
                     game.awayTeam,
@@ -2660,6 +2708,7 @@ export default function SeasonRoomPage() {
                     awayTeam: "",
                     homeTeam: "",
                     separator: "@",
+                    kickoffLocal: "",
                   },
                 ])
               }
@@ -2788,6 +2837,25 @@ export default function SeasonRoomPage() {
               <label className="flex cursor-pointer items-start gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
                 <input
                   type="checkbox"
+                  checked={autoLockPicksAtKickoff}
+                  onChange={(event) =>
+                    setAutoLockPicksAtKickoff(event.target.checked)
+                  }
+                  className="mt-0.5 h-4 w-4 accent-cyan-400"
+                />
+                <span>
+                  <span className="font-bold text-white">
+                    Auto-lock Genesis picks at scheduled kickoff
+                  </span>
+                  <span className="mt-0.5 block text-xs text-slate-400">
+                    Applies only to games with a scheduled kickoff. /stream can still lock them earlier.
+                  </span>
+                </span>
+              </label>
+
+              <label className="flex cursor-pointer items-start gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
+                <input
+                  type="checkbox"
                   checked={postPvpStreamInstructions}
                   onChange={(event) =>
                     setPostPvpStreamInstructions(event.target.checked)
@@ -2882,6 +2950,14 @@ export default function SeasonRoomPage() {
                             <p className="mt-1 text-xs text-slate-400">
                               Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} submitted
                             </p>
+                            {matchup.scheduledKickoffAt && (
+                              <p className="mt-1 text-xs font-semibold text-cyan-200">
+                                ⏰ Kickoff: {new Date(matchup.scheduledKickoffAt).toLocaleString()}
+                                {matchup.autoLockAtKickoff === false
+                                  ? " · manual lock"
+                                  : " · auto-lock enabled"}
+                              </p>
+                            )}
                             <p
                               className={`mt-1 text-xs font-black uppercase tracking-wide ${
                                 matchup.status === "locked"

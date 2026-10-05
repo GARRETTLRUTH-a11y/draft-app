@@ -16,6 +16,7 @@ import {
   settleGenesisMatchupByScore,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
+  syncGenesisStarterButtons,
 } from "@/lib/genesisPicks";
 
 // Standard 12-byte ASN.1 SPKI prefix for raw Ed25519 public keys -- wraps
@@ -565,6 +566,13 @@ export async function POST(request: Request) {
       };
     }
 
+    const lockedButtonMatchup = nextSeasonData.genesisPicks?.matchups.find(
+      (item) => item.id === matchup.id
+    );
+    if (lockedButtonMatchup) {
+      await syncGenesisStarterButtons(seasonId, lockedButtonMatchup);
+    }
+
     const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
     const syncedSeasonData = leaderboard.seasonData;
 
@@ -1081,6 +1089,14 @@ export async function POST(request: Request) {
         }
       }
 
+      const finalizedButtonMatchup =
+        settledSeasonData.genesisPicks?.matchups.find(
+          (item) => item.id === matchupId
+        );
+      if (finalizedButtonMatchup) {
+        await syncGenesisStarterButtons(seasonId, finalizedButtonMatchup);
+      }
+
       const leaderboard = await syncGenesisLeaderboard(settledSeasonData);
       const nextSeasonData = leaderboard.seasonData;
 
@@ -1198,6 +1214,13 @@ export async function POST(request: Request) {
             ),
           },
         };
+      }
+
+      const lockedButtonMatchup = nextSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (lockedButtonMatchup) {
+        await syncGenesisStarterButtons(seasonId, lockedButtonMatchup);
       }
 
       const leaderboard = await syncGenesisLeaderboard(nextSeasonData);

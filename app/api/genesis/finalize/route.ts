@@ -7,6 +7,7 @@ import {
   settleGenesisMatchupByScore,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
+  syncGenesisStarterButtons,
 } from "@/lib/genesisPicks";
 
 type Payload = {
@@ -145,6 +146,13 @@ export async function POST(request: Request) {
         },
       };
     }
+  }
+
+  const finalizedMatchup = nextSeasonData.genesisPicks?.matchups.find(
+    (item) => item.id === matchupId
+  );
+  if (finalizedMatchup) {
+    await syncGenesisStarterButtons(seasonId, finalizedMatchup);
   }
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);

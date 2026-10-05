@@ -8,6 +8,7 @@ import {
 } from "@/lib/discordPvpThreads";
 import {
   buildGenesisLine,
+  buildGenesisMatchupHistoryCard,
   genesisStarterMessage,
 } from "@/lib/genesisLines";
 import type { SeasonData } from "@/lib/season";
@@ -27,6 +28,8 @@ type PvpThreadPayload = {
   homeTeam?: string;
   neutral?: boolean;
   postStreamInstructions?: boolean;
+  scheduledKickoffAt?: string;
+  autoLockAtKickoff?: boolean;
 };
 
 function normalizeTeam(value: string) {
@@ -126,6 +129,17 @@ export async function POST(request: Request) {
     const awayTeam = payload.awayTeam?.trim();
     const homeTeam = payload.homeTeam?.trim();
     const seasonData = season.season_data as SeasonData;
+    const scheduledKickoffAt = payload.scheduledKickoffAt?.trim();
+    const kickoffMs = scheduledKickoffAt
+      ? new Date(scheduledKickoffAt).getTime()
+      : Number.NaN;
+
+    if (scheduledKickoffAt && !Number.isFinite(kickoffMs)) {
+      return NextResponse.json(
+        { error: "Scheduled kickoff time is invalid." },
+        { status: 400 }
+      );
+    }
 
     // The website refreshes Genesis history immediately before this
     // request. Keep thread creation fast and deterministic: do not make a
@@ -156,8 +170,13 @@ export async function POST(request: Request) {
         ? buildGenesisPickComponents(seasonId, matchupId, line)
         : [];
 
+    const kickoffText =
+      scheduledKickoffAt && Number.isFinite(kickoffMs)
+        ? `\n⏰ Scheduled kickoff: <t:${Math.floor(kickoffMs / 1000)}:F> (<t:${Math.floor(kickoffMs / 1000)}:R>)`
+        : "";
+
     const starterMessage = line
-      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.`
+      ? `${genesisStarterMessage(threadName, line)}${kickoffText}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.`
       : undefined;
 
     const result = await createGenesisPvpThread(
@@ -166,6 +185,21 @@ export async function POST(request: Request) {
       matchupDiscordUserIds,
       pickComponents
     );
+
+    let matchupHistoryWarning: string | undefined;
+    if (line && awayTeam && homeTeam) {
+      try {
+        await postGenesisPvpThreadMessage(
+          result.thread.id,
+          buildGenesisMatchupHistoryCard(nextSeasonData, awayTeam, homeTeam)
+        );
+      } catch (error) {
+        matchupHistoryWarning =
+          error instanceof Error
+            ? error.message
+            : "Could not post Genesis matchup history.";
+      }
+    }
 
     let streamInstructionsWarning: string | undefined;
     let streamInstructionsPosted = false;
@@ -207,6 +241,12 @@ export async function POST(request: Request) {
         seasonYear: nextSeasonData.seasonYear,
         stage: nextSeasonData.periodLabel || undefined,
         line,
+        starterMessageId: result.starterMessageId,
+        scheduledKickoffAt: scheduledKickoffAt || undefined,
+        autoLockAtKickoff:
+          scheduledKickoffAt
+            ? payload.autoLockAtKickoff !== false
+            : undefined,
       });
 
       const summary = await syncGenesisPickSummary(matchup);
@@ -247,6 +287,7 @@ export async function POST(request: Request) {
       leaderboardWarning: leaderboard.warning,
       streamInstructionsPosted,
       streamInstructionsWarning,
+      matchupHistoryWarning,
       pickSummaryWarning,
     });
   } catch (error) {

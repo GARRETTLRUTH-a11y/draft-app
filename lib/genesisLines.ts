@@ -797,6 +797,123 @@ function playerForTeam(players: SeasonPlayer[], team: string) {
   return players.find((player) => player.team && normalize(player.team) === target);
 }
 
+export function buildGenesisMatchupHistoryCard(
+  seasonData: SeasonData,
+  awayTeam: string,
+  homeTeam: string
+) {
+  const awayPlayer = playerForTeam(seasonData.players, awayTeam);
+  const homePlayer = playerForTeam(seasonData.players, homeTeam);
+  const modelHistory = genesisModelGames(seasonData);
+  const pvpGames = modelHistory.games.filter((game) => game.gameType === "pvp");
+
+  const awayPlayerName = awayPlayer?.name;
+  const homePlayerName = homePlayer?.name;
+  const awayPlayerKey = normalize(awayPlayerName || "");
+  const homePlayerKey = normalize(homePlayerName || "");
+
+  const directCoachGames =
+    awayPlayerName && homePlayerName
+      ? pvpGames.filter((game) => {
+          if (!game.playerA || !game.playerB) return false;
+          const players = new Set([
+            normalize(game.playerA),
+            normalize(game.playerB),
+          ]);
+          return (
+            players.has(awayPlayerKey) &&
+            players.has(homePlayerKey) &&
+            players.size === 2
+          );
+        })
+      : [];
+
+  const teamGames = pvpGames.filter((game) =>
+    sameHistoricalTeamPair(game, awayTeam, homeTeam)
+  );
+
+  const selected = directCoachGames.length ? directCoachGames : teamGames;
+  const scope = directCoachGames.length
+    ? "Current-user PvP H2H"
+    : "Team-vs-team PvP H2H";
+
+  if (!selected.length) {
+    return [
+      "📊 **GENESIS MATCHUP HISTORY**",
+      "**" + (awayPlayerName || awayTeam) + " vs. " + (homePlayerName || homeTeam) + "**",
+      "No previous PvP meeting found in Genesis history.",
+    ].join("\n");
+  }
+
+  let awayWins = 0;
+  let homeWins = 0;
+  let awayMarginTotal = 0;
+
+  for (const game of selected) {
+    let awayScore: number;
+    let homeScore: number;
+
+    if (
+      directCoachGames.length &&
+      game.playerA &&
+      normalize(game.playerA) === awayPlayerKey
+    ) {
+      awayScore = game.scoreA;
+      homeScore = game.scoreB;
+    } else if (
+      directCoachGames.length &&
+      game.playerB &&
+      normalize(game.playerB) === awayPlayerKey
+    ) {
+      awayScore = game.scoreB;
+      homeScore = game.scoreA;
+    } else if (normalize(game.teamA) === normalize(awayTeam)) {
+      awayScore = game.scoreA;
+      homeScore = game.scoreB;
+    } else {
+      awayScore = game.scoreB;
+      homeScore = game.scoreA;
+    }
+
+    if (awayScore > homeScore) awayWins++;
+    else homeWins++;
+    awayMarginTotal += awayScore - homeScore;
+  }
+
+  const last = [...selected].sort((a, b) => {
+    const timestampCompare = (b.sourceTimestamp || "").localeCompare(
+      a.sourceTimestamp || ""
+    );
+    if (timestampCompare !== 0) return timestampCompare;
+    return (b.seasonYear || 0) - (a.seasonYear || 0);
+  })[0];
+
+  const awayLabel = awayPlayerName || awayTeam;
+  const homeLabel = homePlayerName || homeTeam;
+  const avgMargin = awayMarginTotal / selected.length;
+  const avgMarginText =
+    Math.abs(avgMargin) < 0.05
+      ? "Even"
+      : avgMargin > 0
+        ? awayLabel + " +" + avgMargin.toFixed(1)
+        : homeLabel + " +" + Math.abs(avgMargin).toFixed(1);
+
+  const lastContext = [
+    last.seasonYear ? String(last.seasonYear) : "",
+    last.stage || "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return [
+    "📊 **GENESIS MATCHUP HISTORY**",
+    "**" + awayLabel + " vs. " + homeLabel + "**",
+    scope + ": **" + selected.length + "** prior meeting" + (selected.length === 1 ? "" : "s"),
+    "Series: **" + awayLabel + " " + awayWins + "–" + homeWins + " " + homeLabel + "**",
+    "Average scoring margin: **" + avgMarginText + "**",
+    "Last meeting: **" + last.teamA + " " + last.scoreA + " – " + last.teamB + " " + last.scoreB + "**" + (lastContext ? " (" + lastContext + ")" : ""),
+  ].join("\n");
+}
 function rating(player: SeasonPlayer | undefined, key: "overallRating" | "offenseRating" | "defenseRating") {
   const value = player?.[key];
   return typeof value === "number" ? value : 85;

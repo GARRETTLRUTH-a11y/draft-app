@@ -216,6 +216,122 @@ export async function syncGenesisPickSummary(
   };
 }
 
+export function buildGenesisMatchupComponents(
+  seasonId: string,
+  matchup: GenesisPickMatchup
+) {
+  const awayLabel = lineLabel(matchup.awayTeam, matchup.awayLine);
+  const homeLabel = lineLabel(matchup.homeTeam, -matchup.awayLine);
+  const isOpen = matchup.status === "open";
+
+  const statusLabel =
+    matchup.status === "open"
+      ? "📺 Post Stream / Start Game"
+      : matchup.status === "locked"
+        ? "🔒 PICKS CLOSED"
+        : matchup.status === "settled"
+          ? "🏁 FINAL"
+          : "🚫 VOID";
+
+  return [
+    {
+      type: 1,
+      components: [
+        {
+          type: 2,
+          style: 1,
+          label: awayLabel,
+          custom_id: `genesis_pick:${seasonId}:${matchup.id}:away`,
+          disabled: !isOpen,
+        },
+        {
+          type: 2,
+          style: 1,
+          label: homeLabel,
+          custom_id: `genesis_pick:${seasonId}:${matchup.id}:home`,
+          disabled: !isOpen,
+        },
+        {
+          type: 2,
+          style: 2,
+          label: statusLabel,
+          custom_id: `genesis_stream:${seasonId}:${matchup.id}`,
+          disabled: !isOpen,
+        },
+      ],
+    },
+  ];
+}
+
+export async function syncGenesisStarterButtons(
+  seasonId: string,
+  matchup: GenesisPickMatchup
+) {
+  if (!matchup.starterMessageId) return { ok: false, skipped: true };
+
+  const response = await discordApi(
+    `/channels/${matchup.threadId}/messages/${matchup.starterMessageId}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        components: buildGenesisMatchupComponents(seasonId, matchup),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return { ok: response.ok, skipped: false };
+}
+
+export async function postGenesisKickoffReminder(
+  matchup: GenesisPickMatchup
+) {
+  if (!matchup.scheduledKickoffAt) return false;
+  const kickoffMs = new Date(matchup.scheduledKickoffAt).getTime();
+  if (!Number.isFinite(kickoffMs)) return false;
+  const unix = Math.floor(kickoffMs / 1000);
+
+  const response = await discordApi(
+    `/channels/${matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: [
+          "⏰ **GENESIS KICKOFF REMINDER**",
+          `Kickoff: <t:${unix}:F> (<t:${unix}:R>)`,
+          matchup.autoLockAtKickoff === false
+            ? "Genesis picks remain open until /stream or a commissioner lock closes them."
+            : "Genesis picks will automatically lock at the scheduled kickoff time if they are still open.",
+        ].join("\n"),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
+export async function postGenesisScheduledLockNotice(
+  matchup: GenesisPickMatchup
+) {
+  const response = await discordApi(
+    `/channels/${matchup.threadId}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: [
+          "⏰ **SCHEDULED KICKOFF — GENESIS PICKS CLOSED**",
+          `**${Object.keys(matchup.picks || {}).length}** pick${Object.keys(matchup.picks || {}).length === 1 ? "" : "s"} locked in.`,
+          "No additional picks will be accepted for this matchup.",
+        ].join("\n"),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  return response.ok;
+}
+
 export function createGenesisPickMatchup(input: {
   id: string;
   threadId: string;
@@ -224,6 +340,9 @@ export function createGenesisPickMatchup(input: {
   seasonYear: number;
   stage?: string;
   line: GenesisLineResult;
+  starterMessageId?: string;
+  scheduledKickoffAt?: string;
+  autoLockAtKickoff?: boolean;
 }): GenesisPickMatchup {
   return {
     id: input.id,
@@ -239,6 +358,9 @@ export function createGenesisPickMatchup(input: {
     favorite: input.line.favorite,
     spread: input.line.spread,
     awayLine: signedAwayLine(input.line),
+    starterMessageId: input.starterMessageId,
+    scheduledKickoffAt: input.scheduledKickoffAt,
+    autoLockAtKickoff: input.autoLockAtKickoff,
     status: "open",
     picks: {},
   };
@@ -532,10 +654,11 @@ function matchingFinalGame(
 export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
   const state = seasonData.genesisPicks;
   if (!state?.matchups?.length || !seasonData.genesisHistory?.games?.length) {
-    return { seasonData, settledCount: 0 };
+    return { seasonData, settledCount: 0, settledMatchupIds: [] as string[] };
   }
 
   let settledCount = 0;
+  const settledMatchupIds: string[] = [];
 
   const matchups = state.matchups.map((matchup) => {
     if (matchup.status === "settled" || matchup.status === "voided") return matchup;
@@ -553,6 +676,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
           : "home";
 
     settledCount++;
+    settledMatchupIds.push(matchup.id);
 
     return {
       ...matchup,
@@ -574,6 +698,7 @@ export function settleGenesisPicksFromHistory(seasonData: SeasonData) {
       },
     },
     settledCount,
+    settledMatchupIds,
   };
 }
 

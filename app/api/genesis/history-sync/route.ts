@@ -5,6 +5,8 @@ import { syncGenesisHistory } from "@/lib/genesisLines";
 import {
   settleGenesisPicksFromHistory,
   syncGenesisLeaderboard,
+  syncGenesisPickSummary,
+  syncGenesisStarterButtons,
 } from "@/lib/genesisPicks";
 import type { SeasonData } from "@/lib/season";
 
@@ -71,6 +73,38 @@ export async function POST(request: Request) {
     const settled = settleGenesisPicksFromHistory(withHistory);
     let nextSeasonData = settled.seasonData;
     let leaderboardWarning: string | undefined;
+
+    for (const matchupId of settled.settledMatchupIds) {
+      const settledMatchup = nextSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (!settledMatchup) continue;
+
+      const summary = await syncGenesisPickSummary(settledMatchup, {
+        createIfMissing: false,
+      });
+      if (
+        summary.matchup.pickSummaryMessageId !==
+        settledMatchup.pickSummaryMessageId
+      ) {
+        nextSeasonData = {
+          ...nextSeasonData,
+          genesisPicks: {
+            ...nextSeasonData.genesisPicks!,
+            matchups: nextSeasonData.genesisPicks!.matchups.map((item) =>
+              item.id === matchupId ? summary.matchup : item
+            ),
+          },
+        };
+      }
+
+      await syncGenesisStarterButtons(
+        seasonId,
+        nextSeasonData.genesisPicks?.matchups.find(
+          (item) => item.id === matchupId
+        ) || settledMatchup
+      );
+    }
 
     if (settled.settledCount > 0 || nextSeasonData.genesisPicks?.leaderboardChannelId) {
       const leaderboard = await syncGenesisLeaderboard(nextSeasonData);

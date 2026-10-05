@@ -5,6 +5,7 @@ import type { SeasonData } from "@/lib/season";
 import {
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
+  syncGenesisStarterButtons,
 } from "@/lib/genesisPicks";
 
 type Payload = {
@@ -164,6 +165,11 @@ export async function POST(request: Request) {
       },
     };
   }
+
+  await syncGenesisStarterButtons(
+    seasonId,
+    nextSeasonData.genesisPicks!.matchups.find((item) => item.id === matchupId)!
+  );
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;

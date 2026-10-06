@@ -414,15 +414,45 @@ export default function SeasonRoomPage() {
   const seasonData = season?.season_data;
   const players = seasonData?.players ?? [];
   const currentWeek = seasonData?.currentWeek ?? PRESEASON_WEEK;
+  const currentGenesisStageLabel =
+    seasonData?.periodLabel?.trim() || formatWeekLabel(currentWeek);
   const activeGenesisMatchups = useMemo(
     () =>
       [...(seasonData?.genesisPicks?.matchups ?? [])]
-        .filter(
-          (matchup) =>
-            matchup.status === "open" || matchup.status === "locked"
-        )
+        .filter((matchup) => {
+          if (matchup.status === "open" || matchup.status === "locked") {
+            return true;
+          }
+
+          if (matchup.status !== "settled" || !seasonData) {
+            return false;
+          }
+
+          if (matchup.seasonYear !== seasonData.seasonYear) {
+            return false;
+          }
+
+          if (matchup.seasonWeek != null) {
+            return matchup.seasonWeek === currentWeek;
+          }
+
+          if (matchup.stage?.trim()) {
+            return matchup.stage.trim() === currentGenesisStageLabel;
+          }
+
+          // Backward compatibility for matchups created before seasonWeek/stage
+          // were stored. Weekly thread names include "(Week X, YEAR)".
+          return matchup.threadName.includes(
+            `(${currentGenesisStageLabel}, ${seasonData.seasonYear})`
+          );
+        })
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [seasonData?.genesisPicks?.matchups]
+    [
+      currentGenesisStageLabel,
+      currentWeek,
+      seasonData,
+      seasonData?.genesisPicks?.matchups,
+    ]
   );
 
   const leagueTeamNames = useMemo(
@@ -1691,7 +1721,14 @@ export default function SeasonRoomPage() {
     }
 
     setFinalizingGenesisMatchupId(matchupId);
-    setGenesisFinalizeStatus("Finalizing game, grading ATS picks, and updating Discord...");
+    const matchup = activeGenesisMatchups.find((item) => item.id === matchupId);
+    const isCorrection = matchup?.status === "settled";
+
+    setGenesisFinalizeStatus(
+      isCorrection
+        ? "Saving corrected final score, re-grading ATS picks, and recalculating the leaderboard..."
+        : "Finalizing game, grading ATS picks, and updating Discord..."
+    );
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -1718,6 +1755,7 @@ export default function SeasonRoomPage() {
       const result = (await response.json()) as {
         error?: string;
         atsWinner?: "away" | "home" | "push";
+        corrected?: boolean;
         leaderboardWarning?: string;
       };
 
@@ -1734,7 +1772,9 @@ export default function SeasonRoomPage() {
       });
 
       setGenesisFinalizeStatus(
-        `✅ Game finalized. Picks locked and graded${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ", and #genesis-picks updated."}`
+        result.corrected
+          ? `✅ Final score corrected. Picks re-graded and #genesis-picks recalculated${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
+          : `✅ Game finalized. Picks locked and graded${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ", and #genesis-picks updated."}`
       );
     } catch (error) {
       setGenesisFinalizeStatus(
@@ -3307,8 +3347,16 @@ export default function SeasonRoomPage() {
                 <div className="mt-4 space-y-3">
                   {activeGenesisMatchups.map((matchup) => {
                     const score = genesisFinalScoreInputs[matchup.id] || {
-                      away: "",
-                      home: "",
+                      away:
+                        matchup.status === "settled" &&
+                        matchup.finalAwayScore != null
+                          ? String(matchup.finalAwayScore)
+                          : "",
+                      home:
+                        matchup.status === "settled" &&
+                        matchup.finalHomeScore != null
+                          ? String(matchup.finalHomeScore)
+                          : "",
                     };
                     const pickCount = Object.keys(matchup.picks || {}).length;
                     const kickoffDraft = genesisKickoffInputs[matchup.id] || {
@@ -3368,14 +3416,18 @@ export default function SeasonRoomPage() {
                             )}
                             <p
                               className={`mt-1 text-xs font-black uppercase tracking-wide ${
-                                matchup.status === "locked"
-                                  ? "text-amber-300"
-                                  : "text-green-300"
+                                matchup.status === "settled"
+                                  ? "text-fuchsia-300"
+                                  : matchup.status === "locked"
+                                    ? "text-amber-300"
+                                    : "text-green-300"
                               }`}
                             >
-                              {matchup.status === "locked"
-                                ? "🔒 Picks closed · game started"
-                                : "🟢 Picks open"}
+                              {matchup.status === "settled"
+                                ? `🏁 Final · ${matchup.finalAwayScore ?? "?"}–${matchup.finalHomeScore ?? "?"}`
+                                : matchup.status === "locked"
+                                  ? "🔒 Picks closed · game started"
+                                  : "🟢 Picks open"}
                             </p>
                           </div>
 
@@ -3489,25 +3541,29 @@ export default function SeasonRoomPage() {
                               </button>
                             )}
 
-                            <button
-                              onClick={() => voidGenesisMatchup(matchup.id, "auto_sim")}
-                              disabled={voidingGenesisMatchupId === matchup.id}
-                              className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {voidingGenesisMatchupId === matchup.id
-                                ? "Voiding..."
-                                : "🚫 Auto Sim"}
-                            </button>
+                            {matchup.status !== "settled" && (
+                              <>
+                                <button
+                                  onClick={() => voidGenesisMatchup(matchup.id, "auto_sim")}
+                                  disabled={voidingGenesisMatchupId === matchup.id}
+                                  className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {voidingGenesisMatchupId === matchup.id
+                                    ? "Voiding..."
+                                    : "🚫 Auto Sim"}
+                                </button>
 
-                            <button
-                              onClick={() => voidGenesisMatchup(matchup.id, "force_win")}
-                              disabled={voidingGenesisMatchupId === matchup.id}
-                              className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
-                            >
-                              {voidingGenesisMatchupId === matchup.id
-                                ? "Voiding..."
-                                : "🚫 Force Win"}
-                            </button>
+                                <button
+                                  onClick={() => voidGenesisMatchup(matchup.id, "force_win")}
+                                  disabled={voidingGenesisMatchupId === matchup.id}
+                                  className="rounded-xl border border-red-300/30 bg-red-300/10 px-3 py-2 text-xs font-black text-red-200 transition hover:bg-red-300/20 disabled:cursor-not-allowed disabled:opacity-40"
+                                >
+                                  {voidingGenesisMatchupId === matchup.id
+                                    ? "Voiding..."
+                                    : "🚫 Force Win"}
+                                </button>
+                              </>
+                            )}
                             <label className="flex flex-col gap-1 text-[11px] font-bold text-slate-400">
                               {matchup.awayTeam}
                               <input
@@ -3556,8 +3612,12 @@ export default function SeasonRoomPage() {
                               className="rounded-xl bg-green-300 px-4 py-2 font-black text-slate-950 transition hover:bg-green-200 disabled:cursor-not-allowed disabled:opacity-40"
                             >
                               {finalizingGenesisMatchupId === matchup.id
-                                ? "Finalizing..."
-                                : "Finalize Game"}
+                                ? matchup.status === "settled"
+                                  ? "Saving Correction..."
+                                  : "Finalizing..."
+                                : matchup.status === "settled"
+                                  ? "✏️ Save Corrected Score"
+                                  : "Finalize Game"}
                             </button>
                           </div>
                         </div>

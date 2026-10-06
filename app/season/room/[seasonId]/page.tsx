@@ -2886,98 +2886,6 @@ export default function SeasonRoomPage() {
               every matchup.
             </p>
 
-            <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="font-black text-white">🏷️ Team → Discord Role Mapping</p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Map each dynasty team to its real Discord role once. RTA uses the saved role ID for thread tags and player-only game controls even when the Discord role name is different.
-                  </p>
-                </div>
-                <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
-                  {mappedTeamRoleCount}/{leagueTeamNames.length} mapped
-                </span>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  onClick={loadDiscordTeamRoles}
-                  disabled={isLoadingDiscordTeamRoles}
-                  className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  {isLoadingDiscordTeamRoles ? "Loading Roles..." : "Refresh Discord Roles"}
-                </button>
-                <button
-                  type="button"
-                  onClick={autoMapExactDiscordRoles}
-                  disabled={isLoadingDiscordTeamRoles || discordTeamRoles.length === 0 || isSaving}
-                  className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
-                >
-                  Auto-map Exact Matches
-                </button>
-                {discordTeamRolesStatus && (
-                  <span className="text-xs font-semibold text-slate-400">
-                    {discordTeamRolesStatus}
-                  </span>
-                )}
-              </div>
-
-              <div className="mt-4 grid gap-3 md:grid-cols-2">
-                {leagueTeamNames.map((team) => {
-                  const selectedRoleId =
-                    seasonData.discordTeamRoleIds?.[team] || "";
-                  const selectedRole = discordTeamRoles.find(
-                    (role) => role.id === selectedRoleId
-                  );
-
-                  return (
-                    <label
-                      key={team}
-                      className="rounded-xl border border-white/10 bg-slate-900/70 p-3"
-                    >
-                      <span className="block text-xs font-black text-white">
-                        {team}
-                      </span>
-                      <select
-                        value={selectedRoleId}
-                        onChange={(event) =>
-                          saveDiscordTeamRole(team, event.target.value)
-                        }
-                        disabled={
-                          isLoadingDiscordTeamRoles ||
-                          savingDiscordTeamRoleTeam === team
-                        }
-                        className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
-                      >
-                        <option value="">Not mapped — exact-name fallback</option>
-                        {[...discordTeamRoles]
-                          .sort((a, b) =>
-                            a.name.localeCompare(b.name, undefined, {
-                              sensitivity: "base",
-                            })
-                          )
-                          .map((role) => (
-                            <option key={role.id} value={role.id}>
-                              @{role.name}
-                            </option>
-                          ))}
-                      </select>
-                      <span className="mt-1 block text-[11px] text-slate-500">
-                        {savingDiscordTeamRoleTeam === team
-                          ? "Saving..."
-                          : selectedRole
-                            ? `Using @${selectedRole.name}`
-                            : selectedRoleId
-                              ? "Saved role is no longer in the current Discord role list."
-                              : "Choose the role held by the user who controls this team."}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
-
             <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
               <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
                 X Team
@@ -4674,6 +4582,114 @@ export default function SeasonRoomPage() {
             )}
           </div>
         </section>
+
+        {showCommissionerControls && (
+          <section className="rounded-3xl border-2 border-cyan-400/30 bg-cyan-500/[0.05] p-6">
+            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-cyan-300">
+              🏷️ Discord Team Roles
+              <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-cyan-200">
+                Only you can see this
+              </span>
+            </div>
+            <h2 className="text-xl font-black">Team → Discord Role Mapping</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Assign each dynasty team to its real Discord role. RTA uses these role IDs for game-thread tags and player-only Genesis controls even when the Discord role name differs from the team name.
+            </p>
+
+            <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="font-black text-white">🏷️ Team → Discord Role Mapping</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Map each dynasty team to its real Discord role once. RTA uses the saved role ID for thread tags and player-only game controls even when the Discord role name is different.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
+                    {mappedTeamRoleCount}/{leagueTeamNames.length} mapped
+                  </span>
+                </div>
+  
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={loadDiscordTeamRoles}
+                    disabled={isLoadingDiscordTeamRoles}
+                    className="rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs font-bold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isLoadingDiscordTeamRoles ? "Loading Roles..." : "Refresh Discord Roles"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={autoMapExactDiscordRoles}
+                    disabled={isLoadingDiscordTeamRoles || discordTeamRoles.length === 0 || isSaving}
+                    className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-3 py-2 text-xs font-bold text-cyan-200 transition hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Auto-map Exact Matches
+                  </button>
+                  {discordTeamRolesStatus && (
+                    <span className="text-xs font-semibold text-slate-400">
+                      {discordTeamRolesStatus}
+                    </span>
+                  )}
+                </div>
+  
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  {leagueTeamNames.map((team) => {
+                    const selectedRoleId =
+                      seasonData.discordTeamRoleIds?.[team] || "";
+                    const selectedRole = discordTeamRoles.find(
+                      (role) => role.id === selectedRoleId
+                    );
+  
+                    return (
+                      <label
+                        key={team}
+                        className="rounded-xl border border-white/10 bg-slate-900/70 p-3"
+                      >
+                        <span className="block text-xs font-black text-white">
+                          {team}
+                        </span>
+                        <select
+                          value={selectedRoleId}
+                          onChange={(event) =>
+                            saveDiscordTeamRole(team, event.target.value)
+                          }
+                          disabled={
+                            isLoadingDiscordTeamRoles ||
+                            savingDiscordTeamRoleTeam === team
+                          }
+                          className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300 disabled:opacity-50"
+                        >
+                          <option value="">Not mapped — exact-name fallback</option>
+                          {[...discordTeamRoles]
+                            .sort((a, b) =>
+                              a.name.localeCompare(b.name, undefined, {
+                                sensitivity: "base",
+                              })
+                            )
+                            .map((role) => (
+                              <option key={role.id} value={role.id}>
+                                @{role.name}
+                              </option>
+                            ))}
+                        </select>
+                        <span className="mt-1 block text-[11px] text-slate-500">
+                          {savingDiscordTeamRoleTeam === team
+                            ? "Saving..."
+                            : selectedRole
+                              ? `Using @${selectedRole.name}`
+                              : selectedRoleId
+                                ? "Saved role is no longer in the current Discord role list."
+                                : "Choose the role held by the user who controls this team."}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+  
+            </div>
+          </section>
+        )}
 
         <section className="rounded-3xl border border-white/10 bg-white/5 p-6">
           <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">

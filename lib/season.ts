@@ -80,6 +80,9 @@ export type GenesisPickMatchup = {
   threadName: string;
   createdAt: string;
   seasonYear: number;
+  // Season progression index when the matchup was created. Older matchups
+  // may not have this, so callers should retain a stage/thread-name fallback.
+  seasonWeek?: number;
   stage?: string;
   awayTeam: string;
   homeTeam: string;

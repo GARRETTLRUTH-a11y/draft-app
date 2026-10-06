@@ -986,9 +986,6 @@ export async function POST(request: Request) {
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
-      if (matchup.status === "settled") {
-        return ephemeral("This Genesis matchup is already final.");
-      }
       if (matchup.status === "voided") {
         return ephemeral("🚫 This Genesis matchup was voided, so no final score is needed for Genesis grading.");
       }
@@ -997,7 +994,7 @@ export async function POST(request: Request) {
         type: 9,
         data: {
           custom_id: `genesis_final_score_modal:${seasonId}:${matchupId}`,
-          title: "Submit Final Score",
+          title: matchup.status === "settled" ? "Edit Final Score" : "Submit Final Score",
           components: [
             {
               type: 1,
@@ -1010,7 +1007,9 @@ export async function POST(request: Request) {
                   required: true,
                   min_length: 1,
                   max_length: 3,
-                  placeholder: "31",
+                  ...(matchup.finalAwayScore != null
+                    ? { value: String(matchup.finalAwayScore) }
+                    : { placeholder: "31" }),
                 },
               ],
             },
@@ -1025,7 +1024,9 @@ export async function POST(request: Request) {
                   required: true,
                   min_length: 1,
                   max_length: 3,
-                  placeholder: "24",
+                  ...(matchup.finalHomeScore != null
+                    ? { value: String(matchup.finalHomeScore) }
+                    : { placeholder: "24" }),
                 },
               ],
             },
@@ -1412,6 +1413,7 @@ export async function POST(request: Request) {
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
+      const isCorrection = matchup.status === "settled";
       const settled = settleGenesisMatchupByScore(
         resolved.seasonData,
         matchupId,
@@ -1472,14 +1474,17 @@ export async function POST(request: Request) {
       }
 
       await postGenesisFinalToThread({
-        matchup,
+        matchup: settled.matchup,
         awayScore,
         homeScore,
         atsWinner: settled.atsWinner,
+        corrected: isCorrection,
       });
 
       return ephemeral(
-        `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded and the leaderboard updated.`
+        isCorrection
+          ? `✏️ Final corrected: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks were re-graded and the leaderboard recalculated.`
+          : `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded and the leaderboard updated.`
       );
     }
 

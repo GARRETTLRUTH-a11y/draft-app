@@ -104,12 +104,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (matchup.status === "settled") {
-    return NextResponse.json(
-      { error: "That Genesis matchup is already finalized." },
-      { status: 409 }
-    );
-  }
+  const isCorrection = matchup.status === "settled";
 
   const settled = settleGenesisMatchupByScore(
     seasonData,
@@ -171,16 +166,18 @@ export async function POST(request: Request) {
   }
 
   await postGenesisFinalToThread({
-    matchup,
+    matchup: settled.matchup,
     awayScore,
     homeScore,
     atsWinner,
+    corrected: isCorrection,
   });
 
   return NextResponse.json({
     ok: true,
     matchupId,
     atsWinner,
+    corrected: isCorrection,
     leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
     leaderboardWarning: leaderboard.warning,
   });

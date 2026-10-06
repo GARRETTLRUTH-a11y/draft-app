@@ -193,7 +193,10 @@ export async function POST(request: Request) {
           threadName: result.thread.name || threadName,
           createdAt: new Date().toISOString(),
           seasonYear: nextSeasonData.seasonYear,
-          stage: nextSeasonData.periodLabel || undefined,
+          seasonWeek: nextSeasonData.currentWeek,
+          stage:
+            nextSeasonData.periodLabel?.trim() ||
+            undefined,
           line,
           starterMessageId: result.starterMessageId,
         }),

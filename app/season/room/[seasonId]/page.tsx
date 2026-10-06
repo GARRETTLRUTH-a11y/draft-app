@@ -3334,13 +3334,13 @@ export default function SeasonRoomPage() {
               <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-black text-white">🏈 Active Genesis Games</h3>
+                    <h3 className="text-base font-black text-white">🏈 This Week's Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Set kickoff after the players agree on a time, then lock, finalize, void, or remake the matchup as needed.
+                      Finalized games stay here until you advance the week so scores can be corrected if needed. Open games can still be scheduled, locked, voided, or remade.
                     </p>
                   </div>
                   <span className="rounded-full border border-white/10 bg-white/5 px-2.5 py-1 text-xs font-bold text-slate-300">
-                    {activeGenesisMatchups.length} active
+                    {activeGenesisMatchups.length} this week
                   </span>
                 </div>
 
@@ -3576,7 +3576,7 @@ export default function SeasonRoomPage() {
                                     ...current,
                                     [matchup.id]: {
                                       away: event.target.value,
-                                      home: current[matchup.id]?.home ?? "",
+                                      home: current[matchup.id]?.home ?? score.home,
                                     },
                                   }))
                                 }
@@ -3597,7 +3597,7 @@ export default function SeasonRoomPage() {
                                   setGenesisFinalScoreInputs((current) => ({
                                     ...current,
                                     [matchup.id]: {
-                                      away: current[matchup.id]?.away ?? "",
+                                      away: current[matchup.id]?.away ?? score.away,
                                       home: event.target.value,
                                     },
                                   }))

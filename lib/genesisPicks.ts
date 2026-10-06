@@ -230,8 +230,15 @@ export function buildGenesisMatchupComponents(
       : matchup.status === "locked"
         ? "🔒 PICKS CLOSED"
         : matchup.status === "settled"
-          ? "🏁 FINAL"
+          ? "✏️ Edit Final Score"
           : "🚫 VOID";
+
+  const statusCustomId =
+    matchup.status === "settled"
+      ? `genesis_final_score:${seasonId}:${matchup.id}`
+      : `genesis_stream:${seasonId}:${matchup.id}`;
+  const statusDisabled =
+    matchup.status === "locked" || matchup.status === "voided";
 
   return [
     {
@@ -255,8 +262,8 @@ export function buildGenesisMatchupComponents(
           type: 2,
           style: 2,
           label: statusLabel,
-          custom_id: `genesis_stream:${seasonId}:${matchup.id}`,
-          disabled: !isOpen,
+          custom_id: statusCustomId,
+          disabled: statusDisabled,
         },
       ],
     },
@@ -464,6 +471,7 @@ export function createGenesisPickMatchup(input: {
   threadName: string;
   createdAt: string;
   seasonYear: number;
+  seasonWeek?: number;
   stage?: string;
   line: GenesisLineResult;
   starterMessageId?: string;
@@ -476,6 +484,7 @@ export function createGenesisPickMatchup(input: {
     threadName: input.threadName,
     createdAt: input.createdAt,
     seasonYear: input.seasonYear,
+    seasonWeek: input.seasonWeek,
     stage: input.stage,
     awayTeam: input.line.awayTeam,
     homeTeam: input.line.homeTeam,
@@ -511,9 +520,6 @@ export function settleGenesisMatchupByScore(
     return { error: "Genesis matchup not found." } as const;
   }
 
-  if (matchup.status === "settled") {
-    return { error: "That Genesis matchup is already finalized." } as const;
-  }
   if (matchup.status === "voided") {
     return { error: "That Genesis matchup was voided and cannot be graded." } as const;
   }
@@ -534,10 +540,12 @@ export function settleGenesisMatchupByScore(
           finalAwayScore: awayScore,
           finalHomeScore: homeScore,
           atsWinner,
-          settledAt,
+          settledAt: item.settledAt || settledAt,
         }
       : item
   );
+
+  const updatedMatchup = matchups.find((item) => item.id === matchupId)!;
 
   return {
     seasonData: {
@@ -547,7 +555,7 @@ export function settleGenesisMatchupByScore(
         matchups,
       },
     },
-    matchup,
+    matchup: updatedMatchup,
     atsWinner,
   } as const;
 }
@@ -662,6 +670,7 @@ export async function postGenesisFinalToThread(input: {
   awayScore: number;
   homeScore: number;
   atsWinner: GenesisPickSide | "push";
+  corrected?: boolean;
 }) {
   const winnerText =
     input.atsWinner === "push"
@@ -676,11 +685,13 @@ export async function postGenesisFinalToThread(input: {
       method: "POST",
       body: JSON.stringify({
         content: [
-          "🏁 **GENESIS FINAL**",
+          input.corrected ? "✏️ **GENESIS FINAL CORRECTED**" : "🏁 **GENESIS FINAL**",
           `**${input.matchup.awayTeam} ${input.awayScore} – ${input.matchup.homeTeam} ${input.homeScore}**`,
           `Locked line: **${input.matchup.displayLine}**`,
           `ATS result: **${winnerText}**`,
-          "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
+          input.corrected
+            ? "The corrected score has been re-graded and the Genesis Picks leaderboard recalculated."
+            : "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
         ].join("\n"),
         allowed_mentions: { parse: [] as string[] },
       }),

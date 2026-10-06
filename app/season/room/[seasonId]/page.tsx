@@ -4597,19 +4597,10 @@ export default function SeasonRoomPage() {
             </p>
 
             <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="font-black text-white">🏷️ Team → Discord Role Mapping</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Map each dynasty team to its real Discord role once. RTA uses the saved role ID for thread tags and player-only game controls even when the Discord role name is different.
-                    </p>
-                  </div>
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 text-xs font-black text-cyan-200">
                     {mappedTeamRoleCount}/{leagueTeamNames.length} mapped
                   </span>
-                </div>
-  
-                <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
                     onClick={loadDiscordTeamRoles}

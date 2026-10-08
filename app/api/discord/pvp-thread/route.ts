@@ -11,7 +11,7 @@ import {
   buildGenesisMatchupHistoryCard,
   genesisStarterMessage,
 } from "@/lib/genesisLines";
-import type { SeasonData } from "@/lib/season";
+import { formatWeekLabel, type SeasonData } from "@/lib/season";
 import {
   buildGenesisPickComponents,
   createGenesisPickMatchup,
@@ -27,6 +27,8 @@ type PvpThreadPayload = {
   awayTeam?: string;
   homeTeam?: string;
   neutral?: boolean;
+  stage?: string;
+  seasonYear?: number;
   postStreamInstructions?: boolean;
 };
 
@@ -86,6 +88,26 @@ export async function POST(request: Request) {
     const awayTeam = payload.awayTeam?.trim();
     const homeTeam = payload.homeTeam?.trim();
     const seasonData = season.season_data as SeasonData;
+    const requestedStage = payload.stage?.trim();
+    const stage =
+      requestedStage ||
+      seasonData.periodLabel?.trim() ||
+      formatWeekLabel(seasonData.currentWeek);
+    const seasonYear = payload.seasonYear ?? seasonData.seasonYear;
+
+    if (stage.length > 80) {
+      return NextResponse.json(
+        { error: "Stage/bowl name must be 80 characters or fewer." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isInteger(seasonYear) || seasonYear < 1900 || seasonYear > 3000) {
+      return NextResponse.json(
+        { error: "seasonYear must be a valid four-digit year." },
+        { status: 400 }
+      );
+    }
 
     // The website refreshes Genesis history immediately before this
     // request. Keep thread creation fast and deterministic: do not make a
@@ -94,12 +116,16 @@ export async function POST(request: Request) {
 
     const line =
       awayTeam && homeTeam
-        ? buildGenesisLine(
-            nextSeasonData,
-            awayTeam,
-            homeTeam,
-            Boolean(payload.neutral)
-          )
+        ? {
+            ...buildGenesisLine(
+              nextSeasonData,
+              awayTeam,
+              homeTeam,
+              Boolean(payload.neutral)
+            ),
+            stage,
+            seasonYear,
+          }
         : undefined;
 
     const matchupId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
@@ -141,7 +167,10 @@ export async function POST(request: Request) {
       try {
         await postGenesisPvpThreadMessage(
           result.thread.id,
-          buildGenesisMatchupHistoryCard(nextSeasonData, awayTeam, homeTeam)
+          buildGenesisMatchupHistoryCard(nextSeasonData, awayTeam, homeTeam, {
+            stage,
+            seasonYear,
+          })
         );
       } catch (error) {
         matchupHistoryWarning =
@@ -192,11 +221,9 @@ export async function POST(request: Request) {
           threadId: result.thread.id,
           threadName: result.thread.name || threadName,
           createdAt: new Date().toISOString(),
-          seasonYear: nextSeasonData.seasonYear,
+          seasonYear,
           seasonWeek: nextSeasonData.currentWeek,
-          stage:
-            nextSeasonData.periodLabel?.trim() ||
-            undefined,
+          stage,
           line,
           starterMessageId: result.starterMessageId,
         }),
@@ -234,6 +261,8 @@ export async function POST(request: Request) {
       ok: true,
       threadId: result.thread.id,
       threadName: result.thread.name || threadName,
+      stage,
+      seasonYear,
       genesisRoleTagged: result.genesisRoleTagged,
       taggedPlayers: result.taggedUserIds.length,
       taggedTeamRoles: result.taggedRoleIds.length,

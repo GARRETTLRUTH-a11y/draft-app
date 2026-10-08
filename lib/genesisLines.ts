@@ -63,6 +63,8 @@ export type GenesisLineResult = {
   awayTeam: string;
   homeTeam: string;
   neutral: boolean;
+  stage?: string;
+  seasonYear?: number;
   favorite: string | null;
   spread: number;
   displayLine: string;
@@ -126,6 +128,14 @@ function genesisModelGames(seasonData: SeasonData) {
         if (
           typeof game.seasonYear === "number" &&
           game.seasonYear !== matchup.seasonYear
+        ) {
+          return false;
+        }
+
+        if (
+          game.stage?.trim() &&
+          matchup.stage?.trim() &&
+          normalize(game.stage) !== normalize(matchup.stage)
         ) {
           return false;
         }
@@ -800,7 +810,8 @@ function playerForTeam(players: SeasonPlayer[], team: string) {
 export function buildGenesisMatchupHistoryCard(
   seasonData: SeasonData,
   awayTeam: string,
-  homeTeam: string
+  homeTeam: string,
+  context?: { stage?: string; seasonYear?: number }
 ) {
   const awayPlayer = playerForTeam(seasonData.players, awayTeam);
   const homePlayer = playerForTeam(seasonData.players, homeTeam);
@@ -836,13 +847,20 @@ export function buildGenesisMatchupHistoryCard(
   const scope = directCoachGames.length
     ? "Current-user PvP H2H"
     : "Team-vs-team PvP H2H";
+  const currentContext = [
+    context?.stage?.trim() || "",
+    context?.seasonYear ? String(context.seasonYear) : "",
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   if (!selected.length) {
     return [
       "📊 **GENESIS MATCHUP HISTORY**",
+      currentContext ? `Current matchup: **${currentContext}**` : "",
       "**" + (awayPlayerName || awayTeam) + " vs. " + (homePlayerName || homeTeam) + "**",
       "No previous PvP meeting found in Genesis history.",
-    ].join("\n");
+    ].filter(Boolean).join("\n");
   }
 
   let awayWins = 0;
@@ -907,12 +925,13 @@ export function buildGenesisMatchupHistoryCard(
 
   return [
     "📊 **GENESIS MATCHUP HISTORY**",
+    currentContext ? `Current matchup: **${currentContext}**` : "",
     "**" + awayLabel + " vs. " + homeLabel + "**",
     scope + ": **" + selected.length + "** prior meeting" + (selected.length === 1 ? "" : "s"),
     "Series: **" + awayLabel + " " + awayWins + "–" + homeWins + " " + homeLabel + "**",
     "Average scoring margin: **" + avgMarginText + "**",
     "Last meeting: **" + last.teamA + " " + last.scoreA + " – " + last.teamB + " " + last.scoreB + "**" + (lastContext ? " (" + lastContext + ")" : ""),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 }
 function rating(player: SeasonPlayer | undefined, key: "overallRating" | "offenseRating" | "defenseRating") {
   const value = player?.[key];
@@ -1464,8 +1483,13 @@ export function genesisStarterMessage(
   threadName: string,
   line: GenesisLineResult
 ) {
+  const context = [line.stage?.trim() || "", line.seasonYear]
+    .filter(Boolean)
+    .join(", ");
+
   return [
     `🏈 **${threadName}**`,
+    ...(context ? [`Stage: **${context}**`] : []),
     "",
     "📈 **GENESIS LINE**",
     `**${line.displayLine}**`,

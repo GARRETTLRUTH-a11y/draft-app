@@ -116,9 +116,14 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
           ? "🚫 **VOID — picks canceled**"
           : `🏁 **Final** · ${picks.length} picks`;
 
+  const stageLine = matchup.stage?.trim()
+    ? `Stage: **${matchup.stage.trim()}, ${matchup.seasonYear}**`
+    : `Season: **${matchup.seasonYear}**`;
+
   const lines = [
     "🎯 **GENESIS PICKS**",
     `**${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}**`,
+    stageLine,
     statusLine,
     "",
   ];
@@ -641,7 +646,10 @@ export async function postGenesisFinalScorePrompt(
       body: JSON.stringify({
         content: [
           "🏁 **Game finished? Submit the final score**",
-          `**${matchup.awayTeam} @ ${matchup.homeTeam}**`,
+          `**${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}**`,
+          matchup.stage?.trim()
+            ? `Stage: **${matchup.stage.trim()}, ${matchup.seasonYear}**`
+            : `Season: **${matchup.seasonYear}**`,
           "If the game is over, submit the score so Genesis can grade the locked picks.",
         ].join("\n"),
         components: [
@@ -687,6 +695,9 @@ export async function postGenesisFinalToThread(input: {
         content: [
           input.corrected ? "✏️ **GENESIS FINAL CORRECTED**" : "🏁 **GENESIS FINAL**",
           `**${input.matchup.awayTeam} ${input.awayScore} – ${input.matchup.homeTeam} ${input.homeScore}**`,
+          input.matchup.stage?.trim()
+            ? `Stage: **${input.matchup.stage.trim()}, ${input.matchup.seasonYear}**`
+            : `Season: **${input.matchup.seasonYear}**`,
           `Locked line: **${input.matchup.displayLine}**`,
           `ATS result: **${winnerText}**`,
           input.corrected
@@ -771,6 +782,14 @@ function matchingFinalGame(
       if (
         typeof game.seasonYear === "number" &&
         game.seasonYear !== matchup.seasonYear
+      ) {
+        return false;
+      }
+
+      if (
+        game.stage?.trim() &&
+        matchup.stage?.trim() &&
+        normalize(game.stage) !== normalize(matchup.stage)
       ) {
         return false;
       }

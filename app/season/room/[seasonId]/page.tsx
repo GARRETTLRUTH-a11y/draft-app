@@ -167,6 +167,8 @@ type GenesisLinePreview = {
   awayTeam: string;
   homeTeam: string;
   neutral: boolean;
+  stage?: string;
+  seasonYear?: number;
   favorite: string | null;
   spread: number;
   displayLine: string;
@@ -186,6 +188,7 @@ type PvpBatchGame = {
   awayTeam: string;
   homeTeam: string;
   separator: "@" | "vs.";
+  stageLabel: string;
 };
 
 type DiscordRoleOption = {
@@ -264,6 +267,7 @@ export default function SeasonRoomPage() {
   const [pvpHomeTeam, setPvpHomeTeam] = useState("");
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
   const [pvpStageLabel, setPvpStageLabel] = useState("");
+  const [pvpStageOverride, setPvpStageOverride] = useState("");
   const [pvpYear, setPvpYear] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
@@ -484,23 +488,42 @@ export default function SeasonRoomPage() {
   function pvpThreadTitleFor(
     awayTeam: string,
     separator: "@" | "vs.",
-    homeTeam: string
+    homeTeam: string,
+    stageOverride = ""
   ) {
     const away = awayTeam || "X Team";
     const home = homeTeam || "Y Team";
-    const stage = pvpStageLabel.trim() || formatWeekLabel(currentWeek);
+    const stage =
+      stageOverride.trim() ||
+      pvpStageLabel.trim() ||
+      formatWeekLabel(currentWeek);
     const year =
       pvpYear.trim() ||
       String(seasonData?.seasonYear ?? new Date().getFullYear());
     return `${away} ${separator} ${home} (${stage}, ${year})`;
   }
 
+  function resolvedPvpStage(stageOverride = "") {
+    return (
+      stageOverride.trim() ||
+      pvpStageLabel.trim() ||
+      formatWeekLabel(currentWeek)
+    );
+  }
+
   const pvpThreadTitle = useMemo(
-    () => pvpThreadTitleFor(pvpAwayTeam, pvpSeparator, pvpHomeTeam),
+    () =>
+      pvpThreadTitleFor(
+        pvpAwayTeam,
+        pvpSeparator,
+        pvpHomeTeam,
+        pvpStageOverride
+      ),
     [
       pvpAwayTeam,
       pvpHomeTeam,
       pvpSeparator,
+      pvpStageOverride,
       pvpStageLabel,
       pvpYear,
       currentWeek,
@@ -515,10 +538,17 @@ export default function SeasonRoomPage() {
         awayTeam: pvpAwayTeam,
         homeTeam: pvpHomeTeam,
         separator: pvpSeparator,
+        stageLabel: pvpStageOverride,
       } satisfies PvpBatchGame,
       ...additionalPvpGames,
     ],
-    [pvpAwayTeam, pvpHomeTeam, pvpSeparator, additionalPvpGames]
+    [
+      pvpAwayTeam,
+      pvpHomeTeam,
+      pvpSeparator,
+      pvpStageOverride,
+      additionalPvpGames,
+    ]
   );
 
   const allPvpGamesReady =
@@ -531,7 +561,8 @@ export default function SeasonRoomPage() {
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
-          game.homeTeam
+          game.homeTeam,
+          game.stageLabel
         ).length <= 100
     );
 
@@ -1115,6 +1146,8 @@ export default function SeasonRoomPage() {
           awayTeam: pvpAwayTeam,
           homeTeam: pvpHomeTeam,
           neutral: pvpSeparator === "vs.",
+          stage: resolvedPvpStage(pvpStageOverride),
+          seasonYear: Number(pvpYear) || seasonData?.seasonYear,
         }),
       });
 
@@ -1182,6 +1215,12 @@ export default function SeasonRoomPage() {
       return;
     }
 
+    const seasonYear = Number(year);
+    if (!Number.isInteger(seasonYear) || seasonYear < 1900 || seasonYear > 3000) {
+      setPvpCreateStatus("Enter a valid four-digit season year.");
+      return;
+    }
+
     const games = pvpGamesToCreate;
     const invalidGame = games.find(
       (game) =>
@@ -1191,7 +1230,8 @@ export default function SeasonRoomPage() {
         pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
-          game.homeTeam
+          game.homeTeam,
+          game.stageLabel
         ).length > 100
     );
 
@@ -1221,10 +1261,12 @@ export default function SeasonRoomPage() {
 
       for (let index = 0; index < games.length; index++) {
         const game = games[index];
+        const gameStage = resolvedPvpStage(game.stageLabel);
         const threadName = pvpThreadTitleFor(
           game.awayTeam,
           game.separator,
-          game.homeTeam
+          game.homeTeam,
+          game.stageLabel
         );
 
         setPvpCreateStatus(
@@ -1243,6 +1285,8 @@ export default function SeasonRoomPage() {
               awayTeam: game.awayTeam,
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
+              stage: gameStage,
+              seasonYear,
             }),
           });
 
@@ -1281,6 +1325,8 @@ export default function SeasonRoomPage() {
               awayTeam: game.awayTeam,
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
+              stage: gameStage,
+              seasonYear,
               postStreamInstructions: postPvpStreamInstructions,
             }),
           });
@@ -1326,6 +1372,7 @@ export default function SeasonRoomPage() {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
             setPvpSeparator("@");
+            setPvpStageOverride("");
           } else {
             setAdditionalPvpGames((current) =>
               current.filter((row) => row.id !== game.id)
@@ -2881,55 +2928,74 @@ export default function SeasonRoomPage() {
 
             <h2 className="text-xl font-black">Create Weekly Matchup Threads</h2>
             <p className="mt-2 text-sm text-slate-400">
-              Add one or more PvP games for the week. Stage/year and the optional /stream instructions
-              apply to the whole batch. RTA generates a separate Genesis line and Discord thread for
-              every matchup.
+              Add one or more PvP games for the week. The shared stage/year remains the default,
+              and any game can override the stage for championships or bowls. RTA generates a
+              separate Genesis line and Discord thread for every matchup.
             </p>
 
-            <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                X Team
-                <select
-                  value={pvpAwayTeam}
-                  onChange={(event) => setPvpAwayTeam(event.target.value)}
-                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
-                >
-                  <option value="">Select X team...</option>
-                  {leagueTeamNames.map((team) => (
-                    <option key={team} value={team} disabled={team === pvpHomeTeam}>
-                      {team}
-                    </option>
-                  ))}
-                </select>
+            <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+              <p className="mb-3 text-xs font-black uppercase tracking-wide text-slate-500">
+                Game 1
+              </p>
+
+              <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1fr)]">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  X Team
+                  <select
+                    value={pvpAwayTeam}
+                    onChange={(event) => setPvpAwayTeam(event.target.value)}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                  >
+                    <option value="">Select X team...</option>
+                    {leagueTeamNames.map((team) => (
+                      <option key={team} value={team} disabled={team === pvpHomeTeam}>
+                        {team}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Site
+                  <select
+                    value={pvpSeparator}
+                    onChange={(event) => setPvpSeparator(event.target.value as "@" | "vs.")}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-center text-white outline-none focus:border-cyan-300"
+                  >
+                    <option value="@">@</option>
+                    <option value="vs.">vs.</option>
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Y Team
+                  <select
+                    value={pvpHomeTeam}
+                    onChange={(event) => setPvpHomeTeam(event.target.value)}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
+                  >
+                    <option value="">Select Y team...</option>
+                    {leagueTeamNames.map((team) => (
+                      <option key={team} value={team} disabled={team === pvpAwayTeam}>
+                        {team}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Stage / Bowl Name <span className="font-normal text-slate-500">(optional override)</span>
+                <input
+                  value={pvpStageOverride}
+                  onChange={(event) => setPvpStageOverride(event.target.value)}
+                  maxLength={80}
+                  placeholder={`Uses shared “${pvpStageLabel || formatWeekLabel(currentWeek)}”`}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
+                />
               </label>
 
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                Site
-                <select
-                  value={pvpSeparator}
-                  onChange={(event) => setPvpSeparator(event.target.value as "@" | "vs.")}
-                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-center text-white outline-none focus:border-cyan-300"
-                >
-                  <option value="@">@</option>
-                  <option value="vs.">vs.</option>
-                </select>
-              </label>
-
-              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
-                Y Team
-                <select
-                  value={pvpHomeTeam}
-                  onChange={(event) => setPvpHomeTeam(event.target.value)}
-                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-cyan-300"
-                >
-                  <option value="">Select Y team...</option>
-                  {leagueTeamNames.map((team) => (
-                    <option key={team} value={team} disabled={team === pvpAwayTeam}>
-                      {team}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <p className="mt-3 text-xs text-slate-500">{pvpThreadTitle}</p>
             </div>
 
             {additionalPvpGames.map((game, index) => (
@@ -3035,11 +3101,31 @@ export default function SeasonRoomPage() {
                   </label>
                 </div>
 
+                <label className="mt-3 flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Stage / Bowl Name <span className="font-normal text-slate-500">(optional override)</span>
+                  <input
+                    value={game.stageLabel}
+                    onChange={(event) =>
+                      setAdditionalPvpGames((current) =>
+                        current.map((row) =>
+                          row.id === game.id
+                            ? { ...row, stageLabel: event.target.value }
+                            : row
+                        )
+                      )
+                    }
+                    maxLength={80}
+                    placeholder={`Uses shared “${pvpStageLabel || formatWeekLabel(currentWeek)}”`}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
+                  />
+                </label>
+
                 <p className="mt-3 text-xs text-slate-500">
                   {pvpThreadTitleFor(
                     game.awayTeam,
                     game.separator,
-                    game.homeTeam
+                    game.homeTeam,
+                    game.stageLabel
                   )}
                 </p>
               </div>
@@ -3055,6 +3141,7 @@ export default function SeasonRoomPage() {
                     awayTeam: "",
                     homeTeam: "",
                     separator: "@",
+                    stageLabel: "",
                   },
                 ])
               }
@@ -3065,13 +3152,17 @@ export default function SeasonRoomPage() {
 
             <div className="mt-4 flex flex-wrap items-end gap-3">
               <label className="flex min-w-[14rem] flex-1 flex-col gap-1 text-xs font-semibold text-slate-400">
-                Week / Stage / Bowl
+                Default Week / Stage / Bowl
                 <input
                   value={pvpStageLabel}
                   onChange={(event) => setPvpStageLabel(event.target.value)}
+                  maxLength={80}
                   placeholder="Week 11 or Cotton Bowl"
                   className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none placeholder:text-slate-500 focus:border-cyan-300"
                 />
+                <span className="font-normal text-slate-500">
+                  Used by every game whose optional override is blank.
+                </span>
               </label>
 
               <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
@@ -3086,9 +3177,31 @@ export default function SeasonRoomPage() {
             </div>
 
             <div className="mt-4 rounded-2xl border border-white/10 bg-slate-900 p-4">
-              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Game 1 thread preview</p>
-              <p className="mt-1 break-words text-lg font-black text-white">{pvpThreadTitle}</p>
-              <p className="mt-1 text-xs text-slate-500">{pvpThreadTitle.length}/100 characters</p>
+              <p className="text-xs font-black uppercase tracking-wide text-slate-500">Batch preview</p>
+              <div className="mt-2 space-y-2">
+                {pvpGamesToCreate.map((game, index) => {
+                  const title = pvpThreadTitleFor(
+                    game.awayTeam,
+                    game.separator,
+                    game.homeTeam,
+                    game.stageLabel
+                  );
+
+                  return (
+                    <div key={game.id} className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="break-words font-black text-white">
+                        <span className="mr-2 text-xs uppercase tracking-wide text-slate-500">
+                          Game {index + 1}
+                        </span>
+                        {title}
+                      </p>
+                      <p className={`text-xs ${title.length > 100 ? "text-red-300" : "text-slate-500"}`}>
+                        {title.length}/100 characters
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="mt-4 rounded-2xl border border-fuchsia-400/20 bg-fuchsia-400/[0.05] p-4">
@@ -3158,6 +3271,9 @@ export default function SeasonRoomPage() {
                     <div>
                       <p className="text-xs font-black uppercase tracking-wide text-slate-500">
                         Genesis Line
+                      </p>
+                      <p className="mt-1 text-xs font-semibold text-fuchsia-200">
+                        {resolvedPvpStage(pvpStageOverride)}, {pvpYear}
                       </p>
                       <p className="mt-1 text-2xl font-black text-white">
                         {genesisLine.displayLine}
@@ -3302,7 +3418,10 @@ export default function SeasonRoomPage() {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-black text-white">
-                              {matchup.awayTeam} @ {matchup.homeTeam}
+                              {matchup.awayTeam} {matchup.neutral ? "vs." : "@"} {matchup.homeTeam}
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-cyan-200">
+                              {matchup.stage?.trim() || formatWeekLabel(matchup.seasonWeek ?? currentWeek)}, {matchup.seasonYear}
                             </p>
                             <p className="mt-1 text-xs text-slate-400">
                               Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} submitted

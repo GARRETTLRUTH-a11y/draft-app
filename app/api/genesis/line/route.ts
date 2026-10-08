@@ -8,7 +8,7 @@ import {
   syncGenesisPickSummary,
   syncGenesisStarterButtons,
 } from "@/lib/genesisPicks";
-import type { SeasonData } from "@/lib/season";
+import { formatWeekLabel, type SeasonData } from "@/lib/season";
 
 export const maxDuration = 300;
 
@@ -17,6 +17,8 @@ type Payload = {
   awayTeam?: string;
   homeTeam?: string;
   neutral?: boolean;
+  stage?: string;
+  seasonYear?: number;
 };
 
 export async function POST(request: Request) {
@@ -76,6 +78,26 @@ export async function POST(request: Request) {
 
   try {
     const seasonData = season.season_data as SeasonData;
+    const stage =
+      payload.stage?.trim() ||
+      seasonData.periodLabel?.trim() ||
+      formatWeekLabel(seasonData.currentWeek);
+    const seasonYear = payload.seasonYear ?? seasonData.seasonYear;
+
+    if (stage.length > 80) {
+      return NextResponse.json(
+        { error: "Stage/bowl name must be 80 characters or fewer." },
+        { status: 400 }
+      );
+    }
+
+    if (!Number.isInteger(seasonYear) || seasonYear < 1900 || seasonYear > 3000) {
+      return NextResponse.json(
+        { error: "seasonYear must be a valid four-digit year." },
+        { status: 400 }
+      );
+    }
+
     const history = await syncGenesisHistory(seasonData, { mode: "incremental" });
     const withHistory: SeasonData = {
       ...seasonData,
@@ -135,12 +157,16 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: updateError.message }, { status: 500 });
     }
 
-    const line = buildGenesisLine(
-      nextSeasonData,
-      awayTeam,
-      homeTeam,
-      Boolean(payload.neutral)
-    );
+    const line = {
+      ...buildGenesisLine(
+        nextSeasonData,
+        awayTeam,
+        homeTeam,
+        Boolean(payload.neutral)
+      ),
+      stage,
+      seasonYear,
+    };
 
     return NextResponse.json({
       ok: true,

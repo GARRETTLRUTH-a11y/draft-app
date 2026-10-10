@@ -2412,15 +2412,16 @@ export default function SeasonRoomPage() {
       advanceWindow,
     }));
 
-    setMessage("Extension granted and advance time updated.");
-
     if (!updated) return;
 
     const grantedRequest = updated.extensionRequests.find((request) => request.id === requestId);
     const player = grantedRequest && updated.players.find((p) => p.id === grantedRequest.playerId);
-    if (!player) return;
+    if (!player || !grantedRequest) {
+      setMessage("Extension granted and advance time updated.");
+      return;
+    }
 
-    notifyDiscord({
+    const discordPosted = await notifyDiscord({
       type: "extension_granted",
       seasonTitle: updated.seasonTitle,
       week: grantedRequest.week,
@@ -2428,12 +2429,18 @@ export default function SeasonRoomPage() {
       team: player.team,
       newTime: formatAdvanceWindow(advanceWindow),
     });
+
+    setMessage(
+      discordPosted
+        ? "Extension granted, advance time updated, and Discord notified."
+        : "Extension granted and advance time updated, but the Discord notification could not be sent."
+    );
   }
 
   async function denyExtension(requestId: string) {
     if (!seasonData) return;
 
-    await updateSeasonData((fresh) => ({
+    const updated = await updateSeasonData((fresh) => ({
       ...fresh,
       extensionRequests: fresh.extensionRequests.map((request) =>
         request.id === requestId
@@ -2442,7 +2449,34 @@ export default function SeasonRoomPage() {
       ),
     }));
 
-    setMessage("Extension denied.");
+    if (!updated) return;
+
+    const deniedRequest = updated.extensionRequests.find(
+      (request) => request.id === requestId
+    );
+    const player =
+      deniedRequest &&
+      updated.players.find((candidate) => candidate.id === deniedRequest.playerId);
+
+    if (!deniedRequest || !player) {
+      setMessage("Extension denied. Planned advance time remains unchanged.");
+      return;
+    }
+
+    const discordPosted = await notifyDiscord({
+      type: "extension_denied",
+      seasonTitle: updated.seasonTitle,
+      week: deniedRequest.week,
+      playerName: player.name,
+      team: player.team,
+      plannedAdvanceTime: formatAdvanceWindow(updated.advanceWindow),
+    });
+
+    setMessage(
+      discordPosted
+        ? "Extension denied. Planned advance time remains unchanged, and Discord was notified."
+        : "Extension denied. Planned advance time remains unchanged, but the Discord notification could not be sent."
+    );
   }
 
   // Fully deletes a request (pending, granted, or denied) instead of just

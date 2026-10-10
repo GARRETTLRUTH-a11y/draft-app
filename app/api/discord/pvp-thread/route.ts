@@ -189,7 +189,7 @@ export async function POST(request: Request) {
           result.thread.id,
           [
             "📅 **KICKOFF / GAME START INSTRUCTIONS**",
-            "Either matchup player can use **/kickoff** in this thread to set or update the scheduled kickoff. Choose the date, time, and time zone when you run the command.",
+            "Either matchup player or the commissioner can use **/schedule** in this thread to set or update kickoff. **/kickoff** remains available as an alias. Choose the date, time, and time zone when you run the command.",
             "RTA will show the kickoff in each Discord user's local time, post a reminder about 30 minutes before kickoff, and auto-lock Genesis picks at kickoff unless the commissioner disabled auto-lock.",
             "",
             "When the game is about to start, one of the two matchup players should use **/stream** in this thread and paste the YouTube or Twitch link.",
@@ -199,7 +199,7 @@ export async function POST(request: Request) {
             "• mark the game as started",
             "• immediately close Genesis voting at the locked line",
             "",
-            "After the game, RTA will prompt for the final score if it has not already been submitted.",
+            "After the game, either matchup player or the commissioner can use **/final** to submit the score. The same command can be used to correct an already-entered final score.",
           ].join("\n")
         );
         streamInstructionsPosted = true;

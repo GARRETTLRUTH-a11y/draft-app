@@ -2043,6 +2043,18 @@ export default function SeasonRoomPage() {
       return;
     }
 
+    if (
+      freshPlayer.team?.localeCompare(jobMoveTeam, undefined, {
+        sensitivity: "base",
+      }) === 0
+    ) {
+      setJobMoveStatus(
+        `${freshPlayer.name} is already at ${jobMoveTeam}. Refresh if another commissioner changed the assignment.`
+      );
+      setIsMovingJob(false);
+      return;
+    }
+
     const freshDestination = fresh.players.find(
       (player) =>
         player.id !== freshPlayer.id &&
@@ -2051,12 +2063,29 @@ export default function SeasonRoomPage() {
         }) === 0
     );
 
+    const { data: freshClaims, error: freshClaimsError } = await supabase
+      .from("season_participants")
+      .select("player_name")
+      .eq("season_id", season.id);
+
+    if (freshClaimsError) {
+      setJobMoveStatus(
+        "Could not verify current team claims. Refresh and try the move again."
+      );
+      setIsMovingJob(false);
+      return;
+    }
+
+    const freshClaimedNames = new Set(
+      (freshClaims || []).map((claim) => claim.player_name.toLowerCase())
+    );
+
     if (
       freshDestination &&
-      participantByName.has(freshDestination.name.toLowerCase())
+      freshClaimedNames.has(freshDestination.name.toLowerCase())
     ) {
       setJobMoveStatus(
-        `${jobMoveTeam} was claimed by another player before this move could save. Refresh and try again.`
+        `${jobMoveTeam} was claimed by another player before this move could save. Move or release that claim first.`
       );
       setIsMovingJob(false);
       return;
@@ -2148,6 +2177,8 @@ export default function SeasonRoomPage() {
       );
       setJobMoveTeam("");
       await loadParticipants(season.id);
+    } else {
+      setJobMoveStatus("The coaching-job change did not save. Refresh and try again.");
     }
 
     setIsMovingJob(false);

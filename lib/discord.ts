@@ -53,6 +53,15 @@ export type DiscordNotifyPayload =
       newTime: string;
     }
   | {
+      type: "extension_denied";
+      seasonTitle: string;
+      week: number;
+      playerName: string;
+      team?: string;
+      // The existing planned advance remains unchanged when a request is denied.
+      plannedAdvanceTime: string;
+    }
+  | {
       type: "summary";
       seasonId: string;
       // The big header text, e.g. "Preseason 2026" or "Week 3 2026".

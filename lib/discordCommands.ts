@@ -100,6 +100,45 @@ export async function registerGenesisStreamCommand() {
         },
       ],
     },
+    {
+      name: "schedule",
+      type: 1,
+      description: "Schedule or update a Genesis game's kickoff",
+      options: [
+        {
+          type: 3,
+          name: "date",
+          description: "Kickoff date, e.g. 2026-10-10 or 10/10/2026",
+          required: true,
+        },
+        {
+          type: 3,
+          name: "time",
+          description: "Kickoff time, e.g. 8:00 PM or 20:00",
+          required: true,
+        },
+        {
+          type: 3,
+          name: "timezone",
+          description: "Time zone for the kickoff time you entered",
+          required: true,
+          choices: [
+            { name: "Eastern (ET)", value: "America/New_York" },
+            { name: "Central (CT)", value: "America/Chicago" },
+            { name: "Mountain (MT)", value: "America/Denver" },
+            { name: "Pacific (PT)", value: "America/Los_Angeles" },
+            { name: "Arizona (MST)", value: "America/Phoenix" },
+            { name: "Alaska (AKT)", value: "America/Anchorage" },
+            { name: "Hawaii (HST)", value: "Pacific/Honolulu" },
+          ],
+        },
+      ],
+    },
+    {
+      name: "final",
+      type: 1,
+      description: "Submit or correct the final score for this Genesis game",
+    },
   ];
 
   for (const command of commands) {

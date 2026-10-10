@@ -62,6 +62,55 @@ function ephemeral(content: string) {
   return NextResponse.json({ type: 4, data: { content, flags: 64 } });
 }
 
+function genesisFinalScoreModal(
+  seasonId: string,
+  matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number]
+) {
+  return NextResponse.json({
+    type: 9,
+    data: {
+      custom_id: `genesis_final_score_modal:${seasonId}:${matchup.id}`,
+      title: matchup.status === "settled" ? "Edit Final Score" : "Submit Final Score",
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: "away_score",
+              label: `${matchup.awayTeam} score`.slice(0, 45),
+              style: 1,
+              required: true,
+              min_length: 1,
+              max_length: 3,
+              ...(matchup.finalAwayScore != null
+                ? { value: String(matchup.finalAwayScore) }
+                : { placeholder: "31" }),
+            },
+          ],
+        },
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: "home_score",
+              label: `${matchup.homeTeam} score`.slice(0, 45),
+              style: 1,
+              required: true,
+              min_length: 1,
+              max_length: 3,
+              ...(matchup.finalHomeScore != null
+                ? { value: String(matchup.finalHomeScore) }
+                : { placeholder: "24" }),
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
 const LINK_BUTTON_ROW = {
   type: 1,
   components: [
@@ -319,7 +368,7 @@ async function resolvePlayer(
 
   const { data: seasonRow, error: seasonError } = await admin
     .from("seasons")
-    .select("season_data")
+    .select("user_id, season_data")
     .eq("id", seasonId)
     .maybeSingle();
 
@@ -405,6 +454,7 @@ async function resolveGenesisMatchupForThread(
 ): Promise<
   | {
       seasonId: string;
+      commissionerUserId: string;
       seasonData: SeasonData;
       matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number];
     }
@@ -412,7 +462,7 @@ async function resolveGenesisMatchupForThread(
 > {
   const { data: seasons, error: seasonError } = await admin
     .from("seasons")
-    .select("id, season_data")
+    .select("id, user_id, season_data")
     .order("updated_at", { ascending: false });
 
   if (seasonError || !seasons?.length) {
@@ -428,6 +478,7 @@ async function resolveGenesisMatchupForThread(
 
     return {
       seasonId: row.id,
+      commissionerUserId: row.user_id as string,
       seasonData,
       matchup,
     };
@@ -470,7 +521,12 @@ async function resolveGenesisMatchupById(
     return { error: "That Genesis matchup could not be found." };
   }
 
-  return { seasonId, seasonData, matchup };
+  return {
+    seasonId,
+    commissionerUserId: seasonRow.user_id as string,
+    seasonData,
+    matchup,
+  };
 }
 
 async function resolveGenesisRoleIdForTeam(
@@ -548,6 +604,88 @@ async function authorizeGenesisMatchupRole(
   }
 
   return { ok: true, teamRoleIds };
+}
+
+async function isGenesisSeasonCommissioner(
+  admin: SupabaseClient,
+  commissionerUserId: string | undefined,
+  discordUserId: string | undefined
+) {
+  if (!commissionerUserId || !discordUserId) return false;
+
+  const { data: link } = await admin
+    .from("discord_links")
+    .select("discord_user_id")
+    .eq("user_id", commissionerUserId)
+    .maybeSingle();
+
+  return link?.discord_user_id === discordUserId;
+}
+
+async function authorizeGenesisScheduleOrFinal(
+  admin: SupabaseClient,
+  matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number],
+  guildId: string | undefined,
+  memberRoleIds: string[] | undefined,
+  teamRoleMap: Record<string, string> | undefined,
+  commissionerUserId: string | undefined,
+  discordUserId: string | undefined
+): Promise<
+  | { ok: true; teamRoleIds: string[]; commissioner: boolean }
+  | { ok: false; error: string }
+> {
+  if (
+    await isGenesisSeasonCommissioner(
+      admin,
+      commissionerUserId,
+      discordUserId
+    )
+  ) {
+    const mappedAwayRoleId = teamRoleMap?.[matchup.awayTeam];
+    const mappedHomeRoleId = teamRoleMap?.[matchup.homeTeam];
+    const fallbackNames = [
+      !mappedAwayRoleId ? matchup.awayTeam : undefined,
+      !mappedHomeRoleId ? matchup.homeTeam : undefined,
+    ].filter((value): value is string => Boolean(value));
+    const fallbackRoleIds =
+      guildId && fallbackNames.length
+        ? await resolveGenesisTeamRoleIds(fallbackNames, guildId)
+        : [];
+
+    return {
+      ok: true,
+      commissioner: true,
+      teamRoleIds: [
+        ...new Set(
+          [
+            mappedAwayRoleId,
+            mappedHomeRoleId,
+            ...(matchup.teamRoleIds || []),
+            ...fallbackRoleIds,
+          ].filter((value): value is string => Boolean(value))
+        ),
+      ],
+    };
+  }
+
+  const roleAuth = await authorizeGenesisMatchupRole(
+    matchup,
+    guildId,
+    memberRoleIds,
+    teamRoleMap
+  );
+  if (!roleAuth.ok) {
+    return {
+      ok: false,
+      error:
+        "Only one of the two matchup players or the season commissioner can use this game control.",
+    };
+  }
+
+  return {
+    ...roleAuth,
+    commissioner: false,
+  };
 }
 
 function respondToResolveError(resolved: ResolveError) {
@@ -685,14 +823,20 @@ export async function POST(request: Request) {
     return markPlayerReady(admin, resolved.seasonId, resolved.seasonData, resolved.player);
   }
 
-  // Slash command: /kickoff <date> <time> <timezone>
-  // Either matchup player can set or update kickoff from inside the game thread.
-  if (interaction.type === 2 && interaction.data?.name === "kickoff") {
+  // Slash commands: /kickoff or /schedule <date> <time> <timezone>
+  // Either matchup player or the season commissioner can schedule the game.
+  if (
+    interaction.type === 2 &&
+    (interaction.data?.name === "kickoff" ||
+      interaction.data?.name === "schedule")
+  ) {
     if (!discordUserId) {
       return ephemeral("Couldn't identify your Discord account.");
     }
     if (!interaction.channel_id) {
-      return ephemeral("Use /kickoff inside the Genesis PvP game thread.");
+      return ephemeral(
+        `Use /${interaction.data?.name || "schedule"} inside the Genesis PvP game thread.`
+      );
     }
 
     const rawDate = interaction.data.options?.find(
@@ -735,12 +879,20 @@ export async function POST(request: Request) {
     );
     if ("error" in resolved) return respondToResolveError(resolved);
 
-    const { seasonId, seasonData, matchup } = resolved;
-    const roleAuth = await authorizeGenesisMatchupRole(
+    const {
+      seasonId,
+      commissionerUserId,
+      seasonData,
+      matchup,
+    } = resolved;
+    const roleAuth = await authorizeGenesisScheduleOrFinal(
+      admin,
       matchup,
       interaction.guild_id,
       interaction.member?.roles,
-      seasonData.discordTeamRoleIds
+      seasonData.discordTeamRoleIds,
+      commissionerUserId,
+      discordUserId
     );
     if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -820,6 +972,43 @@ export async function POST(request: Request) {
           : []),
       ].join("\n")
     );
+  }
+
+  // Slash command: /final
+  // Opens the same score form used by the thread button. Matchup players and
+  // the season commissioner can submit or correct the score.
+  if (interaction.type === 2 && interaction.data?.name === "final") {
+    if (!discordUserId) {
+      return ephemeral("Couldn't identify your Discord account.");
+    }
+    if (!interaction.channel_id) {
+      return ephemeral("Use /final inside the Genesis PvP game thread.");
+    }
+
+    const resolved = await resolveGenesisMatchupForThread(
+      admin,
+      interaction.channel_id
+    );
+    if ("error" in resolved) return respondToResolveError(resolved);
+
+    const auth = await authorizeGenesisScheduleOrFinal(
+      admin,
+      resolved.matchup,
+      interaction.guild_id,
+      interaction.member?.roles,
+      resolved.seasonData.discordTeamRoleIds,
+      resolved.commissionerUserId,
+      discordUserId
+    );
+    if (!auth.ok) return ephemeral(auth.error);
+
+    if (resolved.matchup.status === "voided") {
+      return ephemeral(
+        "🚫 This Genesis matchup was voided, so no final score is needed for Genesis grading."
+      );
+    }
+
+    return genesisFinalScoreModal(resolved.seasonId, resolved.matchup);
   }
 
   // Slash command: /stream <YouTube/Twitch URL>
@@ -978,11 +1167,14 @@ export async function POST(request: Request) {
       if ("error" in resolved) return respondToResolveError(resolved);
 
       const matchup = resolved.matchup;
-      const roleAuth = await authorizeGenesisMatchupRole(
+      const roleAuth = await authorizeGenesisScheduleOrFinal(
+        admin,
         matchup,
         interaction.guild_id,
         interaction.member?.roles,
-        resolved.seasonData.discordTeamRoleIds
+        resolved.seasonData.discordTeamRoleIds,
+        resolved.commissionerUserId,
+        discordUserId
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -990,49 +1182,7 @@ export async function POST(request: Request) {
         return ephemeral("🚫 This Genesis matchup was voided, so no final score is needed for Genesis grading.");
       }
 
-      return NextResponse.json({
-        type: 9,
-        data: {
-          custom_id: `genesis_final_score_modal:${seasonId}:${matchupId}`,
-          title: matchup.status === "settled" ? "Edit Final Score" : "Submit Final Score",
-          components: [
-            {
-              type: 1,
-              components: [
-                {
-                  type: 4,
-                  custom_id: "away_score",
-                  label: `${matchup.awayTeam} score`.slice(0, 45),
-                  style: 1,
-                  required: true,
-                  min_length: 1,
-                  max_length: 3,
-                  ...(matchup.finalAwayScore != null
-                    ? { value: String(matchup.finalAwayScore) }
-                    : { placeholder: "31" }),
-                },
-              ],
-            },
-            {
-              type: 1,
-              components: [
-                {
-                  type: 4,
-                  custom_id: "home_score",
-                  label: `${matchup.homeTeam} score`.slice(0, 45),
-                  style: 1,
-                  required: true,
-                  min_length: 1,
-                  max_length: 3,
-                  ...(matchup.finalHomeScore != null
-                    ? { value: String(matchup.finalHomeScore) }
-                    : { placeholder: "24" }),
-                },
-              ],
-            },
-          ],
-        },
-      });
+      return genesisFinalScoreModal(seasonId, matchup);
     }
 
     if (customId.startsWith("genesis_stream:")) {
@@ -1405,11 +1555,14 @@ export async function POST(request: Request) {
       if ("error" in resolved) return respondToResolveError(resolved);
 
       const matchup = resolved.matchup;
-      const roleAuth = await authorizeGenesisMatchupRole(
+      const roleAuth = await authorizeGenesisScheduleOrFinal(
+        admin,
         matchup,
         interaction.guild_id,
         interaction.member?.roles,
-        resolved.seasonData.discordTeamRoleIds
+        resolved.seasonData.discordTeamRoleIds,
+        resolved.commissionerUserId,
+        discordUserId
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 

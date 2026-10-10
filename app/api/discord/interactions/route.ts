@@ -497,6 +497,7 @@ async function resolveGenesisMatchupById(
 ): Promise<
   | {
       seasonId: string;
+      commissionerUserId: string;
       seasonData: SeasonData;
       matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number];
     }
@@ -504,7 +505,7 @@ async function resolveGenesisMatchupById(
 > {
   const { data: seasonRow, error: seasonError } = await admin
     .from("seasons")
-    .select("season_data")
+    .select("user_id, season_data")
     .eq("id", seasonId)
     .maybeSingle();
 

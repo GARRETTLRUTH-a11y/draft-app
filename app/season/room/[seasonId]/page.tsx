@@ -263,6 +263,10 @@ export default function SeasonRoomPage() {
   const [adminView, setAdminView] = useState<"commissioner" | "player">("commissioner");
   const [manageListOrder, setManageListOrder] = useState<"genesis" | "alphabetical">("genesis");
   const [teamPoolView, setTeamPoolView] = useState<"claimed" | "manage">("claimed");
+  const [jobMovePlayerId, setJobMovePlayerId] = useState("");
+  const [jobMoveTeam, setJobMoveTeam] = useState("");
+  const [jobMoveStatus, setJobMoveStatus] = useState("");
+  const [isMovingJob, setIsMovingJob] = useState(false);
   const [pvpAwayTeam, setPvpAwayTeam] = useState("");
   const [pvpHomeTeam, setPvpHomeTeam] = useState("");
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
@@ -670,6 +674,18 @@ export default function SeasonRoomPage() {
     );
     return map;
   }, [participants]);
+
+  const claimedPlayersForJobMoves = useMemo(
+    () =>
+      players
+        .filter((player) =>
+          participantByName.has(player.name.toLowerCase())
+        )
+        .sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+        ),
+    [players, participantByName]
+  );
 
   // Same tier/conference-column board the draft's own "Draft Board" uses --
   // claimed teams only (unclaimed ones are omitted entirely, not just
@@ -1964,6 +1980,177 @@ export default function SeasonRoomPage() {
     });
 
     if (updated) setMessage(`Added ${teamName} to the season.`);
+  }
+
+  async function moveClaimedPlayerToTeam() {
+    if (!season || !seasonData || !jobMovePlayerId || !jobMoveTeam) return;
+
+    const playerId = Number(jobMovePlayerId);
+    const selectedPlayer = players.find((player) => player.id === playerId);
+    if (!selectedPlayer) {
+      setJobMoveStatus("Select a valid claimed player.");
+      return;
+    }
+
+    const participant = participantByName.get(selectedPlayer.name.toLowerCase());
+    if (!participant) {
+      setJobMoveStatus("That player does not currently have a claimed slot.");
+      return;
+    }
+
+    if (
+      selectedPlayer.team?.localeCompare(jobMoveTeam, undefined, {
+        sensitivity: "base",
+      }) === 0
+    ) {
+      setJobMoveStatus(`${selectedPlayer.name} is already at ${jobMoveTeam}.`);
+      return;
+    }
+
+    const destinationSlot = players.find(
+      (player) =>
+        player.id !== selectedPlayer.id &&
+        player.team?.localeCompare(jobMoveTeam, undefined, {
+          sensitivity: "base",
+        }) === 0
+    );
+    const destinationParticipant = destinationSlot
+      ? participantByName.get(destinationSlot.name.toLowerCase())
+      : undefined;
+
+    if (destinationParticipant) {
+      setJobMoveStatus(
+        `${jobMoveTeam} is already claimed by ${destinationSlot?.name || "another player"}. Move or release that claim first.`
+      );
+      return;
+    }
+
+    const oldTeam = selectedPlayer.team || "Unassigned";
+    const confirmed = window.confirm(
+      `Move ${selectedPlayer.name} from ${oldTeam} to ${jobMoveTeam}? Their login/claim and player history stay attached to them. ${selectedPlayer.team ? `${selectedPlayer.team} will become unclaimed.` : ""}`
+    );
+    if (!confirmed) return;
+
+    setIsMovingJob(true);
+    setJobMoveStatus("");
+
+    const fresh = (await fetchFreshSeasonData()) ?? seasonData;
+    const freshPlayer = fresh.players.find((player) => player.id === playerId);
+
+    if (!freshPlayer) {
+      setJobMoveStatus("That player is no longer in the season. Refresh and try again.");
+      setIsMovingJob(false);
+      return;
+    }
+
+    const freshDestination = fresh.players.find(
+      (player) =>
+        player.id !== freshPlayer.id &&
+        player.team?.localeCompare(jobMoveTeam, undefined, {
+          sensitivity: "base",
+        }) === 0
+    );
+
+    if (
+      freshDestination &&
+      participantByName.has(freshDestination.name.toLowerCase())
+    ) {
+      setJobMoveStatus(
+        `${jobMoveTeam} was claimed by another player before this move could save. Refresh and try again.`
+      );
+      setIsMovingJob(false);
+      return;
+    }
+
+    const oldTeamName = freshPlayer.team;
+    const destinationRatings = freshDestination
+      ? {
+          overallRating: freshDestination.overallRating,
+          offenseRating: freshDestination.offenseRating,
+          defenseRating: freshDestination.defenseRating,
+        }
+      : {
+          overallRating: undefined,
+          offenseRating: undefined,
+          defenseRating: undefined,
+        };
+
+    let nextId =
+      fresh.players.reduce((max, player) => Math.max(max, player.id), 0) + 1;
+
+    const usedNames = new Set(
+      fresh.players
+        .filter(
+          (player) =>
+            player.id !== freshPlayer.id &&
+            player.id !== freshDestination?.id
+        )
+        .map((player) => player.name.toLowerCase())
+    );
+
+    function uniqueReleasedSlotName(teamName: string) {
+      if (!usedNames.has(teamName.toLowerCase())) return teamName;
+      let suffix = 2;
+      let candidate = `${teamName} Open`;
+      while (usedNames.has(candidate.toLowerCase())) {
+        candidate = `${teamName} Open ${suffix}`;
+        suffix++;
+      }
+      return candidate;
+    }
+
+    const nextPlayers = fresh.players
+      .filter((player) => player.id !== freshDestination?.id)
+      .map((player) =>
+        player.id === freshPlayer.id
+          ? {
+              ...player,
+              team: jobMoveTeam,
+              ...destinationRatings,
+            }
+          : player
+      );
+
+    if (oldTeamName) {
+      nextPlayers.push({
+        id: nextId++,
+        name: uniqueReleasedSlotName(oldTeamName),
+        team: oldTeamName,
+        overallRating: freshPlayer.overallRating,
+        offenseRating: freshPlayer.offenseRating,
+        defenseRating: freshPlayer.defenseRating,
+      });
+    }
+
+    const removedDestinationId = freshDestination?.id;
+    const nextSeasonData: SeasonData = {
+      ...fresh,
+      players: nextPlayers,
+      readyPlayerIdsByWeek: removedDestinationId
+        ? Object.fromEntries(
+            Object.entries(fresh.readyPlayerIdsByWeek).map(([week, ids]) => [
+              week,
+              ids.filter((id) => id !== removedDestinationId),
+            ])
+          )
+        : fresh.readyPlayerIdsByWeek,
+      extensionRequests: removedDestinationId
+        ? fresh.extensionRequests.filter(
+            (request) => request.playerId !== removedDestinationId
+          )
+        : fresh.extensionRequests,
+    };
+
+    const saved = await saveRoomSeason(nextSeasonData);
+    if (saved) {
+      setJobMoveStatus(
+        `✅ Moved ${selectedPlayer.name}: ${oldTeam} → ${jobMoveTeam}. ${oldTeamName ? `${oldTeamName} is now unclaimed.` : ""}`
+      );
+      setJobMoveTeam("");
+      await loadParticipants(season.id);
+    }
+
+    setIsMovingJob(false);
   }
 
   async function renamePlayer(player: SeasonPlayer, rawNewName: string) {
@@ -4701,6 +4888,133 @@ export default function SeasonRoomPage() {
             )}
           </div>
         </section>
+
+        {showCommissionerControls && (
+          <section className="rounded-3xl border-2 border-amber-400/30 bg-amber-400/[0.04] p-6">
+            <div className="mb-2 flex items-center gap-2 text-xs font-black uppercase tracking-[0.2em] text-amber-300">
+              🧳 Coaching Job Changes
+              <span className="rounded-full border border-amber-400/20 bg-amber-400/10 px-2 py-0.5 text-[10px] font-bold normal-case tracking-normal text-amber-200">
+                Commissioner only
+              </span>
+            </div>
+            <h2 className="text-xl font-black">Move a Claimed Player to Another Team</h2>
+            <p className="mt-2 text-sm text-slate-400">
+              Use this when a user changes coaching jobs in-game. Their account claim, player identity, ready history, extensions, and Genesis player history stay attached to them. Their old school becomes an unclaimed slot.
+            </p>
+
+            <div className="mt-5 grid gap-3 rounded-2xl border border-amber-400/20 bg-slate-950/50 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                Player / Current Team
+                <select
+                  value={jobMovePlayerId}
+                  onChange={(event) => {
+                    setJobMovePlayerId(event.target.value);
+                    setJobMoveTeam("");
+                    setJobMoveStatus("");
+                  }}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-amber-300"
+                >
+                  <option value="">Select a claimed player...</option>
+                  {claimedPlayersForJobMoves.map((player) => (
+                    <option key={player.id} value={player.id}>
+                      {player.name}{player.team ? ` — ${player.team}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                New Team
+                <select
+                  value={jobMoveTeam}
+                  onChange={(event) => {
+                    setJobMoveTeam(event.target.value);
+                    setJobMoveStatus("");
+                  }}
+                  disabled={!jobMovePlayerId}
+                  className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-amber-300 disabled:opacity-50"
+                >
+                  <option value="">Select destination team...</option>
+                  {[...CFB_TEAMS]
+                    .sort((a, b) =>
+                      a.name.localeCompare(b.name, undefined, {
+                        sensitivity: "base",
+                      })
+                    )
+                    .map((team) => {
+                      const selectedPlayerId = Number(jobMovePlayerId);
+                      const selectedPlayer = players.find(
+                        (player) => player.id === selectedPlayerId
+                      );
+                      const slot = players.find(
+                        (player) =>
+                          player.team?.localeCompare(team.name, undefined, {
+                            sensitivity: "base",
+                          }) === 0
+                      );
+                      const claimedByOther =
+                        slot &&
+                        slot.id !== selectedPlayerId &&
+                        participantByName.has(slot.name.toLowerCase());
+                      const isCurrent =
+                        selectedPlayer?.team?.localeCompare(
+                          team.name,
+                          undefined,
+                          { sensitivity: "base" }
+                        ) === 0;
+
+                      return (
+                        <option
+                          key={team.name}
+                          value={team.name}
+                          disabled={Boolean(claimedByOther || isCurrent)}
+                        >
+                          {team.name}
+                          {isCurrent
+                            ? " — current"
+                            : claimedByOther
+                              ? ` — claimed by ${slot?.name}`
+                              : slot
+                                ? " — unclaimed"
+                                : ""}
+                        </option>
+                      );
+                    })}
+                </select>
+              </label>
+
+              <button
+                type="button"
+                onClick={moveClaimedPlayerToTeam}
+                disabled={
+                  isMovingJob ||
+                  isSaving ||
+                  !jobMovePlayerId ||
+                  !jobMoveTeam
+                }
+                className="rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-black text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isMovingJob ? "Moving..." : "Move Team"}
+              </button>
+            </div>
+
+            {jobMoveStatus && (
+              <p
+                className={`mt-3 text-sm font-semibold ${
+                  jobMoveStatus.startsWith("✅")
+                    ? "text-green-300"
+                    : "text-amber-200"
+                }`}
+              >
+                {jobMoveStatus}
+              </p>
+            )}
+
+            <p className="mt-3 text-xs text-slate-500">
+              If the destination already exists as an unclaimed season slot, RTA reuses that team and preserves its team ratings. A team already claimed by another user cannot be selected until that claim is moved or released.
+            </p>
+          </section>
+        )}
 
         {showCommissionerControls && (
           <section className="rounded-3xl border-2 border-cyan-400/30 bg-cyan-500/[0.05] p-6">

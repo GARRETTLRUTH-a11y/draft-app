@@ -238,6 +238,29 @@ export function buildDiscordMessage(payload: DiscordNotifyPayload): DiscordMessa
     };
   }
 
+  if (payload.type === "extension_denied") {
+    if (
+      !payload.playerName ||
+      !payload.seasonTitle ||
+      !payload.plannedAdvanceTime
+    ) {
+      return null;
+    }
+
+    return {
+      content: `@everyone\n# ❌ Extension Denied\n## 🗓️ Advance Remains: ${payload.plannedAdvanceTime}`,
+      embeds: [
+        {
+          description: `${personLine({ name: payload.playerName, team: payload.team })}'s extension request for ${formatWeekLabel(payload.week)} was denied. The planned advance time is unchanged.`,
+          color: COLOR_URGENT,
+          footer: { text: payload.seasonTitle },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+      allowed_mentions: { parse: ["everyone"] },
+    };
+  }
+
   if (payload.type === "summary") {
     if (!payload.periodHeading || !payload.summary || !payload.seasonId) return null;
 

@@ -290,10 +290,10 @@ export default function SeasonListPage() {
 
           <div className="mt-5">
             <Link
-              href="/"
+              href="/league"
               className="text-sm font-bold text-slate-400 transition hover:text-white"
             >
-              ← Back to Home
+              ← Back to League Hub
             </Link>
           </div>
         </header>

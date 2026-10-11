@@ -96,10 +96,10 @@ export default function RoomsPage() {
               </Link>
 
               <Link
-                href="/"
+                href="/league"
                 className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
               >
-                Home
+                League Hub
               </Link>
             </div>
           </div>

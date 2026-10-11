@@ -20,6 +20,11 @@ type CloudDraft = {
   draft_data: SavedDraftState;
 };
 
+function activeLeagueHubId() {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("league");
+}
+
 export default function SeasonListPage() {
   const router = useRouter();
   const [userEmail, setUserEmail] = useState<string | null>(null);
@@ -112,7 +117,10 @@ export default function SeasonListPage() {
     }
 
     const seasonTitle = `${draft.draft_data.draftTitle || draft.title} — Weekly Check-In`;
-    const seasonData = createSeasonDataFromDraft(seasonTitle, draft.id, draft.draft_data);
+    const seasonData = {
+      ...createSeasonDataFromDraft(seasonTitle, draft.id, draft.draft_data),
+      leagueHubId: activeLeagueHubId(),
+    };
 
     const { data: newSeason, error: seasonError } = await supabase
       .from("seasons")
@@ -199,6 +207,7 @@ export default function SeasonListPage() {
         csvTitle.trim() || "Weekly Check-In",
         csvText
       );
+      seasonData.leagueHubId = activeLeagueHubId();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Could not read that CSV.");
       return;

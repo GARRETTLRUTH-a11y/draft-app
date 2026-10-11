@@ -3097,10 +3097,14 @@ export default function SeasonRoomPage() {
                   )}
 
                   <Link
-                    href="/season"
+                    href={
+                      seasonData.leagueHubId
+                        ? `/league/${seasonData.leagueHubId}`
+                        : "/season"
+                    }
                     className="rounded-2xl bg-white/10 px-5 py-3 text-center font-bold text-white transition hover:bg-white/15"
                   >
-                    All Seasons
+                    {seasonData.leagueHubId ? "League Hub" : "All Seasons"}
                   </Link>
                 </>
               )}

@@ -179,6 +179,9 @@ export type ReminderSchedule = {
 
 export type SeasonData = {
   seasonTitle: string;
+  // Optional parent League Hub. Linked seasons open directly from that
+  // league's Commissioner Management card instead of stopping at /season.
+  leagueHubId?: string | null;
   players: SeasonPlayer[];
   currentWeek: number;
   readyPlayerIdsByWeek: Record<number, number[]>;

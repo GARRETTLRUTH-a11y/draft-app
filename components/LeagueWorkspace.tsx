@@ -12,6 +12,7 @@ type LeagueHub = {
 
 export function LeagueWorkspace({ leagueId }: { leagueId: string }) {
   const [league, setLeague] = useState<LeagueHub | null>(null);
+  const [linkedSeasonId, setLinkedSeasonId] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [message, setMessage] = useState("");
@@ -29,16 +30,26 @@ export function LeagueWorkspace({ leagueId }: { leagueId: string }) {
         return;
       }
 
-      const { data, error } = await supabase
-        .from("league_hubs")
-        .select("id, name, user_id")
-        .eq("id", leagueId)
-        .single();
+      const [leagueResult, linkedSeasonResult] = await Promise.all([
+        supabase
+          .from("league_hubs")
+          .select("id, name, user_id")
+          .eq("id", leagueId)
+          .single(),
+        supabase
+          .from("seasons")
+          .select("id")
+          .eq("season_data->>leagueHubId", leagueId)
+          .order("updated_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+      ]);
 
-      if (error) {
-        setMessage(error.message);
+      if (leagueResult.error) {
+        setMessage(leagueResult.error.message);
       } else {
-        setLeague(data as LeagueHub);
+        setLeague(leagueResult.data as LeagueHub);
+        setLinkedSeasonId(linkedSeasonResult.data?.id ?? null);
       }
 
       setIsLoading(false);
@@ -164,10 +175,14 @@ export function LeagueWorkspace({ leagueId }: { leagueId: string }) {
                     </p>
                     <div className="mt-8">
                       <Link
-                        href="/season"
+                        href={
+                          linkedSeasonId
+                            ? `/season/room/${linkedSeasonId}`
+                            : `/season?league=${leagueId}`
+                        }
                         className="block rounded-2xl bg-amber-300 px-5 py-3.5 text-center font-black text-slate-950 transition hover:bg-amber-200 sm:inline-block"
                       >
-                        Enter Commissioner Hub →
+                        {linkedSeasonId ? "Open League Control →" : "Set Up Commissioner Hub →"}
                       </Link>
                     </div>
                   </div>

@@ -396,3 +396,20 @@ export function teamConference(name: string | undefined | null): string | undefi
   if (!name) return undefined;
   return TEAM_CONFERENCE_BY_NAME[name.toLowerCase()];
 }
+
+// Resolves a team's conference for one particular season. Conference
+// realignment is stored with the season, so another league can keep using
+// the default catalog without being affected.
+export function teamConferenceWithOverrides(
+  name: string | undefined | null,
+  overrides?: Record<string, string>
+): string | undefined {
+  if (!name) return undefined;
+
+  const normalizedName = name.toLowerCase();
+  const override = Object.entries(overrides || {}).find(
+    ([teamName]) => teamName.toLowerCase() === normalizedName
+  )?.[1];
+
+  return override || teamConference(name);
+}

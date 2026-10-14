@@ -196,6 +196,10 @@ export type SeasonData = {
   advanceWindow?: AdvanceWindow | null;
   sourceDraftId?: string | null;
   reminders?: ReminderSchedule[];
+  // League-specific realignment. Keys are canonical team names and values
+  // are conferences from the shared CFB conference list. This leaves the
+  // base team catalog unchanged for every other league/season.
+  teamConferenceOverrides?: Record<string, string>;
   // Parsed Discord results used by the Genesis Lines model.
   genesisHistory?: GenesisHistory;
   // Social ATS picks and the persistent Discord leaderboard.
@@ -355,6 +359,7 @@ export function createSeasonDataFromDraft(
     advanceWindow: null,
     sourceDraftId: draftId,
     reminders: [],
+    teamConferenceOverrides: {},
   };
 }
 
@@ -455,6 +460,7 @@ export function createSeasonDataFromCsv(
     advanceWindow: null,
     sourceDraftId: null,
     reminders: [],
+    teamConferenceOverrides: {},
   };
 }
 

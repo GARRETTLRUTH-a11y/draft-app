@@ -11,6 +11,7 @@ import {
   TIER_ORDER,
   teamColor,
   teamConference,
+  teamConferenceWithOverrides,
 } from "@/lib/cfbTeams";
 import { groupItemsByConference, buildTiers, type DraftItemLike } from "@/lib/draftBoard";
 import { CompactDraftBoard } from "@/components/CompactDraftBoard";
@@ -267,6 +268,10 @@ export default function SeasonRoomPage() {
   const [jobMoveTeam, setJobMoveTeam] = useState("");
   const [jobMoveStatus, setJobMoveStatus] = useState("");
   const [isMovingJob, setIsMovingJob] = useState(false);
+  const [conferenceMoveTeam, setConferenceMoveTeam] = useState("");
+  const [conferenceMoveDestination, setConferenceMoveDestination] = useState("");
+  const [conferenceMoveStatus, setConferenceMoveStatus] = useState("");
+  const [isMovingConference, setIsMovingConference] = useState(false);
   const [pvpAwayTeam, setPvpAwayTeam] = useState("");
   const [pvpHomeTeam, setPvpHomeTeam] = useState("");
   const [pvpSeparator, setPvpSeparator] = useState<"@" | "vs.">("@");
@@ -601,16 +606,31 @@ export default function SeasonRoomPage() {
     );
     const byConference = new Map<string, { team: (typeof CFB_TEAMS)[number]; player?: SeasonPlayer }[]>();
     for (const team of CFB_TEAMS) {
-      const entry = { team, player: playerByTeam.get(team.name.toLowerCase()) };
-      const group = byConference.get(team.conference) ?? [];
+      const conference =
+        teamConferenceWithOverrides(
+          team.name,
+          seasonData?.teamConferenceOverrides
+        ) ?? team.conference;
+      const effectiveTeam = { ...team, conference };
+      const entry = {
+        team: effectiveTeam,
+        player: playerByTeam.get(team.name.toLowerCase()),
+      };
+      const group = byConference.get(conference) ?? [];
       group.push(entry);
-      byConference.set(team.conference, group);
+      byConference.set(conference, group);
     }
-    return CONFERENCE_ORDER.map((conference) => ({
+    const orderedConferences = [
+      ...CONFERENCE_ORDER,
+      ...[...byConference.keys()]
+        .filter((conference) => !CONFERENCE_ORDER.includes(conference))
+        .sort((a, b) => a.localeCompare(b)),
+    ];
+    return orderedConferences.map((conference) => ({
       conference,
       teams: byConference.get(conference) ?? [],
     })).filter((group) => group.teams.length > 0);
-  }, [players]);
+  }, [players, seasonData?.teamConferenceOverrides]);
 
   const readyPlayerIds = useMemo(
     () => new Set(seasonData ? readyPlayerIdsForWeek(seasonData, currentWeek) : []),
@@ -700,14 +720,18 @@ export default function SeasonRoomPage() {
         item: {
           id: player.id,
           name: player.team!,
-          category: teamConference(player.team) ?? "Other",
+          category:
+            teamConferenceWithOverrides(
+              player.team,
+              seasonData?.teamConferenceOverrides
+            ) ?? "Other",
           description: "",
           color: teamColor(player.team),
         } satisfies DraftItemLike,
       }));
     const { groups } = groupItemsByConference([], picks, CONFERENCE_ORDER);
     return buildTiers(groups, CONFERENCE_TIERS, TIER_ORDER);
-  }, [players, participantByName]);
+  }, [players, participantByName, seasonData?.teamConferenceOverrides]);
 
   const myParticipant = useMemo(() => {
     if (!currentUserId) return undefined;
@@ -2182,6 +2206,82 @@ export default function SeasonRoomPage() {
     }
 
     setIsMovingJob(false);
+  }
+
+  async function changeTeamConference() {
+    if (
+      !seasonData ||
+      !conferenceMoveTeam ||
+      !conferenceMoveDestination ||
+      !CONFERENCE_ORDER.includes(conferenceMoveDestination)
+    ) {
+      return;
+    }
+
+    const canonicalTeam = CFB_TEAMS.find(
+      (team) =>
+        team.name.localeCompare(conferenceMoveTeam, undefined, {
+          sensitivity: "base",
+        }) === 0
+    );
+    if (!canonicalTeam) {
+      setConferenceMoveStatus("Select a valid team.");
+      return;
+    }
+
+    const currentConference =
+      teamConferenceWithOverrides(
+        canonicalTeam.name,
+        seasonData.teamConferenceOverrides
+      ) ?? canonicalTeam.conference;
+
+    if (currentConference === conferenceMoveDestination) {
+      setConferenceMoveStatus(
+        `${canonicalTeam.name} is already in the ${conferenceMoveDestination}.`
+      );
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Move ${canonicalTeam.name} from ${currentConference} to ${conferenceMoveDestination}? This changes its conference everywhere in this season.`
+    );
+    if (!confirmed) return;
+
+    setIsMovingConference(true);
+    setConferenceMoveStatus("");
+
+    const saved = await updateSeasonData((fresh) => {
+      const nextOverrides = { ...(fresh.teamConferenceOverrides || {}) };
+      for (const teamName of Object.keys(nextOverrides)) {
+        if (teamName.toLowerCase() === canonicalTeam.name.toLowerCase()) {
+          delete nextOverrides[teamName];
+        }
+      }
+
+      // Returning a team to its catalog conference removes the override,
+      // keeping the saved season data compact and future-proof.
+      if (conferenceMoveDestination !== teamConference(canonicalTeam.name)) {
+        nextOverrides[canonicalTeam.name] = conferenceMoveDestination;
+      }
+
+      return {
+        ...fresh,
+        teamConferenceOverrides: nextOverrides,
+      };
+    });
+
+    if (saved) {
+      setConferenceMoveStatus(
+        `✅ Moved ${canonicalTeam.name}: ${currentConference} → ${conferenceMoveDestination}.`
+      );
+      setConferenceMoveDestination("");
+    } else {
+      setConferenceMoveStatus(
+        "The conference change did not save. Refresh and try again."
+      );
+    }
+
+    setIsMovingConference(false);
   }
 
   async function renamePlayer(player: SeasonPlayer, rawNewName: string) {
@@ -5087,6 +5187,107 @@ export default function SeasonRoomPage() {
             <p className="mt-3 text-xs text-slate-500">
               If the destination already exists as an unclaimed season slot, RTA reuses that team and preserves its team ratings. A team already claimed by another user cannot be selected until that claim is moved or released.
             </p>
+
+            <div className="mt-6 border-t border-amber-400/20 pt-6">
+              <h3 className="text-lg font-black">Change a Team&apos;s Conference</h3>
+              <p className="mt-2 text-sm text-slate-400">
+                Use this for league realignment. The team will move to its new
+                conference everywhere in this season, including the claimed-team
+                board and the complete Team Pool by Conference.
+              </p>
+
+              <div className="mt-5 grid gap-3 rounded-2xl border border-amber-400/20 bg-slate-950/50 p-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  Team
+                  <select
+                    value={conferenceMoveTeam}
+                    onChange={(event) => {
+                      setConferenceMoveTeam(event.target.value);
+                      setConferenceMoveDestination("");
+                      setConferenceMoveStatus("");
+                    }}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-amber-300"
+                  >
+                    <option value="">Select a team...</option>
+                    {[...CFB_TEAMS]
+                      .sort((a, b) =>
+                        a.name.localeCompare(b.name, undefined, {
+                          sensitivity: "base",
+                        })
+                      )
+                      .map((team) => {
+                        const currentConference =
+                          teamConferenceWithOverrides(
+                            team.name,
+                            seasonData.teamConferenceOverrides
+                          ) ?? team.conference;
+                        return (
+                          <option key={team.name} value={team.name}>
+                            {team.name} — {currentConference}
+                          </option>
+                        );
+                      })}
+                  </select>
+                </label>
+
+                <label className="flex flex-col gap-1 text-xs font-semibold text-slate-400">
+                  New Conference
+                  <select
+                    value={conferenceMoveDestination}
+                    onChange={(event) => {
+                      setConferenceMoveDestination(event.target.value);
+                      setConferenceMoveStatus("");
+                    }}
+                    disabled={!conferenceMoveTeam}
+                    className="rounded-xl border border-white/10 bg-slate-900 px-3 py-2.5 text-white outline-none focus:border-amber-300 disabled:opacity-50"
+                  >
+                    <option value="">Select destination conference...</option>
+                    {CONFERENCE_ORDER.map((conference) => {
+                      const currentConference = teamConferenceWithOverrides(
+                        conferenceMoveTeam,
+                        seasonData.teamConferenceOverrides
+                      );
+                      return (
+                        <option
+                          key={conference}
+                          value={conference}
+                          disabled={conference === currentConference}
+                        >
+                          {conference}
+                          {conference === currentConference ? " — current" : ""}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+
+                <button
+                  type="button"
+                  onClick={changeTeamConference}
+                  disabled={
+                    isMovingConference ||
+                    isSaving ||
+                    !conferenceMoveTeam ||
+                    !conferenceMoveDestination
+                  }
+                  className="rounded-xl bg-amber-300 px-4 py-2.5 text-sm font-black text-slate-950 transition hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isMovingConference ? "Moving..." : "Change Conference"}
+                </button>
+              </div>
+
+              {conferenceMoveStatus && (
+                <p
+                  className={`mt-3 text-sm font-semibold ${
+                    conferenceMoveStatus.startsWith("✅")
+                      ? "text-green-300"
+                      : "text-amber-200"
+                  }`}
+                >
+                  {conferenceMoveStatus}
+                </p>
+              )}
+            </div>
           </section>
         )}
 

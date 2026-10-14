@@ -2662,7 +2662,10 @@ export default function SeasonRoomPage() {
         currentWeek: freshNextWeek,
         readyPlayerIdsByWeek: {
           ...fresh.readyPlayerIdsByWeek,
-          [freshNextWeek]: fresh.readyPlayerIdsByWeek[freshNextWeek] ?? [],
+          // A destination week may contain stale data if the commissioner
+          // previously visited it or moved backward. Advancing always starts
+          // a brand-new check-in, so never restore that old ready list.
+          [freshNextWeek]: [],
         },
         // Every extension request -- pending, granted, or denied -- was
         // for the week we're leaving, so none of it carries forward.
@@ -2713,7 +2716,9 @@ export default function SeasonRoomPage() {
       currentWeek: week,
       readyPlayerIdsByWeek: {
         ...fresh.readyPlayerIdsByWeek,
-        [week]: fresh.readyPlayerIdsByWeek[week] ?? [],
+        // Manual week changes are also a fresh check-in. Reusing a prior
+        // value here made everyone appear ready after moving between weeks.
+        [week]: [],
       },
     }));
 

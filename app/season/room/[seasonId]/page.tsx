@@ -4905,26 +4905,30 @@ export default function SeasonRoomPage() {
               );
 
               // Ready (locked in) always wins. Otherwise, highlight players
-              // the commissioner flagged as unresponsive before applying the
-              // normal extension / claimed-state colors.
+              // the commissioner flagged as unresponsive or on vacation
+              // before applying the normal extension / claimed-state colors.
               const cardState = isReady
                 ? "ready"
                 : player.noResponse24h
                   ? "no-response"
-                : extensionForWeek?.status === "granted"
-                  ? "granted"
-                  : extensionForWeek?.status === "denied"
-                    ? "denied"
-                    : extensionForWeek?.status === "pending"
-                      ? "pending"
-                      : isClaimed
-                        ? "claimed"
-                        : "unclaimed";
+                  : player.onVacation
+                    ? "vacation"
+                    : extensionForWeek?.status === "granted"
+                      ? "granted"
+                      : extensionForWeek?.status === "denied"
+                        ? "denied"
+                        : extensionForWeek?.status === "pending"
+                          ? "pending"
+                          : isClaimed
+                            ? "claimed"
+                            : "unclaimed";
 
               const cardClasses: Record<string, string> = {
                 ready: "border-green-400/40 bg-green-400/20",
                 "no-response":
                   "border-red-400/80 bg-red-500/20 ring-1 ring-inset ring-red-400/40",
+                vacation:
+                  "border-blue-400/80 bg-blue-500/20 ring-1 ring-inset ring-blue-400/40",
                 granted: "border-blue-400/40 bg-blue-400/15",
                 denied: "border-red-400/40 bg-red-400/10",
                 pending: "border-red-400/40 bg-red-400/15",
@@ -5024,18 +5028,22 @@ export default function SeasonRoomPage() {
                           ? "text-green-300"
                           : player.noResponse24h
                             ? "text-red-300"
-                          : isClaimed
-                            ? "text-slate-400"
-                            : "text-slate-500"
+                            : player.onVacation
+                              ? "text-blue-300"
+                              : isClaimed
+                                ? "text-slate-400"
+                                : "text-slate-500"
                       }`}
                     >
                       {isReady
                         ? "Ready"
                         : player.noResponse24h
                           ? "No response in 24+ hours"
-                          : isClaimed
-                            ? "Not ready yet"
-                            : "Unclaimed"}
+                          : player.onVacation
+                            ? "On vacation"
+                            : isClaimed
+                              ? "Not ready yet"
+                              : "Unclaimed"}
                     </span>
 
                     {extensionForWeek && !isReady && (

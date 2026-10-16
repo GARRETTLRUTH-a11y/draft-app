@@ -6,6 +6,21 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import { makeZip } from "@/lib/zipArchive";
 
+type SaveFileHandle = {
+  createWritable: () => Promise<{
+    write: (blob: Blob) => Promise<void>;
+    close: () => Promise<void>;
+    abort?: () => Promise<void>;
+  }>;
+};
+
+type SavePickerWindow = Window & {
+  showSaveFilePicker?: (options: {
+    suggestedName: string;
+    types: { description: string; accept: Record<string, string[]> }[];
+  }) => Promise<SaveFileHandle>;
+};
+
 type Channel = { id: string; name: string };
 type ExportAttachment = {
   id: string;
@@ -15,6 +30,7 @@ type ExportAttachment = {
   size?: number | null;
   localPath?: string;
   downloadError?: string;
+  skippedReason?: string;
 };
 type ExportMessage = {
   id: string;
@@ -70,6 +86,22 @@ function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
 }
 
+async function saveExport(blob: Blob, filename: string, chosenFile: SaveFileHandle | null) {
+  if (!chosenFile) {
+    downloadBlob(blob, filename);
+    return;
+  }
+
+  const writable = await chosenFile.createWritable();
+  try {
+    await writable.write(blob);
+    await writable.close();
+  } catch (error) {
+    try { await writable.abort?.(); } catch { /* Preserve the original error. */ }
+    throw error;
+  }
+}
+
 export default function DiscordHistoryExportPage() {
   const params = useParams();
   const rawId = params.seasonId;
@@ -122,11 +154,41 @@ export default function DiscordHistoryExportPage() {
     setIsExporting(true);
     setProgress(0);
     setDownloadedImages(0);
-    setStatus("Reading Discord history...");
     const abort = new AbortController();
     controller.current = abort;
 
     try {
+      // Invoke the native picker directly from the button click, BEFORE awaiting
+      // auth or network requests. Browsers require a user activation for this.
+      // Selecting the file now does not create/overwrite it until export finishes.
+      const extension = includeImages ? "zip" : "json";
+      const knownChannelName = channels.find((c) => c.id === selectedId)?.name || selectedId;
+      const suggestedName = "genesis-discord-" +
+        knownChannelName.replace(/[^a-z0-9_-]/gi, "-") + "-" +
+        new Date().toISOString().slice(0, 10) + "." + extension;
+      const picker = (window as SavePickerWindow).showSaveFilePicker;
+      let chosenFile: SaveFileHandle | null = null;
+      if (typeof picker === "function") {
+        try {
+          setStatus("Choose where to save " + suggestedName + "...");
+          chosenFile = await picker.call(window, {
+            suggestedName,
+            types: includeImages
+              ? [{ description: "ZIP archive", accept: { "application/zip": [".zip"] } }]
+              : [{ description: "JSON history", accept: { "application/json": [".json"] } }],
+          });
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") {
+            setStatus("Save location selection cancelled; nothing was exported.");
+            return;
+          }
+          throw error;
+        }
+      }
+
+      setStatus(chosenFile
+        ? "Save location selected. Reading Discord history..."
+        : "This browser uses its download settings for the destination. Reading Discord history...");
       const session = await supabase.auth.getSession();
       const token = session.data.session?.access_token;
       if (!token) throw new Error("Please sign in again.");
@@ -185,12 +247,14 @@ export default function DiscordHistoryExportPage() {
         }
       }
 
-      if (includeImages && imageJobs.length > MAX_IMAGES) {
-        throw new Error(
-          "Found " + imageJobs.length.toLocaleString() + " pictures. " +
-          "The ZIP limit is " + MAX_IMAGES.toLocaleString() +
-          "; choose a shorter date range, or export JSON without images."
-        );
+      // Preserve every message and attachment reference, but download at most
+      // the 1,000 newest attached pictures when the channel exceeds the limit.
+      const jobsToDownload = includeImages ? imageJobs.slice(-MAX_IMAGES) : [];
+      const skippedByCount = includeImages ? imageJobs.length - jobsToDownload.length : 0;
+      if (skippedByCount > 0) {
+        for (const job of imageJobs.slice(0, skippedByCount)) {
+          job.attachment.skippedReason = "Older image omitted by 1,000-image download limit";
+        }
       }
 
       const failedImages: { messageId: string; attachmentId: string; reason: string }[] = [];
@@ -198,13 +262,14 @@ export default function DiscordHistoryExportPage() {
       let imageBytes = 0;
       let imagesSaved = 0;
 
-      if (includeImages && imageJobs.length) {
+      if (includeImages && jobsToDownload.length) {
         let cursor = 0;
-        setStatus("Downloading " + imageJobs.length.toLocaleString() + " pictures...");
+        setStatus("Downloading " + jobsToDownload.length.toLocaleString() +
+          " newest pictures" + (skippedByCount ? " (" + skippedByCount.toLocaleString() + " older images skipped)" : "") + "...");
 
         async function worker() {
-          while (cursor < imageJobs.length && !abort.signal.aborted) {
-            const job = imageJobs[cursor++];
+          while (cursor < jobsToDownload.length && !abort.signal.aborted) {
+            const job = jobsToDownload[cursor++];
             if ((job.attachment.size ?? 0) > MAX_IMAGE_BYTES) {
               const reason = "Image exceeds 25 MB per-file limit";
               job.attachment.downloadError = reason;
@@ -253,7 +318,7 @@ export default function DiscordHistoryExportPage() {
         }
 
         // Restrict parallel downloads to avoid overwhelming Discord's API.
-        await Promise.all(Array.from({ length: Math.min(3, imageJobs.length) }, () => worker()));
+        await Promise.all(Array.from({ length: Math.min(3, jobsToDownload.length) }, () => worker()));
         if (abort.signal.aborted) return;
       }
 
@@ -268,13 +333,16 @@ export default function DiscordHistoryExportPage() {
         imageAttachmentCount: imageJobs.length,
         imageDownloadSummary: {
           requested: includeImages,
+          selected: jobsToDownload.length,
+          skippedDueToImageLimit: skippedByCount,
+          selectionOrder: "most recent first",
           downloaded: imagesSaved,
           failed: failedImages.length,
           totalBytes: imageBytes,
           failedImages,
         },
         note: includeImages
-          ? "Uploaded pictures are stored inside images/ and referenced via each attachment.localPath. Other embed/external GIF links remain URLs. Check imageDownloadSummary for missing files."
+          ? "The most recent 1,000 uploaded pictures (or fewer, if the channel has less) are stored in images/ and referenced via attachment.localPath. Any older pictures skipped by the count cap are marked in attachment.skippedReason. Other embed/external GIF links remain URLs. Check imageDownloadSummary for missing files."
           : "This JSON contains image URLs only. Re-export with Include images to save original image files.",
         messages: chronological,
       };
@@ -287,19 +355,21 @@ export default function DiscordHistoryExportPage() {
         files.unshift({ path: "messages.json", data: jsonBuffer });
         files.sort((a, b) => a.path.localeCompare(b.path));
         const archive = makeZip(files);
-        downloadBlob(archive, baseName + ".zip");
+        await saveExport(archive, baseName + ".zip", chosenFile);
       } else {
-        downloadBlob(
+        await saveExport(
           new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" }),
-          baseName + ".json"
+          baseName + ".json",
+          chosenFile
         );
       }
 
       setStatus(
         "Exported " + chronological.length.toLocaleString() + " messages" +
         (includeImages
-          ? " and " + imagesSaved.toLocaleString() + "/" + imageJobs.length.toLocaleString() + " pictures in a ZIP."
+          ? " and " + imagesSaved.toLocaleString() + "/" + jobsToDownload.length.toLocaleString() + " selected pictures in a ZIP."
           : " as JSON (image links only).") +
+        (skippedByCount ? " " + skippedByCount.toLocaleString() + " older pictures skipped due to the 1,000-image limit." : "") +
         (failedImages.length ? " " + failedImages.length.toLocaleString() + " images failed; details are in messages.json." : "") +
         (hasMore && !reachedDate ? " Message limit reached; use a larger limit to include older history." : "") +
         " Upload the export to ChatGPT."
@@ -374,16 +444,25 @@ export default function DiscordHistoryExportPage() {
                 <strong className="block text-white">Include actual pictures (ZIP download)</strong>
                 <span className="mt-1 block text-slate-300">
                   Download original uploaded pictures, including GIFs, JPGs, PNGs and WebP images.
-                  Image-only limits: 1,000 files, 25 MB per file, 300 MB per export.
+                  If more than 1,000 pictures exist, the 1,000 most recent are selected automatically.
+                  All messages still appear in JSON. Image limits: 25 MB per file, 300 MB per export.
                 </span>
               </span>
             </label>
           </div>
 
+          <p className="mt-4 text-xs leading-relaxed text-slate-300">
+            <strong className="text-white">Save location:</strong> In Chrome or Edge on desktop,
+            clicking Export opens a Save As dialog <strong>before</strong> retrieving any messages
+            or pictures. Choose your folder and filename there. Browsers without this feature
+            use their regular download settings instead (enable “Ask where to save each file”
+            in your browser settings to choose a destination).
+          </p>
+
           <div className="mt-6 flex flex-wrap gap-3">
             <button onClick={() => void exportChannel()} disabled={isExporting || !(threadId.trim() || channelId)}
               className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-slate-950 transition hover:bg-cyan-300 disabled:opacity-40">
-              {isExporting ? "Exporting..." : includeImages ? "Export Messages + Pictures (ZIP)" : "Export JSON"}
+              {isExporting ? "Exporting..." : includeImages ? "Choose Save Location & Export ZIP" : "Choose Save Location & Export JSON"}
             </button>
             {isExporting && (
               <button onClick={() => controller.current?.abort()}

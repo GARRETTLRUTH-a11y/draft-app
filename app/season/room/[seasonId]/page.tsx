@@ -5323,6 +5323,12 @@ export default function SeasonRoomPage() {
             <p className="mt-2 text-sm text-slate-400">
               Assign each dynasty team to its real Discord role. RTA uses these role IDs for game-thread tags and player-only Genesis controls even when the Discord role name differs from the team name.
             </p>
+            <Link
+              href={"/season/room/" + seasonId + "/discord-export"}
+              className="mt-4 inline-flex rounded-xl border border-cyan-400/40 bg-cyan-400/10 px-4 py-2 text-sm font-bold text-cyan-200 transition hover:bg-cyan-400/20"
+            >
+              📦 Export Discord Channel History
+            </Link>
 
             <div className="mt-5 rounded-2xl border border-cyan-400/20 bg-slate-950/50 p-4">
                 <div className="flex flex-wrap items-center gap-2">

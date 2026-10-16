@@ -4,14 +4,25 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { makeZip } from "@/lib/zipArchive";
 
 type Channel = { id: string; name: string };
+type ExportAttachment = {
+  id: string;
+  filename: string;
+  url: string;
+  contentType?: string | null;
+  size?: number | null;
+  localPath?: string;
+  downloadError?: string;
+};
 type ExportMessage = {
   id: string;
   timestamp: string;
   content: string;
   author: { id: string; username: string; displayName: string; bot: boolean };
-  attachments: { id: string; filename: string; url: string; contentType?: string | null }[];
+  attachments: ExportAttachment[];
+  [key: string]: unknown;
 };
 
 type ExportPage = {
@@ -22,6 +33,42 @@ type ExportPage = {
   error?: string;
 };
 
+type ImageJob = {
+  messageId: string;
+  attachment: ExportAttachment;
+  path: string;
+};
+
+const MAX_IMAGES = 1000;
+const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
+const MAX_TOTAL_IMAGE_BYTES = 300 * 1024 * 1024;
+
+function isPicture(attachment: ExportAttachment) {
+  return (
+    attachment.contentType?.toLowerCase().startsWith("image/") === true ||
+    /\.(png|jpe?g|gif|webp|heic|heif|avif|apng|bmp)$/i.test(attachment.filename)
+  );
+}
+
+function safeImagePath(messageId: string, attachment: ExportAttachment) {
+  const cleanName = attachment.filename
+    .replace(/[^a-z0-9_.-]/gi, "_")
+    .replace(/^\.+/, "")
+    .slice(-90) || "image";
+  return "images/" + messageId + "_" + attachment.id + "_" + cleanName;
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const blobUrl = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+}
+
 export default function DiscordHistoryExportPage() {
   const params = useParams();
   const rawId = params.seasonId;
@@ -31,9 +78,11 @@ export default function DiscordHistoryExportPage() {
   const [threadId, setThreadId] = useState("");
   const [since, setSince] = useState("");
   const [maxMessages, setMaxMessages] = useState("10000");
+  const [includeImages, setIncludeImages] = useState(true);
   const [status, setStatus] = useState("Loading channels...");
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [downloadedImages, setDownloadedImages] = useState(0);
   const controller = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -53,7 +102,7 @@ export default function DiscordHistoryExportPage() {
         if (!response.ok) throw new Error(result.error || "Could not load channels.");
         if (cancelled) return;
         setChannels(result.channels || []);
-        setStatus("Choose a channel or paste a thread ID, then click Export JSON.");
+        setStatus("Choose a channel or thread, then export.");
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : "Could not load channels.");
       }
@@ -71,6 +120,7 @@ export default function DiscordHistoryExportPage() {
 
     setIsExporting(true);
     setProgress(0);
+    setDownloadedImages(0);
     setStatus("Reading Discord history...");
     const abort = new AbortController();
     controller.current = abort;
@@ -119,48 +169,144 @@ export default function DiscordHistoryExportPage() {
         setProgress(messages.length);
         setStatus("Retrieved " + messages.length.toLocaleString() + " messages from #" + channelName + "...");
       }
-
       if (abort.signal.aborted) return;
 
       const chronological = messages.reverse();
-      const imageCount = chronological.reduce((count, message) => (
-        count + message.attachments.filter((a) =>
-          (a.contentType || "").startsWith("image/") ||
-          /\.(png|jpe?g|gif|webp|heic)$/i.test(a.filename)
-        ).length
-      ), 0);
+      const imageJobs: ImageJob[] = [];
+      for (const message of chronological) {
+        for (const attachment of message.attachments || []) {
+          if (!isPicture(attachment)) continue;
+          imageJobs.push({
+            messageId: message.id,
+            attachment,
+            path: safeImagePath(message.id, attachment),
+          });
+        }
+      }
+
+      if (includeImages && imageJobs.length > MAX_IMAGES) {
+        throw new Error(
+          "Found " + imageJobs.length.toLocaleString() + " pictures. " +
+          "The ZIP limit is " + MAX_IMAGES.toLocaleString() +
+          "; choose a shorter date range, or export JSON without images."
+        );
+      }
+
+      const failedImages: { messageId: string; attachmentId: string; reason: string }[] = [];
+      const files: { path: string; data: ArrayBuffer }[] = [];
+      let imageBytes = 0;
+      let imagesSaved = 0;
+
+      if (includeImages && imageJobs.length) {
+        let cursor = 0;
+        setStatus("Downloading " + imageJobs.length.toLocaleString() + " pictures...");
+
+        async function worker() {
+          while (cursor < imageJobs.length && !abort.signal.aborted) {
+            const job = imageJobs[cursor++];
+            if ((job.attachment.size ?? 0) > MAX_IMAGE_BYTES) {
+              const reason = "Image exceeds 25 MB per-file limit";
+              job.attachment.downloadError = reason;
+              failedImages.push({ messageId: job.messageId, attachmentId: job.attachment.id, reason });
+              continue;
+            }
+
+            try {
+              const query = new URLSearchParams({
+                seasonId: seasonId as string,
+                channelId: selectedId,
+                messageId: job.messageId,
+                attachmentId: job.attachment.id,
+              });
+              const response = await fetch("/api/discord/export/image?" + query, {
+                headers: { Authorization: "Bearer " + token },
+                signal: abort.signal,
+                cache: "no-store",
+              });
+
+              if (!response.ok) {
+                const result = await response.json().catch(() => null) as { error?: string } | null;
+                throw new Error(result?.error || "HTTP " + response.status);
+              }
+
+              const buffer = await response.arrayBuffer();
+              if (buffer.byteLength > MAX_IMAGE_BYTES) {
+                throw new Error("Image exceeds 25 MB per-file limit");
+              }
+              if (imageBytes + buffer.byteLength > MAX_TOTAL_IMAGE_BYTES) {
+                throw new Error("ZIP reached 300 MB image limit; export a shorter range");
+              }
+
+              imageBytes += buffer.byteLength;
+              files.push({ path: job.path, data: buffer });
+              job.attachment.localPath = job.path;
+              imagesSaved++;
+              setDownloadedImages(imagesSaved);
+            } catch (error) {
+              if (abort.signal.aborted) return;
+              const reason = error instanceof Error ? error.message : "Download failed";
+              job.attachment.downloadError = reason;
+              failedImages.push({ messageId: job.messageId, attachmentId: job.attachment.id, reason });
+            }
+          }
+        }
+
+        // Restrict parallel downloads to avoid overwhelming Discord's API.
+        await Promise.all(Array.from({ length: Math.min(3, imageJobs.length) }, () => worker()));
+        if (abort.signal.aborted) return;
+      }
 
       const exported = {
-        format: "genesis-discord-history-v1",
+        format: "genesis-discord-history-v2",
         exportedAt: new Date().toISOString(),
         channel: { id: selectedId, name: channelName },
         since: since || null,
         reachedHistoryEnd: !hasMore,
         truncatedAtMessageLimit: hasMore && !reachedDate,
         count: chronological.length,
-        imageAttachmentCount: imageCount,
-        note: "Media URLs are references, not embedded files; signed Discord attachment URLs can expire.",
+        imageAttachmentCount: imageJobs.length,
+        imageDownloadSummary: {
+          requested: includeImages,
+          downloaded: imagesSaved,
+          failed: failedImages.length,
+          totalBytes: imageBytes,
+          failedImages,
+        },
+        note: includeImages
+          ? "Uploaded pictures are stored inside images/ and referenced via each attachment.localPath. Other embed/external GIF links remain URLs. Check imageDownloadSummary for missing files."
+          : "This JSON contains image URLs only. Re-export with Include images to save original image files.",
         messages: chronological,
       };
+      const stamp = new Date().toISOString().slice(0, 10);
+      const baseName = "genesis-discord-" + channelName.replace(/[^a-z0-9_-]/gi, "-") + "-" + stamp;
 
-      const blob = new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" });
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = objectUrl;
-      anchor.download = "genesis-discord-" + channelName.replace(/[^a-z0-9_-]/gi, "-") + "-" + new Date().toISOString().slice(0, 10) + ".json";
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 5000);
-      setStatus("Exported " + chronological.length.toLocaleString() + " messages and " +
-        imageCount.toLocaleString() + " image references. Upload the JSON file to ChatGPT. " +
-        (hasMore && !reachedDate ? "The selected message limit was reached; select a higher limit for older history." : ""));
-    } catch (error) {
-      if (abort.signal.aborted) {
-        setStatus("Export cancelled.");
+      if (includeImages) {
+        setStatus("Packaging " + imagesSaved.toLocaleString() + " downloaded pictures...");
+        const jsonBuffer = new TextEncoder().encode(JSON.stringify(exported, null, 2)).buffer as ArrayBuffer;
+        files.unshift({ path: "messages.json", data: jsonBuffer });
+        files.sort((a, b) => a.path.localeCompare(b.path));
+        const archive = makeZip(files);
+        downloadBlob(archive, baseName + ".zip");
       } else {
-        setStatus(error instanceof Error ? error.message : "Export failed.");
+        downloadBlob(
+          new Blob([JSON.stringify(exported, null, 2)], { type: "application/json" }),
+          baseName + ".json"
+        );
       }
+
+      setStatus(
+        "Exported " + chronological.length.toLocaleString() + " messages" +
+        (includeImages
+          ? " and " + imagesSaved.toLocaleString() + "/" + imageJobs.length.toLocaleString() + " pictures in a ZIP."
+          : " as JSON (image links only).") +
+        (failedImages.length ? " " + failedImages.length.toLocaleString() + " images failed; details are in messages.json." : "") +
+        (hasMore && !reachedDate ? " Message limit reached; use a larger limit to include older history." : "") +
+        " Upload the export to ChatGPT."
+      );
+    } catch (error) {
+      setStatus(abort.signal.aborted
+        ? "Export cancelled."
+        : error instanceof Error ? error.message : "Export failed.");
     } finally {
       setIsExporting(false);
       controller.current = null;
@@ -177,9 +323,9 @@ export default function DiscordHistoryExportPage() {
           <p className="text-xs font-black uppercase tracking-[0.2em] text-cyan-300">Commissioner only</p>
           <h1 className="mt-2 text-2xl font-black">Export Discord History</h1>
           <p className="mt-3 text-sm text-slate-300">
-            Export past messages from a Genesis Discord text channel or PvP thread into one JSON file.
-            Authors, timestamps, replies, embeds, and image attachment links are preserved.
-            This does not post to Discord or change your league.
+            Save Discord conversations and their uploaded pictures together. ZIP exports include
+            messages.json plus the original image files. Each picture is linked to its author's
+            message. Exporting does not post or change anything in Discord.
           </p>
 
           <div className="mt-6 space-y-5">
@@ -218,12 +364,25 @@ export default function DiscordHistoryExportPage() {
                 </select>
               </label>
             </div>
+
+            <label className="flex items-start gap-3 rounded-xl border border-cyan-300/25 bg-cyan-300/5 p-4">
+              <input type="checkbox" checked={includeImages} onChange={(e) => setIncludeImages(e.target.checked)}
+                disabled={isExporting}
+                className="mt-1 h-4 w-4 accent-cyan-300" />
+              <span className="text-sm">
+                <strong className="block text-white">Include actual pictures (ZIP download)</strong>
+                <span className="mt-1 block text-slate-300">
+                  Download original uploaded pictures, including GIFs, JPGs, PNGs and WebP images.
+                  Image-only limits: 1,000 files, 25 MB per file, 300 MB per export.
+                </span>
+              </span>
+            </label>
           </div>
 
           <div className="mt-6 flex flex-wrap gap-3">
             <button onClick={() => void exportChannel()} disabled={isExporting || !(threadId.trim() || channelId)}
               className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-slate-950 transition hover:bg-cyan-300 disabled:opacity-40">
-              {isExporting ? "Exporting..." : "Export JSON"}
+              {isExporting ? "Exporting..." : includeImages ? "Export Messages + Pictures (ZIP)" : "Export JSON"}
             </button>
             {isExporting && (
               <button onClick={() => controller.current?.abort()}
@@ -233,12 +392,17 @@ export default function DiscordHistoryExportPage() {
             )}
           </div>
           <p aria-live="polite" className="mt-4 text-sm text-slate-300">{status}</p>
-          {isExporting && <p className="mt-1 text-xs text-slate-400">{progress.toLocaleString()} messages fetched</p>}
+          {isExporting && (
+            <p className="mt-1 text-xs text-slate-400">
+              {progress.toLocaleString()} messages fetched · {downloadedImages.toLocaleString()} pictures saved
+            </p>
+          )}
           <p className="mt-5 border-t border-white/10 pt-4 text-xs leading-relaxed text-slate-400">
-            Export only channels and photos you have permission to share. JSON includes media links rather
-            than downloading image bytes, so separately save important images for portraits.
-            Discord may require Message Content Intent to be enabled in your bot settings.
-            Forum channels contain individual threads, which must be exported using each thread ID.
+            Export only conversations and photos you have permission to share. Uploaded images
+            are saved in the ZIP; externally linked pictures and GIF embeds may remain URLs.
+            Some deleted, oversized or inaccessible pictures may fail and will be noted in the JSON.
+            The bot needs access to the channel's history and Message Content Intent.
+            For forum channels, export individual threads using their IDs.
           </p>
         </section>
       </div>

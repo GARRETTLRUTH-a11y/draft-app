@@ -53,6 +53,7 @@ function isPicture(attachment: ExportAttachment) {
 function safeImagePath(messageId: string, attachment: ExportAttachment) {
   const cleanName = attachment.filename
     .replace(/[^a-z0-9_.-]/gi, "_")
+    .replace(/\.\.+/g, "_")
     .replace(/^\.+/, "")
     .slice(-90) || "image";
   return "images/" + messageId + "_" + attachment.id + "_" + cleanName;

@@ -576,7 +576,7 @@ async function parseMessageChunk(
   };
 }
 
-function gameFingerprint(game: {
+export function genesisGameFingerprint(game: {
   seasonYear?: number | null;
   stage?: string | null;
   teamA: string;
@@ -595,6 +595,53 @@ function gameFingerprint(game: {
     sides[0],
     sides[1],
   ].join("|");
+}
+
+function settledMatchupSourceGameId(
+  seasonData: SeasonData,
+  game: GenesisHistoricalGame
+) {
+  const gameTimestamp = game.sourceTimestamp
+    ? new Date(game.sourceTimestamp).getTime()
+    : Number.NaN;
+
+  return seasonData.genesisPicks?.matchups
+    .filter((matchup) => {
+      if (matchup.status !== "settled" || !matchup.sourceGameId) return false;
+      if (!sameHistoricalTeamPair(game, matchup.awayTeam, matchup.homeTeam)) {
+        return false;
+      }
+      if (
+        typeof game.seasonYear === "number" &&
+        game.seasonYear !== matchup.seasonYear
+      ) {
+        return false;
+      }
+
+      const gameAwayScore =
+        normalize(game.teamA) === normalize(matchup.awayTeam)
+          ? game.scoreA
+          : game.scoreB;
+      const gameHomeScore =
+        normalize(game.teamA) === normalize(matchup.homeTeam)
+          ? game.scoreA
+          : game.scoreB;
+
+      if (
+        gameAwayScore !== matchup.finalAwayScore ||
+        gameHomeScore !== matchup.finalHomeScore
+      ) {
+        return false;
+      }
+
+      const createdMs = new Date(matchup.createdAt).getTime();
+      return (
+        !Number.isFinite(gameTimestamp) ||
+        !Number.isFinite(createdMs) ||
+        gameTimestamp >= createdMs - 5 * 60 * 1000
+      );
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.sourceGameId;
 }
 
 function mergeGame(
@@ -697,9 +744,8 @@ export async function syncGenesisHistory(
             continue;
           }
 
-          const fingerprint = gameFingerprint(game);
-          extracted.push({
-            id: fingerprint,
+          const extractedGame: GenesisHistoricalGame = {
+            id: genesisGameFingerprint(game),
             sourceChannelId: source.sourceChannelId,
             sourceMessageId: game.sourceMessageId,
             sourceTimestamp: sourceMessage.timestamp,
@@ -712,7 +758,16 @@ export async function syncGenesisHistory(
             gameType: game.gameType,
             playerA: game.playerA?.trim() || undefined,
             playerB: game.playerB?.trim() || undefined,
-          });
+          };
+
+          // A final entered through the site or Discord is recorded in history
+          // immediately. When the delayed weekly-results post later contains
+          // that same score, attach it to the existing record instead of
+          // counting the game twice in future line calculations.
+          extractedGame.id =
+            settledMatchupSourceGameId(seasonData, extractedGame) ||
+            extractedGame.id;
+          extracted.push(extractedGame);
         }
 
         for (const achievement of parsedGroup.postseasonAchievements) {

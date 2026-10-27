@@ -1637,8 +1637,8 @@ export async function POST(request: Request) {
 
       return ephemeral(
         isCorrection
-          ? `✏️ Final corrected: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks were re-graded and the leaderboard recalculated.`
-          : `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded and the leaderboard updated.`
+          ? `✏️ Final corrected: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks were re-graded, the leaderboard recalculated, and the corrected result saved for future lines.`
+          : `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded, the leaderboard updated, and the result saved for future lines.`
       );
     }
 

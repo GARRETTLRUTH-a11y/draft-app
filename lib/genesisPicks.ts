@@ -7,7 +7,10 @@ import type {
   GenesisVoidReason,
   SeasonData,
 } from "@/lib/season";
-import type { GenesisLineResult } from "@/lib/genesisLines";
+import {
+  genesisGameFingerprint,
+  type GenesisLineResult,
+} from "@/lib/genesisLines";
 import { PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
@@ -43,6 +46,117 @@ function sameTeamPair(
     gameTeams.has(normalize(homeTeam)) &&
     gameTeams.size === 2
   );
+}
+
+function playerNameForTeam(seasonData: SeasonData, team: string) {
+  const target = normalize(team);
+  return seasonData.players.find(
+    (player) => player.team && normalize(player.team) === target
+  )?.name;
+}
+
+function historyGameMatchesPreviousFinal(
+  game: GenesisHistoricalGame,
+  matchup: GenesisPickMatchup
+) {
+  if (!sameTeamPair(game, matchup.awayTeam, matchup.homeTeam)) return false;
+  if (
+    typeof game.seasonYear === "number" &&
+    game.seasonYear !== matchup.seasonYear
+  ) {
+    return false;
+  }
+  if (
+    typeof matchup.finalAwayScore !== "number" ||
+    typeof matchup.finalHomeScore !== "number"
+  ) {
+    return false;
+  }
+
+  const awayScore =
+    normalize(game.teamA) === normalize(matchup.awayTeam)
+      ? game.scoreA
+      : game.scoreB;
+  const homeScore =
+    normalize(game.teamA) === normalize(matchup.homeTeam)
+      ? game.scoreA
+      : game.scoreB;
+  if (
+    awayScore !== matchup.finalAwayScore ||
+    homeScore !== matchup.finalHomeScore
+  ) {
+    return false;
+  }
+
+  if (!game.sourceTimestamp) return true;
+  const sourceMs = new Date(game.sourceTimestamp).getTime();
+  const createdMs = new Date(matchup.createdAt).getTime();
+  return (
+    !Number.isFinite(sourceMs) ||
+    !Number.isFinite(createdMs) ||
+    sourceMs >= createdMs - 5 * 60 * 1000
+  );
+}
+
+function recordGenesisFinalInHistory(
+  seasonData: SeasonData,
+  matchup: GenesisPickMatchup,
+  awayScore: number,
+  homeScore: number,
+  sourceTimestamp: string
+) {
+  const game: GenesisHistoricalGame = {
+    id: genesisGameFingerprint({
+      seasonYear: matchup.seasonYear,
+      stage: matchup.stage,
+      teamA: matchup.awayTeam,
+      scoreA: awayScore,
+      teamB: matchup.homeTeam,
+      scoreB: homeScore,
+    }),
+    sourceChannelId: matchup.threadId,
+    sourceMessageId: `entered-final:${matchup.id}`,
+    sourceTimestamp,
+    seasonYear: matchup.seasonYear,
+    stage: matchup.stage?.trim() || undefined,
+    teamA: matchup.awayTeam,
+    scoreA: awayScore,
+    teamB: matchup.homeTeam,
+    scoreB: homeScore,
+    gameType: "pvp",
+    playerA: playerNameForTeam(seasonData, matchup.awayTeam),
+    playerB: playerNameForTeam(seasonData, matchup.homeTeam),
+  };
+
+  const existingHistory = seasonData.genesisHistory;
+  const games = (existingHistory?.games || []).filter(
+    (existing) =>
+      existing.id !== game.id &&
+      existing.id !== matchup.sourceGameId &&
+      !historyGameMatchesPreviousFinal(existing, matchup)
+  );
+  games.push(game);
+  games.sort((a, b) => {
+    const yearDiff = (a.seasonYear || 0) - (b.seasonYear || 0);
+    if (yearDiff !== 0) return yearDiff;
+    return (a.sourceTimestamp || "").localeCompare(b.sourceTimestamp || "");
+  });
+
+  return {
+    game,
+    seasonData: {
+      ...seasonData,
+      genesisHistory: {
+        games,
+        postseasonAchievements: existingHistory?.postseasonAchievements || [],
+        sourceCursors: existingHistory?.sourceCursors,
+        lastSyncedAt: existingHistory?.lastSyncedAt || sourceTimestamp,
+        messagesScanned: existingHistory?.messagesScanned || 0,
+        sourceCounts: existingHistory?.sourceCounts || {},
+        lastSyncMode: existingHistory?.lastSyncMode,
+      },
+    },
+  };
 }
 
 function lineLabel(team: string, signedLine: number) {
@@ -537,6 +651,15 @@ export function settleGenesisMatchupByScore(
         ? "away"
         : "home";
 
+  const historyTimestamp = matchup.settledAt || settledAt;
+  const withHistory = recordGenesisFinalInHistory(
+    seasonData,
+    matchup,
+    awayScore,
+    homeScore,
+    historyTimestamp
+  );
+
   const matchups: GenesisPickMatchup[] = state.matchups.map((item) =>
     item.id === matchupId
       ? {
@@ -546,6 +669,7 @@ export function settleGenesisMatchupByScore(
           finalHomeScore: homeScore,
           atsWinner,
           settledAt: item.settledAt || settledAt,
+          sourceGameId: withHistory.game.id,
         }
       : item
   );
@@ -554,7 +678,7 @@ export function settleGenesisMatchupByScore(
 
   return {
     seasonData: {
-      ...seasonData,
+      ...withHistory.seasonData,
       genesisPicks: {
         ...state,
         matchups,
@@ -703,6 +827,7 @@ export async function postGenesisFinalToThread(input: {
           input.corrected
             ? "The corrected score has been re-graded and the Genesis Picks leaderboard recalculated."
             : "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
+          "This final is now included in Genesis performance history for future lines.",
         ].join("\n"),
         allowed_mentions: { parse: [] as string[] },
       }),

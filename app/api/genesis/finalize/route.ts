@@ -178,6 +178,7 @@ export async function POST(request: Request) {
     matchupId,
     atsWinner,
     corrected: isCorrection,
+    historyGameId: settled.matchup.sourceGameId,
     leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
     leaderboardWarning: leaderboard.warning,
   });

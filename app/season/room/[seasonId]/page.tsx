@@ -1860,8 +1860,8 @@ export default function SeasonRoomPage() {
 
       setGenesisFinalizeStatus(
         result.corrected
-          ? `✅ Final score corrected. Picks re-graded and #genesis-picks recalculated${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
-          : `✅ Game finalized. Picks locked and graded${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ", and #genesis-picks updated."}`
+          ? `✅ Final score corrected. Picks re-graded, #genesis-picks recalculated, and the corrected result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
+          : `✅ Game finalized. Picks locked and graded, #genesis-picks updated, and the result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
       );
     } catch (error) {
       setGenesisFinalizeStatus(

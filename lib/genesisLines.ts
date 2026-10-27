@@ -605,9 +605,15 @@ function settledMatchupSourceGameId(
     ? new Date(game.sourceTimestamp).getTime()
     : Number.NaN;
 
-  return seasonData.genesisPicks?.matchups
+  const matchup = seasonData.genesisPicks?.matchups
     .filter((matchup) => {
-      if (matchup.status !== "settled" || !matchup.sourceGameId) return false;
+      if (
+        matchup.status !== "settled" ||
+        typeof matchup.finalAwayScore !== "number" ||
+        typeof matchup.finalHomeScore !== "number"
+      ) {
+        return false;
+      }
       if (!sameHistoricalTeamPair(game, matchup.awayTeam, matchup.homeTeam)) {
         return false;
       }
@@ -641,7 +647,60 @@ function settledMatchupSourceGameId(
         gameTimestamp >= createdMs - 5 * 60 * 1000
       );
     })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]?.sourceGameId;
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+  if (!matchup) return undefined;
+  return (
+    matchup.sourceGameId ||
+    genesisGameFingerprint({
+      seasonYear: matchup.seasonYear,
+      stage: matchup.stage,
+      teamA: matchup.awayTeam,
+      scoreA: matchup.finalAwayScore!,
+      teamB: matchup.homeTeam,
+      scoreB: matchup.finalHomeScore!,
+    })
+  );
+}
+
+function settledMatchupHistoryGame(
+  seasonData: SeasonData,
+  matchup: NonNullable<SeasonData["genesisPicks"]>["matchups"][number]
+) {
+  if (
+    matchup.status !== "settled" ||
+    typeof matchup.finalAwayScore !== "number" ||
+    typeof matchup.finalHomeScore !== "number"
+  ) {
+    return null;
+  }
+
+  const game: GenesisHistoricalGame = {
+    id:
+      matchup.sourceGameId ||
+      genesisGameFingerprint({
+        seasonYear: matchup.seasonYear,
+        stage: matchup.stage,
+        teamA: matchup.awayTeam,
+        scoreA: matchup.finalAwayScore,
+        teamB: matchup.homeTeam,
+        scoreB: matchup.finalHomeScore,
+      }),
+    sourceChannelId: matchup.threadId,
+    sourceMessageId: `entered-final:${matchup.id}`,
+    sourceTimestamp: matchup.settledAt || matchup.createdAt,
+    seasonYear: matchup.seasonYear,
+    stage: matchup.stage?.trim() || undefined,
+    teamA: matchup.awayTeam,
+    scoreA: matchup.finalAwayScore,
+    teamB: matchup.homeTeam,
+    scoreB: matchup.finalHomeScore,
+    gameType: "pvp",
+    playerA: playerForTeam(seasonData.players, matchup.awayTeam)?.name,
+    playerB: playerForTeam(seasonData.players, matchup.homeTeam)?.name,
+  };
+
+  return game;
 }
 
 function mergeGame(
@@ -805,6 +864,14 @@ export async function syncGenesisHistory(
   }
 
   const merged = new Map<string, GenesisHistoricalGame>();
+
+  // Backfill finals that were settled before immediate history recording was
+  // introduced. This also guarantees a newly generated line can use every
+  // entered final even if the weekly Discord results post is still delayed.
+  for (const matchup of seasonData.genesisPicks?.matchups || []) {
+    const game = settledMatchupHistoryGame(seasonData, matchup);
+    if (game) merged.set(game.id, game);
+  }
 
   for (const existing of seasonData.genesisHistory?.games || []) {
     merged.set(existing.id, existing);

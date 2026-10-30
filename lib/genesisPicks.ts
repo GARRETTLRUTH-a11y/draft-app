@@ -989,6 +989,7 @@ type LeaderboardRow = {
   wins: number;
   losses: number;
   pushes: number;
+  gradedPicks: number;
   decisions: number;
   accuracy: number;
 };
@@ -1010,11 +1011,13 @@ function leaderboardRows(state: GenesisPicksState): LeaderboardRow[] {
           wins: 0,
           losses: 0,
           pushes: 0,
+          gradedPicks: 0,
           decisions: 0,
           accuracy: 0,
         };
 
       row.discordUsername = pick.discordUsername || row.discordUsername;
+      row.gradedPicks++;
 
       if (matchup.atsWinner === "push") {
         row.pushes++;
@@ -1042,7 +1045,13 @@ function leaderboardRows(state: GenesisPicksState): LeaderboardRow[] {
 
 export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   const state = seasonData.genesisPicks || { matchups: [] };
-  const rows = leaderboardRows(state);
+  const allRows = leaderboardRows(state);
+  const gradedMatchupCount = state.matchups.filter(
+    (matchup) => matchup.status === "settled" && matchup.atsWinner
+  ).length;
+  const minimumPicks =
+    gradedMatchupCount > 0 ? Math.ceil(gradedMatchupCount / 3) : 0;
+  const rows = allRows.filter((row) => row.gradedPicks >= minimumPicks);
   const settledCount = state.matchups.filter(
     (matchup) => matchup.status === "settled"
   ).length;
@@ -1062,8 +1071,12 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
     "",
   ];
 
-  if (!rows.length) {
+  if (!allRows.length) {
     lines.push("No graded picks yet.");
+  } else if (!rows.length) {
+    lines.push(
+      `No players have reached the minimum of **${minimumPicks}** graded pick${minimumPicks === 1 ? "" : "s"} yet.`
+    );
   } else {
     rows.slice(0, 25).forEach((row, index) => {
       const pct = (row.accuracy * 100).toFixed(1);
@@ -1076,6 +1089,9 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   lines.push(
     "",
     `Settled: **${settledCount}** · Voided: **${voidedCount}** · Locked/in progress: **${lockedCount}** · Open picks: **${openCount}**`,
+    gradedMatchupCount > 0
+      ? `Leaderboard minimum: **${minimumPicks}** graded pick${minimumPicks === 1 ? "" : "s"} — at least one-third of ${gradedMatchupCount} completed pick opportunit${gradedMatchupCount === 1 ? "y" : "ies"}, rounded up.`
+      : "Leaderboard minimum begins once a matchup is graded.",
     "Pushes do not count toward accuracy. Voided matchups do not count at all."
   );
 

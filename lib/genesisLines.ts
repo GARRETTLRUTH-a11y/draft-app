@@ -76,8 +76,51 @@ export type GenesisLineResult = {
   ratingMargin: number;
   historyAdjustment: number;
   homeFieldAdjustment: number;
+  calculation: {
+    awayRatings: { overall: number; offense: number; defense: number };
+    homeRatings: { overall: number; offense: number; defense: number };
+    overallRatingsComponent: number;
+    offenseDefenseMatchupComponent: number;
+    teamFormComponent: number;
+    coachPvpFormComponent: number;
+    directPvpComponent: number;
+    postseasonComponent: number;
+    cpuLossComponent: number;
+    historyBeforeCap: number;
+    historyAfterCap: number;
+    homeFieldComponent: number;
+    finalAwayMargin: number;
+  };
   notes: string[];
 };
+
+export function withGenesisAwayLine(
+  line: GenesisLineResult,
+  awayLine: number
+): GenesisLineResult {
+  const normalizedAwayLine = Math.abs(awayLine) < 0.001 ? 0 : awayLine;
+  const favorite =
+    normalizedAwayLine < 0
+      ? line.awayTeam
+      : normalizedAwayLine > 0
+        ? line.homeTeam
+        : null;
+  const spread = Math.abs(normalizedAwayLine);
+  const displayLine = favorite
+    ? `${favorite} -${spread.toFixed(1)}`
+    : "Pick'em";
+
+  return {
+    ...line,
+    favorite,
+    spread,
+    displayLine,
+    notes: [
+      ...line.notes,
+      `Commissioner confirmed an adjusted Genesis line of ${displayLine}.`,
+    ],
+  };
+}
 
 function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
@@ -1476,12 +1519,14 @@ export function buildGenesisLine(
     directMatchupSource.count
   );
 
-  const historyAdjustment = clamp(
+  const rawHistoryAdjustment =
     teamHistoryAdjustment +
       playerHistoryAdjustment +
       postseasonAdjustment +
       cpuLossAdjustment +
-      directMatchupAdjustment,
+      directMatchupAdjustment;
+  const historyAdjustment = clamp(
+    rawHistoryAdjustment,
     -16,
     16
   );
@@ -1597,6 +1642,38 @@ export function buildGenesisLine(
     ratingMargin: Math.round(ratingMargin * 10) / 10,
     historyAdjustment: Math.round(historyAdjustment * 10) / 10,
     homeFieldAdjustment,
+    calculation: {
+      awayRatings: {
+        overall: awayOverall,
+        offense: awayOffense,
+        defense: awayDefense,
+      },
+      homeRatings: {
+        overall: homeOverall,
+        offense: homeOffense,
+        defense: homeDefense,
+      },
+      overallRatingsComponent:
+        Math.round(overallComponent * 10) / 10,
+      offenseDefenseMatchupComponent:
+        Math.round(matchupComponent * 10) / 10,
+      teamFormComponent:
+        Math.round(teamHistoryAdjustment * 10) / 10,
+      coachPvpFormComponent:
+        Math.round(playerHistoryAdjustment * 10) / 10,
+      directPvpComponent:
+        Math.round(directMatchupAdjustment * 10) / 10,
+      postseasonComponent:
+        Math.round(postseasonAdjustment * 10) / 10,
+      cpuLossComponent:
+        Math.round(cpuLossAdjustment * 10) / 10,
+      historyBeforeCap:
+        Math.round(rawHistoryAdjustment * 10) / 10,
+      historyAfterCap:
+        Math.round(historyAdjustment * 10) / 10,
+      homeFieldComponent: homeFieldAdjustment,
+      finalAwayMargin: awayMargin,
+    },
     notes,
   };
 }

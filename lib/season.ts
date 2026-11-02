@@ -71,6 +71,12 @@ export type GenesisPick = {
   discordUserId: string;
   discordUsername: string;
   side: GenesisPickSide;
+  // Team owned by this Discord player when the wager was placed. Used to
+  // award fake-money recovery bonuses for later CPU and PvP wins.
+  team?: string;
+  // Fake-money amount risked against the locked spread. Older picks created
+  // before bankroll play was introduced have no wager and remain accuracy-only.
+  wager?: number;
   pickedAt: string;
 };
 
@@ -118,8 +124,12 @@ export type GenesisPickMatchup = {
 
 export type GenesisPicksState = {
   matchups: GenesisPickMatchup[];
+  // Prevents old league history from awarding retroactive bankroll bonuses.
+  // The recovery program begins when the first wager-enabled matchup is made.
+  bankrollStartedAt?: string;
   leaderboardChannelId?: string;
   leaderboardMessageId?: string;
+  bankrollLeaderboardMessageId?: string;
 };
 
 export type ExtensionStatus = "pending" | "granted" | "denied";

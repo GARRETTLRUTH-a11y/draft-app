@@ -16,7 +16,9 @@ import {
   resolveGenesisTeamRoleIds,
 } from "@/lib/discordPvpThreads";
 import {
+  genesisAvailableBankroll,
   postGenesisFinalToThread,
+  saveGenesisPick,
   settleGenesisMatchupByScore,
   syncGenesisKickoffScheduleMessage,
   syncGenesisLeaderboard,
@@ -103,6 +105,40 @@ function genesisFinalScoreModal(
               ...(matchup.finalHomeScore != null
                 ? { value: String(matchup.finalHomeScore) }
                 : { placeholder: "24" }),
+            },
+          ],
+        },
+      ],
+    },
+  });
+}
+
+function genesisPickWagerModal(input: {
+  seasonId: string;
+  matchupId: string;
+  side: "away" | "home";
+  team: string;
+  lineText: string;
+  availableBankroll: number;
+}) {
+  return NextResponse.json({
+    type: 9,
+    data: {
+      custom_id: `genesis_pick_wager:${input.seasonId}:${input.matchupId}:${input.side}`,
+      title: "Place Genesis Wager",
+      components: [
+        {
+          type: 1,
+          components: [
+            {
+              type: 4,
+              custom_id: "wager_amount",
+              label: `Wager on ${input.team} ${input.lineText}`.slice(0, 45),
+              style: 1,
+              required: true,
+              min_length: 1,
+              max_length: 6,
+              placeholder: `Available bankroll: $${input.availableBankroll}`,
             },
           ],
         },
@@ -541,6 +577,46 @@ async function resolveGenesisRoleIdForTeam(
 
   const fallbackRoleIds = await resolveGenesisTeamRoleIds([team], guildId);
   return fallbackRoleIds[0];
+}
+
+function normalizePlayerIdentity(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+async function resolveGenesisWagerTeam(input: {
+  admin: SupabaseClient;
+  seasonId: string;
+  seasonData: SeasonData;
+  discordUserId: string;
+  memberRoleIds: string[];
+}) {
+  const memberRoles = new Set(input.memberRoleIds);
+  const mappedTeam = Object.entries(
+    input.seasonData.discordTeamRoleIds || {}
+  ).find(([, roleId]) => memberRoles.has(roleId))?.[0];
+  if (mappedTeam) return mappedTeam;
+
+  // Players who linked Discord to the website can still receive win bonuses
+  // even when the commissioner has not mapped every Discord team role.
+  const { data: link } = await input.admin
+    .from("discord_links")
+    .select("user_id")
+    .eq("discord_user_id", input.discordUserId)
+    .maybeSingle();
+  if (!link?.user_id) return undefined;
+
+  const { data: participant } = await input.admin
+    .from("season_participants")
+    .select("player_name")
+    .eq("season_id", input.seasonId)
+    .eq("user_id", link.user_id)
+    .maybeSingle();
+  if (!participant?.player_name) return undefined;
+
+  const playerName = normalizePlayerIdentity(participant.player_name);
+  return input.seasonData.players.find(
+    (player) => normalizePlayerIdentity(player.name) === playerName
+  )?.team;
 }
 
 async function authorizeGenesisMatchupRole(
@@ -1337,69 +1413,6 @@ export async function POST(request: Request) {
         );
       }
 
-      const nextMatchups = picksState.matchups.map((item) =>
-        item.id === matchupId
-          ? {
-              ...item,
-              picks: {
-                ...item.picks,
-                [discordUserId]: {
-                  discordUserId,
-                  discordUsername: discordUsername || "Discord user",
-                  side,
-                  pickedAt: new Date().toISOString(),
-                },
-              },
-            }
-          : item
-      );
-
-      const nextSeasonData: SeasonData = {
-        ...seasonData,
-        genesisPicks: {
-          ...picksState,
-          matchups: nextMatchups,
-        },
-      };
-
-      const { error: updateError } = await admin
-        .from("seasons")
-        .update({
-          season_data: nextSeasonData,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", seasonId);
-
-      if (updateError) {
-        return ephemeral("Couldn't save your Genesis pick. Try again.");
-      }
-
-      const savedMatchup = nextMatchups.find((item) => item.id === matchupId)!;
-      const summary = await syncGenesisPickSummary(savedMatchup);
-
-      if (
-        summary.matchup.pickSummaryMessageId !==
-        savedMatchup.pickSummaryMessageId
-      ) {
-        const summarySeasonData: SeasonData = {
-          ...nextSeasonData,
-          genesisPicks: {
-            ...nextSeasonData.genesisPicks!,
-            matchups: nextMatchups.map((item) =>
-              item.id === matchupId ? summary.matchup : item
-            ),
-          },
-        };
-
-        await admin
-          .from("seasons")
-          .update({
-            season_data: summarySeasonData,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", seasonId);
-      }
-
       const team = side === "away" ? matchup.awayTeam : matchup.homeTeam;
       const signedLine = side === "away" ? matchup.awayLine : -matchup.awayLine;
       const lineText =
@@ -1407,13 +1420,17 @@ export async function POST(request: Request) {
           ? "PK"
           : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
 
-      return ephemeral(
-        `🔒 Pick locked: **${team} ${lineText}**. This selection cannot be changed.${
-          summary.warning
-            ? ` Pick saved, but the quiet thread summary could not update: ${summary.warning}`
-            : ""
-        }`
-      );
+      return genesisPickWagerModal({
+        seasonId,
+        matchupId,
+        side,
+        team,
+        lineText,
+        availableBankroll: genesisAvailableBankroll(
+          seasonData,
+          discordUserId
+        ),
+      });
     }
 
     if (customId === "create_pvp_thread") {
@@ -1510,6 +1527,224 @@ export async function POST(request: Request) {
   // Modal submit: the "Request an Extension" form
   if (interaction.type === 5 && typeof interaction.data?.custom_id === "string") {
     const customId = interaction.data.custom_id;
+
+    if (customId.startsWith("genesis_pick_wager:")) {
+      if (!discordUserId) {
+        return ephemeral("Couldn't identify your Discord account.");
+      }
+
+      const parts = customId.split(":");
+      const seasonId = parts[1];
+      const matchupId = parts[2];
+      const rawSide = parts[3];
+      if (
+        !seasonId ||
+        !matchupId ||
+        (rawSide !== "away" && rawSide !== "home")
+      ) {
+        return ephemeral("That Genesis wager form is invalid.");
+      }
+
+      let wagerText = "";
+      for (const row of interaction.data.components ?? []) {
+        for (const field of row.components ?? []) {
+          if (field.custom_id === "wager_amount" && typeof field.value === "string") {
+            wagerText = field.value.trim().replace(/^\$/, "");
+          }
+        }
+      }
+
+      const wager = Number(wagerText);
+      if (!Number.isInteger(wager) || wager <= 0) {
+        return ephemeral("Enter a whole-dollar wager of at least $1.");
+      }
+
+      const { data: seasonRow, error: seasonError } = await admin
+        .from("seasons")
+        .select("season_data, updated_at")
+        .eq("id", seasonId)
+        .maybeSingle();
+      if (seasonError || !seasonRow) {
+        return ephemeral("Couldn't find that Genesis season.");
+      }
+
+      const seasonData = seasonRow.season_data as SeasonData;
+      const matchup = seasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (!matchup) {
+        return ephemeral("That Genesis matchup could not be found.");
+      }
+
+      const [awayTeamRoleId, homeTeamRoleId] = await Promise.all([
+        resolveGenesisRoleIdForTeam(
+          matchup.awayTeam,
+          interaction.guild_id,
+          seasonData.discordTeamRoleIds
+        ),
+        resolveGenesisRoleIdForTeam(
+          matchup.homeTeam,
+          interaction.guild_id,
+          seasonData.discordTeamRoleIds
+        ),
+      ]);
+      const memberRoles = new Set(interaction.member?.roles || []);
+      if (
+        Boolean(awayTeamRoleId && memberRoles.has(awayTeamRoleId)) ||
+        Boolean(homeTeamRoleId && memberRoles.has(homeTeamRoleId))
+      ) {
+        return ephemeral(
+          `🚫 You can't wager on **${matchup.awayTeam} vs. ${matchup.homeTeam}** because your team is playing in this matchup.`
+        );
+      }
+
+      if (matchup.picks[discordUserId]) {
+        return ephemeral("🔒 Your pick and wager for this matchup are already locked.");
+      }
+
+      const wagerTeam = await resolveGenesisWagerTeam({
+        admin,
+        seasonId,
+        seasonData,
+        discordUserId,
+        memberRoleIds: interaction.member?.roles || [],
+      });
+
+      // The season state is one JSON document. Use optimistic concurrency so
+      // two people wagering at nearly the same moment cannot overwrite each
+      // other's picks or spend the same user's bankroll twice.
+      let candidateSeasonData = seasonData;
+      let candidateUpdatedAt = seasonRow.updated_at as string;
+      let nextSeasonData: SeasonData | null = null;
+
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const saved = saveGenesisPick(candidateSeasonData, matchupId, {
+          discordUserId,
+          discordUsername: discordUsername || "Discord user",
+          side: rawSide,
+          team: wagerTeam,
+          wager,
+          pickedAt: new Date().toISOString(),
+        });
+        if (!saved.ok) return ephemeral(saved.error);
+
+        const nextUpdatedAt = new Date(Date.now() + attempt).toISOString();
+        const { data: updatedRow, error: updateError } = await admin
+          .from("seasons")
+          .update({
+            season_data: saved.seasonData,
+            updated_at: nextUpdatedAt,
+          })
+          .eq("id", seasonId)
+          .eq("updated_at", candidateUpdatedAt)
+          .select("season_data")
+          .maybeSingle();
+
+        if (updateError) {
+          return ephemeral("Couldn't save your Genesis pick and wager. Try again.");
+        }
+        if (updatedRow) {
+          nextSeasonData = saved.seasonData;
+          break;
+        }
+
+        const { data: freshRow, error: freshError } = await admin
+          .from("seasons")
+          .select("season_data, updated_at")
+          .eq("id", seasonId)
+          .maybeSingle();
+        if (freshError || !freshRow) {
+          return ephemeral("Couldn't refresh the Genesis matchup. Try again.");
+        }
+        candidateSeasonData = freshRow.season_data as SeasonData;
+        candidateUpdatedAt = freshRow.updated_at as string;
+      }
+
+      if (!nextSeasonData) {
+        return ephemeral(
+          "Several picks arrived at the same time. Please submit your wager once more."
+        );
+      }
+
+      const savedMatchup = nextSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      let summaryWarning: string | undefined;
+      if (savedMatchup) {
+        const summary = await syncGenesisPickSummary(savedMatchup);
+        summaryWarning = summary.warning;
+        if (
+          !summary.warning &&
+          summary.matchup.pickSummaryMessageId !==
+            savedMatchup.pickSummaryMessageId
+        ) {
+          // This only runs when Discord had to recreate a deleted summary.
+          // Merge the new message ID into the latest state with the same
+          // collision protection used above, preserving any picks that landed
+          // while the Discord request was in flight.
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const { data: latestRow } = await admin
+              .from("seasons")
+              .select("season_data, updated_at")
+              .eq("id", seasonId)
+              .maybeSingle();
+            if (!latestRow) break;
+
+            const latestSeasonData = latestRow.season_data as SeasonData;
+            const latestState = latestSeasonData.genesisPicks;
+            if (!latestState) break;
+
+            const mergedSeasonData: SeasonData = {
+              ...latestSeasonData,
+              genesisPicks: {
+                ...latestState,
+                matchups: latestState.matchups.map((item) =>
+                  item.id === matchupId
+                    ? {
+                        ...item,
+                        pickSummaryMessageId:
+                          summary.matchup.pickSummaryMessageId,
+                      }
+                    : item
+                ),
+              },
+            };
+            const mergedUpdatedAt = new Date(
+              Date.now() + attempt
+            ).toISOString();
+            const { data: mergedRow } = await admin
+              .from("seasons")
+              .update({
+                season_data: mergedSeasonData,
+                updated_at: mergedUpdatedAt,
+              })
+              .eq("id", seasonId)
+              .eq("updated_at", latestRow.updated_at as string)
+              .select("season_data")
+              .maybeSingle();
+            if (mergedRow) {
+              nextSeasonData = mergedSeasonData;
+              break;
+            }
+          }
+        }
+      }
+
+      const team = rawSide === "away" ? matchup.awayTeam : matchup.homeTeam;
+      const signedLine =
+        rawSide === "away" ? matchup.awayLine : -matchup.awayLine;
+      const lineText =
+        signedLine === 0
+          ? "PK"
+          : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+      const remaining = genesisAvailableBankroll(nextSeasonData, discordUserId);
+
+      return ephemeral(
+        `🔒 Pick locked: **${team} ${lineText}** for **$${wager}**. Available bankroll: **$${remaining}**. Your side and wager are now visible in the public thread summary and cannot be changed.${
+          summaryWarning ? ` Warning: ${summaryWarning}` : ""
+        }`
+      );
+    }
 
     if (customId.startsWith("genesis_final_score_modal:")) {
       if (!discordUserId) {

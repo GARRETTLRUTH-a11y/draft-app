@@ -39,6 +39,7 @@ import {
   type SeasonPlayer,
 } from "@/lib/season";
 import type { DiscordNotifyPayload } from "@/lib/discord";
+import type { GenesisLineResult } from "@/lib/genesisLines";
 
 // Host-requested custom ordering for the Manage Players list, in place of
 // alphabetical. Teams not on this list (or players with no team yet) sort
@@ -164,25 +165,7 @@ type Participant = {
   is_co_admin: boolean;
 };
 
-type GenesisLinePreview = {
-  awayTeam: string;
-  homeTeam: string;
-  neutral: boolean;
-  stage?: string;
-  seasonYear?: number;
-  favorite: string | null;
-  spread: number;
-  displayLine: string;
-  projectedAwayScore: number;
-  projectedHomeScore: number;
-  confidence: "Low" | "Medium" | "High";
-  confidenceScore: number;
-  historyGamesUsed: number;
-  ratingMargin: number;
-  historyAdjustment: number;
-  homeFieldAdjustment: number;
-  notes: string[];
-};
+type GenesisLinePreview = GenesisLineResult;
 
 type PvpBatchGame = {
   id: string;
@@ -190,6 +173,16 @@ type PvpBatchGame = {
   homeTeam: string;
   separator: "@" | "vs.";
   stageLabel: string;
+};
+
+type PendingPvpLine = {
+  game: PvpBatchGame;
+  threadName: string;
+  stage: string;
+  seasonYear: number;
+  line: GenesisLinePreview;
+  favoriteSide: "away" | "home" | "pickem";
+  spreadInput: string;
 };
 
 type DiscordRoleOption = {
@@ -280,6 +273,8 @@ export default function SeasonRoomPage() {
   const [pvpYear, setPvpYear] = useState("");
   const [additionalPvpGames, setAdditionalPvpGames] = useState<PvpBatchGame[]>([]);
   const [postPvpStreamInstructions, setPostPvpStreamInstructions] = useState(false);
+  const [pendingPvpLines, setPendingPvpLines] = useState<PendingPvpLine[]>([]);
+  const [isPreparingPvpLines, setIsPreparingPvpLines] = useState(false);
   const [isCreatingPvpThread, setIsCreatingPvpThread] = useState(false);
   const [pvpCreateStatus, setPvpCreateStatus] = useState("");
   const [genesisLine, setGenesisLine] = useState<GenesisLinePreview | null>(null);
@@ -1245,7 +1240,7 @@ export default function SeasonRoomPage() {
     }
   }
 
-  async function createPvpThread() {
+  async function preparePvpThreads() {
     if (!season) return;
 
     const stage = pvpStageLabel.trim();
@@ -1282,14 +1277,11 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    setIsCreatingPvpThread(true);
+    setIsPreparingPvpLines(true);
+    setPendingPvpLines([]);
     setPvpCreateStatus(
-      `Preparing ${games.length} PvP matchup${games.length === 1 ? "" : "s"}...`
+      `Generating ${games.length} line${games.length === 1 ? "" : "s"} for commissioner review...`
     );
-
-    const failures: string[] = [];
-    const warnings: string[] = [];
-    let createdCount = 0;
 
     try {
       const { data: sessionData } = await supabase.auth.getSession();
@@ -1299,6 +1291,7 @@ export default function SeasonRoomPage() {
         return;
       }
 
+      const prepared: PendingPvpLine[] = [];
       for (let index = 0; index < games.length; index++) {
         const game = games[index];
         const gameStage = resolvedPvpStage(game.stageLabel);
@@ -1310,49 +1303,131 @@ export default function SeasonRoomPage() {
         );
 
         setPvpCreateStatus(
-          `Creating ${index + 1} of ${games.length}: ${game.awayTeam} ${game.separator} ${game.homeTeam}...`
+          `Generating line ${index + 1} of ${games.length}: ${game.awayTeam} ${game.separator} ${game.homeTeam}...`
+        );
+
+        const lineResponse = await fetch("/api/genesis/line", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            seasonId: season.id,
+            awayTeam: game.awayTeam,
+            homeTeam: game.homeTeam,
+            neutral: game.separator === "vs.",
+            stage: gameStage,
+            seasonYear,
+          }),
+        });
+
+        const lineResult = (await lineResponse.json()) as {
+          error?: string;
+          line?: GenesisLinePreview;
+        };
+
+        if (!lineResponse.ok || !lineResult.line) {
+          throw new Error(
+            `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${
+              lineResult.error || "Could not generate the Genesis line."
+            }`
+          );
+        }
+
+        const favoriteSide =
+          lineResult.line.favorite === game.awayTeam
+            ? "away"
+            : lineResult.line.favorite === game.homeTeam
+              ? "home"
+              : "pickem";
+
+        prepared.push({
+          game: { ...game },
+          threadName,
+          stage: gameStage,
+          seasonYear,
+          line: lineResult.line,
+          favoriteSide,
+          spreadInput: lineResult.line.spread.toFixed(1),
+        });
+      }
+
+      await loadRoomSeason(season.id);
+      setGenesisLine(prepared[0]?.line || null);
+      setPendingPvpLines(prepared);
+      setPvpCreateStatus(
+        `Review ${prepared.length === 1 ? "the line" : `all ${prepared.length} lines`} below, then confirm to create the Discord thread${prepared.length === 1 ? "" : "s"}.`
+      );
+    } catch (error) {
+      setPvpCreateStatus(
+        error instanceof Error
+          ? `Could not prepare the PvP threads: ${error.message}`
+          : "Could not prepare the PvP threads. Try again."
+      );
+    } finally {
+      setIsPreparingPvpLines(false);
+    }
+  }
+
+  async function confirmCreatePvpThreads() {
+    if (!season || !pendingPvpLines.length) return;
+
+    const invalidLine = pendingPvpLines.find((pending) => {
+      const spread = Number(pending.spreadInput);
+      return (
+        pending.favoriteSide !== "pickem" &&
+        (!Number.isFinite(spread) ||
+          spread < 0.5 ||
+          spread > 100 ||
+          !Number.isInteger(spread * 2))
+      );
+    });
+    if (invalidLine) {
+      setPvpCreateStatus(
+        `${invalidLine.game.awayTeam} ${invalidLine.game.separator} ${invalidLine.game.homeTeam} needs a spread from 0.5 to 100 in half-point increments.`
+      );
+      return;
+    }
+
+    const confirmedLines = pendingPvpLines.map((pending) => {
+      const spread = Number(pending.spreadInput);
+      return {
+        ...pending,
+        awayLineOverride:
+          pending.favoriteSide === "pickem"
+            ? 0
+            : pending.favoriteSide === "away"
+              ? -spread
+              : spread,
+      };
+    });
+
+    setIsCreatingPvpThread(true);
+    setPvpCreateStatus(
+      `Creating ${confirmedLines.length} confirmed PvP thread${confirmedLines.length === 1 ? "" : "s"}...`
+    );
+
+    const failures: string[] = [];
+    const warnings: string[] = [];
+    const createdIds = new Set<string>();
+
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const token = sessionData.session?.access_token;
+      if (!token) {
+        setPvpCreateStatus("Your session expired. Refresh and sign in again.");
+        return;
+      }
+
+      for (let index = 0; index < confirmedLines.length; index++) {
+        const confirmed = confirmedLines[index];
+        const { game } = confirmed;
+        setPvpCreateStatus(
+          `Creating ${index + 1} of ${confirmedLines.length}: ${game.awayTeam} ${game.separator} ${game.homeTeam}...`
         );
 
         try {
-          const lineResponse = await fetch("/api/genesis/line", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              seasonId: season.id,
-              awayTeam: game.awayTeam,
-              homeTeam: game.homeTeam,
-              neutral: game.separator === "vs.",
-              stage: gameStage,
-              seasonYear,
-            }),
-          });
-
-          const lineResult = (await lineResponse.json()) as {
-            error?: string;
-            line?: GenesisLinePreview;
-            sync?: {
-              messagesScanned: number;
-              mode?: "full" | "incremental";
-              totalGames: number;
-              achievements: number;
-              lastSyncedAt: string;
-              settledPicks?: number;
-            };
-            leaderboardWarning?: string;
-          };
-
-          if (!lineResponse.ok || !lineResult.line) {
-            throw new Error(
-              lineResult.error ||
-                "Could not refresh Genesis history before creating the thread."
-            );
-          }
-
-          if (index === 0) setGenesisLine(lineResult.line);
-
           const response = await fetch("/api/discord/pvp-thread", {
             method: "POST",
             headers: {
@@ -1361,53 +1436,40 @@ export default function SeasonRoomPage() {
             },
             body: JSON.stringify({
               seasonId: season.id,
-              threadName,
+              threadName: confirmed.threadName,
               awayTeam: game.awayTeam,
               homeTeam: game.homeTeam,
               neutral: game.separator === "vs.",
-              stage: gameStage,
-              seasonYear,
+              stage: confirmed.stage,
+              seasonYear: confirmed.seasonYear,
+              awayLineOverride: confirmed.awayLineOverride,
               postStreamInstructions: postPvpStreamInstructions,
             }),
           });
 
           const result = (await response.json()) as {
             error?: string;
-            threadName?: string;
-            genesisRoleTagged?: boolean;
-            taggedPlayers?: number;
-            line?: GenesisLinePreview;
-            leaderboardChannelId?: string;
             leaderboardWarning?: string;
-            streamInstructionsPosted?: boolean;
             streamInstructionsWarning?: string;
             matchupHistoryWarning?: string;
           };
-
           if (!response.ok) {
             throw new Error(result.error || "Could not create the PvP thread.");
           }
 
-          createdCount++;
-
-          if (result.leaderboardWarning) {
-            warnings.push(
-              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.leaderboardWarning}`
-            );
-          }
-          if (result.streamInstructionsWarning) {
-            warnings.push(
-              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.streamInstructionsWarning}`
-            );
-          }
-          if (result.matchupHistoryWarning) {
-            warnings.push(
-              `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${result.matchupHistoryWarning}`
-            );
+          createdIds.add(game.id);
+          for (const warning of [
+            result.leaderboardWarning,
+            result.streamInstructionsWarning,
+            result.matchupHistoryWarning,
+          ]) {
+            if (warning) {
+              warnings.push(
+                `${game.awayTeam} ${game.separator} ${game.homeTeam}: ${warning}`
+              );
+            }
           }
 
-          // Remove successful rows immediately so a partial batch failure can
-          // be retried without accidentally recreating threads that succeeded.
           if (game.id === "primary") {
             setPvpAwayTeam("");
             setPvpHomeTeam("");
@@ -1427,35 +1489,21 @@ export default function SeasonRoomPage() {
         }
       }
 
+      setPendingPvpLines((current) =>
+        current.filter((pending) => !createdIds.has(pending.game.id))
+      );
       await loadRoomSeason(season.id);
 
-      if (createdCount > 0) {
-        let status = `✅ Created ${createdCount} of ${games.length} PvP thread${
-          games.length === 1 ? "" : "s"
-        }.`;
-        if (postPvpStreamInstructions) {
-          status += " /stream instructions were requested for each created game.";
-        }
-        if (failures.length) {
-          status += ` Failed: ${failures.join(" | ")}`;
-        }
-        if (warnings.length) {
-          status += ` Warnings: ${warnings.join(" | ")}`;
-        }
+      if (createdIds.size > 0) {
+        let status = `✅ Created ${createdIds.size} of ${confirmedLines.length} PvP thread${confirmedLines.length === 1 ? "" : "s"} with the confirmed lines.`;
+        if (failures.length) status += ` Failed: ${failures.join(" | ")}`;
+        if (warnings.length) status += ` Warnings: ${warnings.join(" | ")}`;
         setPvpCreateStatus(status);
       } else {
         setPvpCreateStatus(
-          failures.length
-            ? `Could not create the weekly PvP threads: ${failures.join(" | ")}`
-            : "Could not create the weekly PvP threads."
+          `Could not create the weekly PvP threads${failures.length ? `: ${failures.join(" | ")}` : "."}`
         );
       }
-    } catch (error) {
-      setPvpCreateStatus(
-        error instanceof Error
-          ? `Could not create the PvP threads: ${error.message}`
-          : "Could not create the PvP threads. Try again."
-      );
     } finally {
       setIsCreatingPvpThread(false);
     }
@@ -3688,8 +3736,9 @@ export default function SeasonRoomPage() {
               </label>
 
               <button
-                onClick={createPvpThread}
+                onClick={preparePvpThreads}
                 disabled={
+                  isPreparingPvpLines ||
                   isCreatingPvpThread ||
                   !allPvpGamesReady ||
                   !pvpStageLabel.trim() ||
@@ -3697,11 +3746,11 @@ export default function SeasonRoomPage() {
                 }
                 className="rounded-2xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {isCreatingPvpThread
-                  ? "Creating..."
+                {isPreparingPvpLines
+                  ? "Generating Lines..."
                   : pvpGamesToCreate.length > 1
-                    ? `Create All PvP Threads (${pvpGamesToCreate.length})`
-                    : "Create PvP Thread"}
+                    ? `Generate & Review All Lines (${pvpGamesToCreate.length})`
+                    : "Generate & Review Line"}
               </button>
 
               {pvpCreateStatus && (
@@ -3715,11 +3764,246 @@ export default function SeasonRoomPage() {
               )}
             </div>
 
+            {pendingPvpLines.length > 0 && (
+              <div className="mt-5 rounded-2xl border border-amber-300/40 bg-amber-300/10 p-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.18em] text-amber-200">
+                    Commissioner Line Confirmation
+                  </p>
+                  <h3 className="mt-1 text-lg font-black text-white">
+                    Review every line before creating Discord threads
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-300">
+                    The model suggestion is shown for reference. Your confirmed line is the exact line used for both picks and fake-money wagers.
+                  </p>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {pendingPvpLines.map((pending) => {
+                    const spread = Number(pending.spreadInput);
+                    const calculation = pending.line.calculation;
+                    const factor = (value: number) =>
+                      `${value >= 0 ? "+" : ""}${value.toFixed(1)}`;
+                    const validSpread =
+                      pending.favoriteSide === "pickem" ||
+                      (Number.isFinite(spread) &&
+                        spread >= 0.5 &&
+                        spread <= 100 &&
+                        Number.isInteger(spread * 2));
+                    const favoriteTeam =
+                      pending.favoriteSide === "away"
+                        ? pending.game.awayTeam
+                        : pending.favoriteSide === "home"
+                          ? pending.game.homeTeam
+                          : null;
+                    const confirmedDisplay = favoriteTeam
+                      ? validSpread
+                        ? `${favoriteTeam} -${spread.toFixed(1)}`
+                        : "Enter a valid spread"
+                      : "Pick'em";
+
+                    return (
+                      <div
+                        key={pending.game.id}
+                        className="rounded-xl border border-white/10 bg-slate-950/70 p-4"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div>
+                            <p className="font-black text-white">
+                              {pending.game.awayTeam} {pending.game.separator}{" "}
+                              {pending.game.homeTeam}
+                            </p>
+                            <p className="mt-1 text-xs font-semibold text-slate-400">
+                              Model suggestion: {pending.line.displayLine}
+                            </p>
+                          </div>
+                          <p className="rounded-full border border-amber-300/30 bg-amber-300/10 px-3 py-1 text-sm font-black text-amber-100">
+                            Confirmed: {confirmedDisplay}
+                          </p>
+                        </div>
+
+                        <div className="mt-4 rounded-xl border border-fuchsia-300/20 bg-fuchsia-300/5 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs font-black uppercase tracking-[0.16em] text-fuchsia-200">
+                              Model Line Worksheet
+                            </p>
+                            <p className="text-xs font-semibold text-slate-400">
+                              Positive favors {pending.game.awayTeam}; negative favors {pending.game.homeTeam}
+                            </p>
+                          </div>
+
+                          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                            <div className="rounded-lg border border-white/10 bg-slate-950/70 p-3">
+                              <p className="text-xs font-black text-white">
+                                {pending.game.awayTeam} ratings
+                              </p>
+                              <p className="mt-1 text-sm font-bold text-slate-300">
+                                OVR {calculation.awayRatings.overall} · OFF {calculation.awayRatings.offense} · DEF {calculation.awayRatings.defense}
+                              </p>
+                            </div>
+                            <div className="rounded-lg border border-white/10 bg-slate-950/70 p-3">
+                              <p className="text-xs font-black text-white">
+                                {pending.game.homeTeam} ratings
+                              </p>
+                              <p className="mt-1 text-sm font-bold text-slate-300">
+                                OVR {calculation.homeRatings.overall} · OFF {calculation.homeRatings.offense} · DEF {calculation.homeRatings.defense}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                            {[
+                              ["OVR ratings", calculation.overallRatingsComponent],
+                              ["OFF/DEF matchup", calculation.offenseDefenseMatchupComponent],
+                              ["Team form", calculation.teamFormComponent],
+                              ["Coach PvP form", calculation.coachPvpFormComponent],
+                              ["Direct PvP", calculation.directPvpComponent],
+                              ["Postseason", calculation.postseasonComponent],
+                              ["CPU losses", calculation.cpuLossComponent],
+                              ["Home field", calculation.homeFieldComponent],
+                            ].map(([label, value]) => (
+                              <div
+                                key={String(label)}
+                                className="rounded-lg border border-white/10 bg-slate-950/60 px-3 py-2"
+                              >
+                                <p className="text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                  {String(label)}
+                                </p>
+                                <p
+                                  className={`mt-1 text-base font-black ${
+                                    Number(value) > 0
+                                      ? "text-cyan-300"
+                                      : Number(value) < 0
+                                        ? "text-amber-300"
+                                        : "text-slate-300"
+                                  }`}
+                                >
+                                  {factor(Number(value))}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="mt-3 rounded-lg border border-cyan-300/20 bg-cyan-300/5 px-3 py-2 text-xs font-semibold text-slate-300">
+                            <span className="font-black text-cyan-200">Model equation:</span>{" "}
+                            ratings {factor(pending.line.ratingMargin)} + history{" "}
+                            {factor(calculation.historyAfterCap)}
+                            {calculation.historyBeforeCap !== calculation.historyAfterCap
+                              ? ` (capped from ${factor(calculation.historyBeforeCap)})`
+                              : ""}{" "}
+                            + home field {factor(calculation.homeFieldComponent)} ={" "}
+                            <strong className="text-white">
+                              {factor(calculation.finalAwayMargin)} from {pending.game.awayTeam}&apos;s perspective
+                            </strong>
+                          </div>
+
+                          <div className="mt-3 flex flex-wrap gap-x-5 gap-y-1 text-xs font-semibold text-slate-300">
+                            <span>
+                              Raw model margin: <strong className="text-white">{factor(calculation.finalAwayMargin)}</strong>
+                            </span>
+                            <span>
+                              Projected score: <strong className="text-white">{pending.line.awayTeam} {pending.line.projectedAwayScore} – {pending.line.homeTeam} {pending.line.projectedHomeScore}</strong>
+                            </span>
+                            <span>
+                              Confidence: <strong className="text-white">{pending.line.confidence} ({pending.line.confidenceScore}%)</strong>
+                            </span>
+                            <span>
+                              Relevant games: <strong className="text-white">{pending.line.historyGamesUsed}</strong>
+                            </span>
+                          </div>
+
+                          {pending.line.notes.length > 0 && (
+                            <ul className="mt-3 space-y-1 border-t border-white/10 pt-3 text-xs text-slate-400">
+                              {pending.line.notes.map((note) => (
+                                <li key={note}>• {note}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+
+                        <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_160px]">
+                          <label className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                            Favorite
+                            <select
+                              value={pending.favoriteSide}
+                              onChange={(event) => {
+                                const favoriteSide = event.target.value as
+                                  | "away"
+                                  | "home"
+                                  | "pickem";
+                                setPendingPvpLines((current) =>
+                                  current.map((item) =>
+                                    item.game.id === pending.game.id
+                                      ? { ...item, favoriteSide }
+                                      : item
+                                  )
+                                );
+                              }}
+                              className="mt-1 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold normal-case tracking-normal text-white"
+                            >
+                              <option value="away">{pending.game.awayTeam}</option>
+                              <option value="home">{pending.game.homeTeam}</option>
+                              <option value="pickem">Pick&apos;em</option>
+                            </select>
+                          </label>
+
+                          <label className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                            Spread
+                            <input
+                              type="number"
+                              min="0.5"
+                              max="100"
+                              step="0.5"
+                              disabled={pending.favoriteSide === "pickem"}
+                              value={pending.spreadInput}
+                              onChange={(event) => {
+                                const spreadInput = event.target.value;
+                                setPendingPvpLines((current) =>
+                                  current.map((item) =>
+                                    item.game.id === pending.game.id
+                                      ? { ...item, spreadInput }
+                                      : item
+                                  )
+                                );
+                              }}
+                              className="mt-1 w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm font-bold normal-case tracking-normal text-white disabled:cursor-not-allowed disabled:opacity-40"
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    onClick={confirmCreatePvpThreads}
+                    disabled={isCreatingPvpThread || isPreparingPvpLines}
+                    className="rounded-xl bg-green-400 px-4 py-2.5 text-sm font-black text-slate-950 transition hover:bg-green-300 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {isCreatingPvpThread
+                      ? "Creating Threads..."
+                      : `Confirm Lines & Create Thread${pendingPvpLines.length === 1 ? "" : "s"}`}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setPendingPvpLines([]);
+                      setPvpCreateStatus("Line review canceled. No Discord threads were created.");
+                    }}
+                    disabled={isCreatingPvpThread}
+                    className="rounded-xl border border-white/15 bg-white/5 px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
             {activeGenesisMatchups.length > 0 && (
               <div className="mt-6 border-t border-white/10 pt-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-base font-black text-white">🏈 This Week's Genesis Games</h3>
+                    <h3 className="text-base font-black text-white">🏈 This Week&apos;s Genesis Games</h3>
                     <p className="mt-1 text-xs text-slate-400">
                       Finalized games stay here until you advance the week so scores can be corrected if needed. Open games can still be scheduled, locked, voided, or remade.
                     </p>

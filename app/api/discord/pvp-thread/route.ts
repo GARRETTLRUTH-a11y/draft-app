@@ -10,6 +10,7 @@ import {
   buildGenesisLine,
   buildGenesisMatchupHistoryCard,
   genesisStarterMessage,
+  withGenesisAwayLine,
 } from "@/lib/genesisLines";
 import { formatWeekLabel, type SeasonData } from "@/lib/season";
 import {
@@ -29,6 +30,7 @@ type PvpThreadPayload = {
   neutral?: boolean;
   stage?: string;
   seasonYear?: number;
+  awayLineOverride?: number;
   postStreamInstructions?: boolean;
 };
 
@@ -114,7 +116,7 @@ export async function POST(request: Request) {
     // second Discord/OpenAI history pass while the user is waiting.
     let nextSeasonData = seasonData;
 
-    const line =
+    const generatedLine =
       awayTeam && homeTeam
         ? {
             ...buildGenesisLine(
@@ -127,6 +129,22 @@ export async function POST(request: Request) {
             seasonYear,
           }
         : undefined;
+    const rawAwayLineOverride = payload.awayLineOverride;
+    if (
+      rawAwayLineOverride != null &&
+      (!Number.isFinite(rawAwayLineOverride) ||
+        Math.abs(rawAwayLineOverride) > 100 ||
+        !Number.isInteger(rawAwayLineOverride * 2))
+    ) {
+      return NextResponse.json(
+        { error: "The confirmed line must be between -100 and +100 in half-point increments." },
+        { status: 400 }
+      );
+    }
+    const line =
+      generatedLine && rawAwayLineOverride != null
+        ? withGenesisAwayLine(generatedLine, rawAwayLineOverride)
+        : generatedLine;
 
     const matchupId = crypto.randomUUID().replace(/-/g, "").slice(0, 12);
     const pickComponents =
@@ -135,7 +153,7 @@ export async function POST(request: Request) {
         : [];
 
     const starterMessage = line
-      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick:** choose a side below. 🔒 Your selection locks immediately.\n🚫 If your team is playing in this matchup, you cannot make a Genesis pick on this game.`
+      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick and wager:** choose a side, then enter a whole-dollar wager from your available **$500 starting bankroll**. 🔒 Your side and wager lock immediately.\n👀 **Public wagers:** after submission, your selected side and exact wager amount appear in the shared picks-and-wagers summary for everyone.\n💵 **Bankroll recovery:** your actual league team earns you **+$25 for a PvP win** or **+$5 for a CPU win**.\n🚫 If your team is playing in this matchup, you cannot wager on this game.`
       : undefined;
 
     const mappedAwayRoleId = awayTeam
@@ -237,6 +255,8 @@ export async function POST(request: Request) {
         ...nextSeasonData,
         genesisPicks: {
           ...currentPicks,
+          bankrollStartedAt:
+            currentPicks.bankrollStartedAt || new Date().toISOString(),
           matchups: [...currentPicks.matchups, summary.matchup],
         },
       };

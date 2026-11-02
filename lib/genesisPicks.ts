@@ -15,6 +15,7 @@ import { PVP_PARENT_CHANNEL_ID } from "@/lib/discordPvpThreads";
 
 const DISCORD_API_BASE = "https://discord.com/api/v10";
 const LEADERBOARD_CHANNEL_NAME = "genesis-picks";
+export const GENESIS_STARTING_BANKROLL = 500;
 
 async function discordApi(path: string, init: RequestInit = {}) {
   const botToken = process.env.DISCORD_BOT_TOKEN;
@@ -235,7 +236,7 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
     : `Season: **${matchup.seasonYear}**`;
 
   const lines = [
-    "🎯 **GENESIS PICKS**",
+    "🎯 **GENESIS PUBLIC PICKS & WAGERS**",
     `**${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}**`,
     stageLine,
     statusLine,
@@ -258,11 +259,18 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
         .replace(/[\`*_~|>]/g, "")
         .slice(0, 40);
 
-      lines.push(`• ${username} — **${team} ${lineText}**`);
+      const wagerText =
+        typeof pick.wager === "number" && pick.wager > 0
+          ? ` · **$${pick.wager}** wager`
+          : "";
+      lines.push(`• ${username} — **${team} ${lineText}**${wagerText}`);
     }
   }
 
-  lines.push("", "_This message updates in place to reduce notifications._");
+  lines.push(
+    "",
+    "_All submitted sides and wager amounts are public to the league. This message updates in place to reduce notifications._"
+  );
   return lines.join("\n").slice(0, 2000);
 }
 
@@ -842,25 +850,50 @@ export function saveGenesisPick(
   seasonData: SeasonData,
   matchupId: string,
   pick: GenesisPick
-) {
+):
+  | { ok: false; error: string }
+  | {
+      ok: true;
+      seasonData: SeasonData;
+      previous: GenesisPick | undefined;
+      matchup: GenesisPickMatchup;
+    } {
   const state: GenesisPicksState = seasonData.genesisPicks || { matchups: [] };
   const matchup = state.matchups.find((item) => item.id === matchupId);
 
   if (!matchup) {
-    return { error: "That Genesis matchup could not be found." } as const;
+    return { ok: false, error: "That Genesis matchup could not be found." };
   }
 
   if (matchup.status === "locked") {
-    return { error: "Picks are closed because this game has started." } as const;
+    return { ok: false, error: "Picks are closed because this game has started." };
   }
   if (matchup.status === "settled") {
-    return { error: "Picks are closed because this matchup is already final." } as const;
+    return { ok: false, error: "Picks are closed because this matchup is already final." };
   }
   if (matchup.status === "voided") {
-    return { error: "This Genesis line was voided, so picks no longer count." } as const;
+    return { ok: false, error: "This Genesis line was voided, so picks no longer count." };
   }
 
   const previous = matchup.picks[pick.discordUserId];
+  if (previous) {
+    return { ok: false, error: "Your pick and wager for this matchup are already locked." };
+  }
+
+  if (!Number.isInteger(pick.wager) || (pick.wager || 0) <= 0) {
+    return { ok: false, error: "Enter a whole-dollar wager of at least $1." };
+  }
+
+  const availableBankroll = genesisAvailableBankroll(
+    seasonData,
+    pick.discordUserId
+  );
+  if ((pick.wager || 0) > availableBankroll) {
+    return {
+      ok: false,
+      error: `That wager exceeds your available $${availableBankroll} bankroll.`,
+    };
+  }
 
   const matchups = state.matchups.map((item) =>
     item.id === matchupId
@@ -875,16 +908,18 @@ export function saveGenesisPick(
   );
 
   return {
+    ok: true,
     seasonData: {
       ...seasonData,
       genesisPicks: {
         ...state,
+        bankrollStartedAt: state.bankrollStartedAt || pick.pickedAt,
         matchups,
       },
     },
     previous,
     matchup,
-  } as const;
+  };
 }
 
 function orientFinalScore(game: GenesisHistoricalGame, matchup: GenesisPickMatchup) {
@@ -994,6 +1029,144 @@ type LeaderboardRow = {
   accuracy: number;
 };
 
+export type GenesisBankrollRow = {
+  discordUserId: string;
+  discordUsername: string;
+  bankroll: number;
+  profitLoss: number;
+  winBonuses: number;
+  cpuWins: number;
+  pvpWins: number;
+  pendingWagers: number;
+  availableBankroll: number;
+  settledWagers: number;
+};
+
+export function genesisBankrollRows(
+  seasonData: SeasonData
+): GenesisBankrollRow[] {
+  const state: GenesisPicksState = seasonData.genesisPicks || { matchups: [] };
+  const rows = new Map<string, GenesisBankrollRow>();
+  const teamAssignments = new Map<
+    string,
+    { team: string; pickedAt: string }[]
+  >();
+
+  for (const matchup of state.matchups) {
+    for (const pick of Object.values(matchup.picks || {})) {
+      const row =
+        rows.get(pick.discordUserId) ||
+        {
+          discordUserId: pick.discordUserId,
+          discordUsername: pick.discordUsername,
+          bankroll: GENESIS_STARTING_BANKROLL,
+          profitLoss: 0,
+          winBonuses: 0,
+          cpuWins: 0,
+          pvpWins: 0,
+          pendingWagers: 0,
+          availableBankroll: GENESIS_STARTING_BANKROLL,
+          settledWagers: 0,
+        };
+
+      row.discordUsername = pick.discordUsername || row.discordUsername;
+      if (pick.team?.trim()) {
+        const assignments = teamAssignments.get(pick.discordUserId) || [];
+        assignments.push({ team: pick.team.trim(), pickedAt: pick.pickedAt });
+        teamAssignments.set(pick.discordUserId, assignments);
+      }
+      const wager =
+        typeof pick.wager === "number" && Number.isFinite(pick.wager)
+          ? Math.max(0, Math.floor(pick.wager))
+          : 0;
+
+      if (wager > 0 && matchup.status === "settled" && matchup.atsWinner) {
+        row.settledWagers++;
+        if (matchup.atsWinner !== "push") {
+          row.profitLoss += pick.side === matchup.atsWinner ? wager : -wager;
+        }
+      } else if (
+        wager > 0 &&
+        (matchup.status === "open" || matchup.status === "locked")
+      ) {
+        row.pendingWagers += wager;
+      }
+
+      rows.set(pick.discordUserId, row);
+    }
+  }
+
+  for (const assignments of teamAssignments.values()) {
+    assignments.sort((a, b) => a.pickedAt.localeCompare(b.pickedAt));
+  }
+
+  const bankrollStartedMs = state.bankrollStartedAt
+    ? new Date(state.bankrollStartedAt).getTime()
+    : Number.NaN;
+  const countedGames = new Set<string>();
+
+  if (Number.isFinite(bankrollStartedMs)) {
+    for (const game of seasonData.genesisHistory?.games || []) {
+      if (countedGames.has(game.id)) continue;
+      countedGames.add(game.id);
+      if (game.gameType !== "cpu" && game.gameType !== "pvp") continue;
+      if (game.scoreA === game.scoreB || !game.sourceTimestamp) continue;
+
+      const gameMs = new Date(game.sourceTimestamp).getTime();
+      if (!Number.isFinite(gameMs) || gameMs < bankrollStartedMs) continue;
+      const winningTeam = game.scoreA > game.scoreB ? game.teamA : game.teamB;
+
+      for (const row of rows.values()) {
+        const assignments = teamAssignments.get(row.discordUserId) || [];
+        const activeTeam = [...assignments]
+          .reverse()
+          .find((assignment) => {
+            const assignedMs = new Date(assignment.pickedAt).getTime();
+            return Number.isFinite(assignedMs) && assignedMs <= gameMs;
+          })?.team;
+        if (!activeTeam || normalize(activeTeam) !== normalize(winningTeam)) {
+          continue;
+        }
+
+        if (game.gameType === "pvp") {
+          row.pvpWins++;
+          row.winBonuses += 25;
+        } else {
+          row.cpuWins++;
+          row.winBonuses += 5;
+        }
+      }
+    }
+  }
+
+  for (const row of rows.values()) {
+    row.bankroll =
+      GENESIS_STARTING_BANKROLL + row.profitLoss + row.winBonuses;
+    row.availableBankroll = Math.max(0, row.bankroll - row.pendingWagers);
+  }
+
+  return [...rows.values()].sort(
+    (a, b) =>
+      b.bankroll - a.bankroll ||
+      b.winBonuses - a.winBonuses ||
+      b.profitLoss - a.profitLoss ||
+      b.settledWagers - a.settledWagers ||
+      a.discordUsername.localeCompare(b.discordUsername)
+  );
+}
+
+export function genesisAvailableBankroll(
+  seasonData: SeasonData,
+  discordUserId: string
+) {
+  const state = seasonData.genesisPicks || { matchups: [] };
+  return (
+    genesisBankrollRows({ ...seasonData, genesisPicks: state }).find(
+      (row) => row.discordUserId === discordUserId
+    )?.availableBankroll ?? GENESIS_STARTING_BANKROLL
+  );
+}
+
 function leaderboardRows(state: GenesisPicksState): LeaderboardRow[] {
   const rows = new Map<string, LeaderboardRow>();
 
@@ -1067,7 +1240,7 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
 
   const lines = [
     "🏆 **GENESIS PICKS LEADERBOARD**",
-    "*Against-the-spread accuracy using the locked Genesis Line*",
+    "*Accuracy using the locked Genesis Line*",
     "",
   ];
 
@@ -1093,6 +1266,49 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
       ? `Leaderboard minimum: **${minimumPicks}** graded pick${minimumPicks === 1 ? "" : "s"} — at least one-third of ${gradedMatchupCount} completed pick opportunit${gradedMatchupCount === 1 ? "y" : "ies"}, rounded up.`
       : "Leaderboard minimum begins once a matchup is graded.",
     "Pushes do not count toward accuracy. Voided matchups do not count at all."
+  );
+
+  return lines.join("\n").slice(0, 2000);
+}
+
+export function buildGenesisBankrollLeaderboardContent(
+  seasonData: SeasonData
+) {
+  const state = seasonData.genesisPicks || { matchups: [] };
+  const rows = genesisBankrollRows({ ...seasonData, genesisPicks: state });
+  const lines = [
+    "💰 **GENESIS BANKROLL LEADERBOARD**",
+    `*Fake money — every player starts with $${GENESIS_STARTING_BANKROLL}*`,
+    "",
+  ];
+
+  if (!rows.length) {
+    lines.push("No wagers yet.");
+  } else {
+    rows.slice(0, 25).forEach((row, index) => {
+      const profitText =
+        row.profitLoss === 0
+          ? "$0"
+          : `${row.profitLoss > 0 ? "+" : "-"}$${Math.abs(row.profitLoss)}`;
+      const pendingText =
+        row.pendingWagers > 0
+          ? ` · **$${row.availableBankroll} available** · $${row.pendingWagers} pending`
+          : "";
+      const bonusText =
+        row.winBonuses > 0
+          ? ` · $${row.winBonuses} win bonus (${row.pvpWins} PvP, ${row.cpuWins} CPU)`
+          : "";
+      lines.push(
+        `**${index + 1}.** <@${row.discordUserId}> — **$${row.bankroll}** (${profitText} wagers)${bonusText}${pendingText}`
+      );
+    });
+  }
+
+  lines.push(
+    "",
+    "ATS wagers pay even money. Wins add the wager, losses subtract it, and pushes or voided games return it.",
+    "Bankroll recovery: +$25 for a PvP win and +$5 for a CPU win after bankroll play begins.",
+    "Open wagers reserve bankroll until the game is settled or voided."
   );
 
   return lines.join("\n").slice(0, 2000);
@@ -1180,55 +1396,74 @@ export async function syncGenesisLeaderboard(
   }
 
   const channelId = channelResult.channel.id;
-  const content = buildGenesisLeaderboardContent({
+  const leaderboardSeasonData = {
     ...seasonData,
     genesisPicks: {
       ...state,
       leaderboardChannelId: channelId,
     },
-  });
+  } satisfies SeasonData;
 
-  let messageId = state.leaderboardMessageId;
+  async function upsertMessage(
+    existingMessageId: string | undefined,
+    content: string,
+    label: string
+  ): Promise<{ messageId?: string; warning?: string }> {
+    let messageId = existingMessageId;
 
-  if (messageId) {
-    const editResponse = await discordApi(
-      `/channels/${channelId}/messages/${messageId}`,
-      {
-        method: "PATCH",
+    if (messageId) {
+      const editResponse = await discordApi(
+        `/channels/${channelId}/messages/${messageId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            content,
+            allowed_mentions: { parse: [] as string[] },
+          }),
+        }
+      );
+
+      if (!editResponse.ok) messageId = undefined;
+    }
+
+    if (!messageId) {
+      const postResponse = await discordApi(`/channels/${channelId}/messages`, {
+        method: "POST",
         body: JSON.stringify({
           content,
           allowed_mentions: { parse: [] as string[] },
         }),
+      });
+
+      if (!postResponse.ok) {
+        const body = await postResponse.text();
+        return {
+          warning:
+            `Could not post the Genesis ${label} leaderboard in <#${channelId}>: ` +
+            (body || postResponse.statusText),
+        };
       }
-    );
 
-    if (!editResponse.ok) {
-      messageId = undefined;
-    }
-  }
-
-  if (!messageId) {
-    const postResponse = await discordApi(`/channels/${channelId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        allowed_mentions: { parse: [] as string[] },
-      }),
-    });
-
-    if (!postResponse.ok) {
-      const body = await postResponse.text();
-      return {
-        seasonData,
-        warning:
-          `Could not post the Genesis picks leaderboard in <#${channelId}>: ` +
-          (body || postResponse.statusText),
-      };
+      const message = (await postResponse.json()) as { id: string };
+      messageId = message.id;
     }
 
-    const message = (await postResponse.json()) as { id: string };
-    messageId = message.id;
+    return { messageId };
   }
+
+  const accuracyResult = await upsertMessage(
+    state.leaderboardMessageId,
+    buildGenesisLeaderboardContent(leaderboardSeasonData),
+    "accuracy"
+  );
+  const bankrollResult = await upsertMessage(
+    state.bankrollLeaderboardMessageId,
+    buildGenesisBankrollLeaderboardContent(leaderboardSeasonData),
+    "bankroll"
+  );
+  const warnings = [accuracyResult.warning, bankrollResult.warning].filter(
+    (warning): warning is string => Boolean(warning)
+  );
 
   return {
     seasonData: {
@@ -1236,8 +1471,12 @@ export async function syncGenesisLeaderboard(
       genesisPicks: {
         ...state,
         leaderboardChannelId: channelId,
-        leaderboardMessageId: messageId,
+        leaderboardMessageId:
+          accuracyResult.messageId || state.leaderboardMessageId,
+        bankrollLeaderboardMessageId:
+          bankrollResult.messageId || state.bankrollLeaderboardMessageId,
       },
     },
+    warning: warnings.length ? warnings.join(" ") : undefined,
   };
 }

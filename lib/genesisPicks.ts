@@ -255,15 +255,16 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
         signedLine === 0
           ? "PK"
           : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
-      const username = (pick.discordUsername || "Discord user")
-        .replace(/[\`*_~|>]/g, "")
-        .slice(0, 40);
-
       const wagerText =
         typeof pick.wager === "number" && pick.wager > 0
           ? ` · **$${pick.wager}** wager`
           : "";
-      lines.push(`• ${username} — **${team} ${lineText}**${wagerText}`);
+      // A non-pinging Discord mention renders with the member's current
+      // nickname in this server. This also upgrades older saved picks that
+      // only contain the account username without rewriting season history.
+      lines.push(
+        `• <@${pick.discordUserId}> — **${team} ${lineText}**${wagerText}`
+      );
     }
   }
 

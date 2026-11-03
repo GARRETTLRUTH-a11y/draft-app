@@ -876,6 +876,14 @@ export async function POST(request: Request) {
   const discordUser = interaction.member?.user ?? interaction.user;
   const discordUserId = discordUser?.id;
   const discordUsername = discordUser?.username;
+  // In a guild interaction Discord includes the member's server nickname.
+  // Keep that league-facing name with the pick instead of exposing the
+  // account username; global display name is the next-best fallback.
+  const discordDisplayName =
+    interaction.member?.nick?.trim() ||
+    discordUser?.global_name?.trim() ||
+    discordUsername ||
+    "Discord user";
 
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -1620,7 +1628,7 @@ export async function POST(request: Request) {
       for (let attempt = 0; attempt < 5; attempt++) {
         const saved = saveGenesisPick(candidateSeasonData, matchupId, {
           discordUserId,
-          discordUsername: discordUsername || "Discord user",
+          discordUsername: discordDisplayName,
           side: rawSide,
           team: wagerTeam,
           wager,

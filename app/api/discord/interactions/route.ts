@@ -1864,6 +1864,7 @@ export async function POST(request: Request) {
 
       await postGenesisFinalToThread({
         matchup: settled.matchup,
+        seasonData: nextSeasonData,
         awayScore,
         homeScore,
         atsWinner: settled.atsWinner,

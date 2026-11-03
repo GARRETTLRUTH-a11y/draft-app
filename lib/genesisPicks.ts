@@ -807,6 +807,7 @@ export async function postGenesisFinalScorePrompt(
 
 export async function postGenesisFinalToThread(input: {
   matchup: GenesisPickMatchup;
+  seasonData: SeasonData;
   awayScore: number;
   homeScore: number;
   atsWinner: GenesisPickSide | "push";
@@ -818,6 +819,86 @@ export async function postGenesisFinalToThread(input: {
       : input.atsWinner === "away"
         ? input.matchup.awayTeam
         : input.matchup.homeTeam;
+
+  const bankrolls = new Map(
+    genesisBankrollRows(input.seasonData).map((row) => [
+      row.discordUserId,
+      row,
+    ])
+  );
+  const wagerResults = Object.values(input.matchup.picks || {})
+    .filter(
+      (pick) =>
+        typeof pick.wager === "number" &&
+        Number.isFinite(pick.wager) &&
+        pick.wager > 0
+    )
+    .map((pick) => {
+      const wager = Math.floor(pick.wager!);
+      const result =
+        input.atsWinner === "push"
+          ? "push"
+          : pick.side === input.atsWinner
+            ? "win"
+            : "loss";
+      const balance = bankrolls.get(pick.discordUserId)?.bankroll;
+      const team =
+        pick.side === "away"
+          ? input.matchup.awayTeam
+          : input.matchup.homeTeam;
+      const signedLine =
+        pick.side === "away"
+          ? input.matchup.awayLine
+          : -input.matchup.awayLine;
+      const spread =
+        signedLine === 0
+          ? "PK"
+          : `${signedLine > 0 ? "+" : ""}${signedLine.toFixed(1)}`;
+      const change =
+        result === "win" ? `+$${wager}` : result === "loss" ? `-$${wager}` : "$0";
+
+      return {
+        pick,
+        result,
+        line: `<@${pick.discordUserId}> — **${team} ${spread}** · **${change}** · New balance: **$${balance ?? GENESIS_STARTING_BANKROLL}**`,
+      };
+    });
+
+  const resultEmbeds = [
+    {
+      result: "win",
+      title: "🟢 Winning Wagers",
+      color: 0x22c55e,
+    },
+    {
+      result: "loss",
+      title: "🔴 Losing Wagers",
+      color: 0xef4444,
+    },
+    {
+      result: "push",
+      title: "🟡 Pushes — Wager Returned",
+      color: 0xfacc15,
+    },
+  ]
+    .map((section) => {
+      const lines = wagerResults
+        .filter((entry) => entry.result === section.result)
+        .map((entry) => entry.line);
+      return lines.length
+        ? {
+            title: section.title,
+            color: section.color,
+            description: lines.join("\n").slice(0, 4096),
+          }
+        : null;
+    })
+    .filter(
+      (
+        embed
+      ): embed is { title: string; color: number; description: string } =>
+        embed !== null
+    );
 
   const response = await discordApi(
     `/channels/${input.matchup.threadId}/messages`,
@@ -836,7 +917,11 @@ export async function postGenesisFinalToThread(input: {
             ? "The corrected score has been re-graded and the Genesis Picks leaderboard recalculated."
             : "🔒 Picks are closed. The Genesis Picks leaderboard has been updated.",
           "This final is now included in Genesis performance history for future lines.",
+          wagerResults.length
+            ? "Wager results and updated balances are shown below."
+            : "No fake-money wagers were placed on this matchup.",
         ].join("\n"),
+        embeds: resultEmbeds,
         allowed_mentions: { parse: [] as string[] },
       }),
     }

@@ -99,6 +99,12 @@ export type GenesisPickMatchup = {
   // Signed from the away team's perspective: -4.5 means away -4.5,
   // +4.5 means away +4.5, 0 means pick'em.
   awayLine: number;
+  // Preserve the model's opening suggestion before the commissioner confirms
+  // or changes the public wagering line.
+  modelDisplayLine?: string;
+  modelAwayLine?: number;
+  lineConfirmedAt?: string;
+  isGameOfWeek?: boolean;
   status: "open" | "locked" | "settled" | "voided";
   picks: Record<string, GenesisPick>;
   starterMessageId?: string;
@@ -130,6 +136,12 @@ export type GenesisPicksState = {
   leaderboardChannelId?: string;
   leaderboardMessageId?: string;
   bankrollLeaderboardMessageId?: string;
+  // Eastern date of the last automatic Monday recap. This keeps the
+  // five-minute cron runner from posting the same recap more than once.
+  weeklyRecapLastSentDate?: string;
+  seasonTrophiesMessageId?: string;
+  seasonTrophiesSeasonYear?: number;
+  seasonTrophiesPostedAt?: string;
 };
 
 export type ExtensionStatus = "pending" | "granted" | "denied";

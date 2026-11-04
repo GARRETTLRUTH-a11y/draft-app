@@ -183,6 +183,7 @@ type PendingPvpLine = {
   line: GenesisLinePreview;
   favoriteSide: "away" | "home" | "pickem";
   spreadInput: string;
+  isGameOfWeek: boolean;
 };
 
 type DiscordRoleOption = {
@@ -1350,6 +1351,7 @@ export default function SeasonRoomPage() {
           line: lineResult.line,
           favoriteSide,
           spreadInput: lineResult.line.spread.toFixed(1),
+          isGameOfWeek: false,
         });
       }
 
@@ -1443,6 +1445,7 @@ export default function SeasonRoomPage() {
               stage: confirmed.stage,
               seasonYear: confirmed.seasonYear,
               awayLineOverride: confirmed.awayLineOverride,
+              isGameOfWeek: confirmed.isGameOfWeek,
               postStreamInstructions: postPvpStreamInstructions,
             }),
           });
@@ -1892,6 +1895,7 @@ export default function SeasonRoomPage() {
         atsWinner?: "away" | "home" | "push";
         corrected?: boolean;
         leaderboardWarning?: string;
+        trophyWarning?: string;
       };
 
       if (!response.ok) {
@@ -1908,8 +1912,8 @@ export default function SeasonRoomPage() {
 
       setGenesisFinalizeStatus(
         result.corrected
-          ? `✅ Final score corrected. Picks re-graded, #genesis-picks recalculated, and the corrected result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
-          : `✅ Game finalized. Picks locked and graded, #genesis-picks updated, and the result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : "."}`
+          ? `✅ Final score corrected. Picks re-graded, #genesis-picks recalculated, and the corrected result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ""}${result.trophyWarning ? `. Trophy warning: ${result.trophyWarning}` : "."}`
+          : `✅ Game finalized. Picks locked and graded, #genesis-picks updated, and the result saved for future lines${result.leaderboardWarning ? `. Leaderboard warning: ${result.leaderboardWarning}` : ""}${result.trophyWarning ? `. Trophy warning: ${result.trophyWarning}` : "."}`
       );
     } catch (error) {
       setGenesisFinalizeStatus(
@@ -3970,6 +3974,36 @@ export default function SeasonRoomPage() {
                             />
                           </label>
                         </div>
+
+                        <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-xl border border-yellow-300/25 bg-yellow-300/[0.06] p-3 text-sm text-slate-200">
+                          <input
+                            type="checkbox"
+                            checked={pending.isGameOfWeek}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setPendingPvpLines((current) =>
+                                current.map((item) => ({
+                                  ...item,
+                                  isGameOfWeek:
+                                    item.game.id === pending.game.id
+                                      ? checked
+                                      : checked
+                                        ? false
+                                        : item.isGameOfWeek,
+                                }))
+                              );
+                            }}
+                            className="mt-0.5 h-4 w-4 accent-yellow-300"
+                          />
+                          <span>
+                            <span className="font-black text-yellow-200">
+                              Make this the Game of the Week
+                            </span>
+                            <span className="mt-0.5 block text-xs text-slate-400">
+                              Highlights this matchup in its Discord thread, public picks summary, Monday recap, and season trophies. Selecting it removes the designation from the other games in this batch.
+                            </span>
+                          </span>
+                        </label>
                       </div>
                     );
                   })}
@@ -4063,6 +4097,11 @@ export default function SeasonRoomPage() {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <p className="font-black text-white">
+                              {matchup.isGameOfWeek && (
+                                <span className="mr-2 rounded-full border border-yellow-300/30 bg-yellow-300/10 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-yellow-200">
+                                  ⭐ Game of the Week
+                                </span>
+                              )}
                               {matchup.awayTeam} {matchup.neutral ? "vs." : "@"} {matchup.homeTeam}
                             </p>
                             <p className="mt-1 text-xs font-semibold text-cyan-200">
@@ -4071,6 +4110,11 @@ export default function SeasonRoomPage() {
                             <p className="mt-1 text-xs text-slate-400">
                               Locked line: {matchup.displayLine} · {pickCount} pick{pickCount === 1 ? "" : "s"} submitted
                             </p>
+                            {matchup.modelDisplayLine && (
+                              <p className="mt-1 text-xs font-semibold text-fuchsia-200">
+                                📈 Line movement: Model {matchup.modelDisplayLine} → Final {matchup.displayLine}
+                              </p>
+                            )}
                             {matchup.scheduledKickoffAt && (
                               <p className="mt-1 text-xs font-semibold text-cyan-200">
                                 ⏰ Kickoff: {formatKickoffInTimeZone(

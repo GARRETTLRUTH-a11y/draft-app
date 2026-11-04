@@ -182,6 +182,11 @@ export function signedAwayLine(line: GenesisLineResult) {
     : line.spread;
 }
 
+export function genesisLineMovementText(matchup: GenesisPickMatchup) {
+  if (!matchup.modelDisplayLine) return null;
+  return `Model: ${matchup.modelDisplayLine} → Final: ${matchup.displayLine}`;
+}
+
 export function buildGenesisPickComponents(
   seasonId: string,
   matchupId: string,
@@ -236,10 +241,15 @@ function genesisPickSummaryContent(matchup: GenesisPickMatchup) {
     : `Season: **${matchup.seasonYear}**`;
 
   const lines = [
-    "🎯 **GENESIS PUBLIC PICKS & WAGERS**",
+    matchup.isGameOfWeek
+      ? "⭐ **GENESIS GAME OF THE WEEK — PUBLIC PICKS & WAGERS**"
+      : "🎯 **GENESIS PUBLIC PICKS & WAGERS**",
     `**${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}**`,
     stageLine,
     statusLine,
+    ...(genesisLineMovementText(matchup)
+      ? [`📈 ${genesisLineMovementText(matchup)}`]
+      : []),
     "",
   ];
 
@@ -602,6 +612,8 @@ export function createGenesisPickMatchup(input: {
   seasonWeek?: number;
   stage?: string;
   line: GenesisLineResult;
+  modelLine?: GenesisLineResult;
+  isGameOfWeek?: boolean;
   starterMessageId?: string;
   scheduledKickoffAt?: string;
   autoLockAtKickoff?: boolean;
@@ -621,6 +633,10 @@ export function createGenesisPickMatchup(input: {
     favorite: input.line.favorite,
     spread: input.line.spread,
     awayLine: signedAwayLine(input.line),
+    modelDisplayLine: input.modelLine?.displayLine || input.line.displayLine,
+    modelAwayLine: signedAwayLine(input.modelLine || input.line),
+    lineConfirmedAt: input.createdAt,
+    isGameOfWeek: input.isGameOfWeek,
     starterMessageId: input.starterMessageId,
     scheduledKickoffAt: input.scheduledKickoffAt,
     autoLockAtKickoff: input.autoLockAtKickoff,
@@ -908,11 +924,15 @@ export async function postGenesisFinalToThread(input: {
       body: JSON.stringify({
         content: [
           input.corrected ? "✏️ **GENESIS FINAL CORRECTED**" : "🏁 **GENESIS FINAL**",
+          ...(input.matchup.isGameOfWeek ? ["⭐ **GAME OF THE WEEK**"] : []),
           `**${input.matchup.awayTeam} ${input.awayScore} – ${input.matchup.homeTeam} ${input.homeScore}**`,
           input.matchup.stage?.trim()
             ? `Stage: **${input.matchup.stage.trim()}, ${input.matchup.seasonYear}**`
             : `Season: **${input.matchup.seasonYear}**`,
           `Locked line: **${input.matchup.displayLine}**`,
+          ...(genesisLineMovementText(input.matchup)
+            ? [`Line movement: **${genesisLineMovementText(input.matchup)}**`]
+            : []),
           `ATS result: **${winnerText}**`,
           input.corrected
             ? "The corrected score has been re-graded and the Genesis Picks leaderboard recalculated."
@@ -1115,6 +1135,73 @@ type LeaderboardRow = {
   accuracy: number;
 };
 
+export type GenesisStreakRow = {
+  discordUserId: string;
+  discordUsername: string;
+  currentStreak: number;
+  longestWinStreak: number;
+  longestLossStreak: number;
+};
+
+export function genesisStreakRows(
+  state: GenesisPicksState,
+  seasonYear?: number
+): GenesisStreakRow[] {
+  const rows = new Map<string, GenesisStreakRow>();
+  const settled = [...state.matchups]
+    .filter(
+      (matchup) =>
+        matchup.status === "settled" &&
+        matchup.atsWinner &&
+        (seasonYear == null || matchup.seasonYear === seasonYear)
+    )
+    .sort((a, b) =>
+      (a.settledAt || a.createdAt).localeCompare(b.settledAt || b.createdAt)
+    );
+
+  for (const matchup of settled) {
+    if (matchup.atsWinner === "push") continue;
+
+    for (const pick of Object.values(matchup.picks || {})) {
+      const row =
+        rows.get(pick.discordUserId) ||
+        {
+          discordUserId: pick.discordUserId,
+          discordUsername: pick.discordUsername,
+          currentStreak: 0,
+          longestWinStreak: 0,
+          longestLossStreak: 0,
+        };
+      const won = pick.side === matchup.atsWinner;
+      row.discordUsername = pick.discordUsername || row.discordUsername;
+      row.currentStreak = won
+        ? row.currentStreak > 0
+          ? row.currentStreak + 1
+          : 1
+        : row.currentStreak < 0
+          ? row.currentStreak - 1
+          : -1;
+      row.longestWinStreak = Math.max(
+        row.longestWinStreak,
+        row.currentStreak > 0 ? row.currentStreak : 0
+      );
+      row.longestLossStreak = Math.max(
+        row.longestLossStreak,
+        row.currentStreak < 0 ? Math.abs(row.currentStreak) : 0
+      );
+      rows.set(pick.discordUserId, row);
+    }
+  }
+
+  return [...rows.values()];
+}
+
+function streakLabel(streak: number) {
+  if (streak >= 2) return ` · 🔥 W${streak}`;
+  if (streak <= -2) return ` · 🧊 L${Math.abs(streak)}`;
+  return "";
+}
+
 export type GenesisBankrollRow = {
   discordUserId: string;
   discordUsername: string;
@@ -1305,6 +1392,9 @@ function leaderboardRows(state: GenesisPicksState): LeaderboardRow[] {
 export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
   const state = seasonData.genesisPicks || { matchups: [] };
   const allRows = leaderboardRows(state);
+  const streaks = new Map(
+    genesisStreakRows(state).map((row) => [row.discordUserId, row.currentStreak])
+  );
   const gradedMatchupCount = state.matchups.filter(
     (matchup) => matchup.status === "settled" && matchup.atsWinner
   ).length;
@@ -1340,7 +1430,7 @@ export function buildGenesisLeaderboardContent(seasonData: SeasonData) {
     rows.slice(0, 25).forEach((row, index) => {
       const pct = (row.accuracy * 100).toFixed(1);
       lines.push(
-        `**${index + 1}.** <@${row.discordUserId}> — **${row.wins}-${row.losses}-${row.pushes}** · **${pct}%**`
+        `**${index + 1}.** <@${row.discordUserId}> — **${row.wins}-${row.losses}-${row.pushes}** · **${pct}%**${streakLabel(streaks.get(row.discordUserId) || 0)}`
       );
     });
   }
@@ -1396,6 +1486,245 @@ export function buildGenesisBankrollLeaderboardContent(
     "Bankroll recovery: +$25 for a PvP win and +$5 for a CPU win after bankroll play begins.",
     "Open wagers reserve bankroll until the game is settled or voided."
   );
+
+  return lines.join("\n").slice(0, 2000);
+}
+
+export function buildGenesisWeeklyRecapContent(
+  seasonData: SeasonData,
+  matchups: GenesisPickMatchup[],
+  dateLabel: string
+) {
+  const weeklyRows = new Map<
+    string,
+    {
+      wins: number;
+      losses: number;
+      pushes: number;
+      wagerNet: number;
+    }
+  >();
+  let biggestWinningWager:
+    | { discordUserId: string; wager: number; team: string }
+    | undefined;
+
+  for (const matchup of matchups) {
+    for (const pick of Object.values(matchup.picks || {})) {
+      const row = weeklyRows.get(pick.discordUserId) || {
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        wagerNet: 0,
+      };
+      const wager =
+        typeof pick.wager === "number" && Number.isFinite(pick.wager)
+          ? Math.max(0, Math.floor(pick.wager))
+          : 0;
+      if (matchup.atsWinner === "push") {
+        row.pushes++;
+      } else if (pick.side === matchup.atsWinner) {
+        row.wins++;
+        row.wagerNet += wager;
+        if (!biggestWinningWager || wager > biggestWinningWager.wager) {
+          biggestWinningWager = {
+            discordUserId: pick.discordUserId,
+            wager,
+            team:
+              pick.side === "away" ? matchup.awayTeam : matchup.homeTeam,
+          };
+        }
+      } else {
+        row.losses++;
+        row.wagerNet -= wager;
+      }
+      weeklyRows.set(pick.discordUserId, row);
+    }
+  }
+
+  const ranked = [...weeklyRows.entries()].sort((a, b) => {
+    const aDecisions = a[1].wins + a[1].losses;
+    const bDecisions = b[1].wins + b[1].losses;
+    const aAccuracy = aDecisions ? a[1].wins / aDecisions : 0;
+    const bAccuracy = bDecisions ? b[1].wins / bDecisions : 0;
+    return (
+      bAccuracy - aAccuracy ||
+      b[1].wins - a[1].wins ||
+      b[1].wagerNet - a[1].wagerNet
+    );
+  });
+  const streakRows = genesisStreakRows(
+    seasonData.genesisPicks || { matchups: [] }
+  );
+  const hottest = [...streakRows]
+    .filter((row) => row.currentStreak >= 2)
+    .sort((a, b) => b.currentStreak - a.currentStreak)[0];
+  const coldest = [...streakRows]
+    .filter((row) => row.currentStreak <= -2)
+    .sort((a, b) => a.currentStreak - b.currentStreak)[0];
+  const gameOfWeek = matchups.find((matchup) => matchup.isGameOfWeek);
+
+  const lines = [
+    "# 📰 GENESIS WEEKLY RECAP",
+    `**${dateLabel}** · ${matchups.length} final${matchups.length === 1 ? "" : "s"}`,
+    "",
+  ];
+
+  if (gameOfWeek) {
+    lines.push(
+      "## ⭐ Game of the Week",
+      `**${gameOfWeek.awayTeam} ${gameOfWeek.finalAwayScore ?? "?"} – ${gameOfWeek.homeTeam} ${gameOfWeek.finalHomeScore ?? "?"}**`,
+      `ATS winner: **${
+        gameOfWeek.atsWinner === "push"
+          ? "Push"
+          : gameOfWeek.atsWinner === "away"
+            ? gameOfWeek.awayTeam
+            : gameOfWeek.homeTeam
+      }**${genesisLineMovementText(gameOfWeek) ? ` · ${genesisLineMovementText(gameOfWeek)}` : ""}`,
+      ""
+    );
+  }
+
+  lines.push("## 🎯 Top Pickers");
+  if (!ranked.length) {
+    lines.push("No picks were graded last week.");
+  } else {
+    ranked.slice(0, 5).forEach(([discordUserId, row], index) => {
+      const decisions = row.wins + row.losses;
+      const accuracy = decisions ? ((row.wins / decisions) * 100).toFixed(0) : "0";
+      const money = `${row.wagerNet >= 0 ? "+" : "-"}$${Math.abs(row.wagerNet)}`;
+      lines.push(
+        `**${index + 1}.** <@${discordUserId}> — **${row.wins}-${row.losses}-${row.pushes}** · ${accuracy}% · **${money}**`
+      );
+    });
+  }
+
+  lines.push("", "## 🌡️ Streak Watch");
+  lines.push(
+    hottest
+      ? `🔥 Hot: <@${hottest.discordUserId}> — **${hottest.currentStreak} straight wins**`
+      : "🔥 No active hot streak of 2+ wins.",
+    coldest
+      ? `🧊 Cold: <@${coldest.discordUserId}> — **${Math.abs(coldest.currentStreak)} straight losses**`
+      : "🧊 No active cold streak of 2+ losses."
+  );
+
+  if (biggestWinningWager && biggestWinningWager.wager > 0) {
+    lines.push(
+      "",
+      `💵 **Biggest winning wager:** <@${biggestWinningWager.discordUserId}> won **$${biggestWinningWager.wager}** on **${biggestWinningWager.team}**.`
+    );
+  }
+
+  const movement = matchups.filter((matchup) =>
+    genesisLineMovementText(matchup)
+  );
+  if (movement.length) {
+    lines.push("", "## 📈 Line Movement");
+    movement.slice(0, 8).forEach((matchup) => {
+      lines.push(
+        `• **${matchup.awayTeam} ${matchup.neutral ? "vs." : "@"} ${matchup.homeTeam}:** ${genesisLineMovementText(matchup)}`
+      );
+    });
+  }
+
+  return lines.join("\n").slice(0, 2000);
+}
+
+export function buildGenesisSeasonTrophiesContent(
+  seasonData: SeasonData,
+  seasonYear: number
+) {
+  const state = seasonData.genesisPicks || { matchups: [] };
+  const yearMatchups = state.matchups.filter(
+    (matchup) =>
+      matchup.seasonYear === seasonYear && matchup.status === "settled"
+  );
+  const yearState: GenesisPicksState = { ...state, matchups: yearMatchups };
+  const accuracyRows = leaderboardRows(yearState);
+  const minimumPicks = yearMatchups.length
+    ? Math.ceil(yearMatchups.length / 3)
+    : 0;
+  const accuracyChampion = accuracyRows.find(
+    (row) => row.gradedPicks >= minimumPicks
+  );
+  const yearSeasonData: SeasonData = {
+    ...seasonData,
+    genesisPicks: yearState,
+    genesisHistory: seasonData.genesisHistory
+      ? {
+          ...seasonData.genesisHistory,
+          games: seasonData.genesisHistory.games.filter(
+            (game) => game.seasonYear == null || game.seasonYear === seasonYear
+          ),
+        }
+      : undefined,
+  };
+  const bankrollChampion = genesisBankrollRows(yearSeasonData)[0];
+  const streakChampion = genesisStreakRows(yearState, seasonYear).sort(
+    (a, b) => b.longestWinStreak - a.longestWinStreak
+  )[0];
+  let biggestWin:
+    | { discordUserId: string; wager: number; team: string }
+    | undefined;
+  const gameOfWeekRows = new Map<string, { wins: number; losses: number }>();
+
+  for (const matchup of yearMatchups) {
+    for (const pick of Object.values(matchup.picks || {})) {
+      const wager = Math.max(0, Math.floor(pick.wager || 0));
+      if (
+        matchup.atsWinner !== "push" &&
+        pick.side === matchup.atsWinner &&
+        (!biggestWin || wager > biggestWin.wager)
+      ) {
+        biggestWin = {
+          discordUserId: pick.discordUserId,
+          wager,
+          team: pick.side === "away" ? matchup.awayTeam : matchup.homeTeam,
+        };
+      }
+      if (matchup.isGameOfWeek && matchup.atsWinner !== "push") {
+        const row = gameOfWeekRows.get(pick.discordUserId) || {
+          wins: 0,
+          losses: 0,
+        };
+        if (pick.side === matchup.atsWinner) row.wins++;
+        else row.losses++;
+        gameOfWeekRows.set(pick.discordUserId, row);
+      }
+    }
+  }
+
+  const gameOfWeekChampion = [...gameOfWeekRows.entries()].sort(
+    (a, b) =>
+      b[1].wins - a[1].wins ||
+      a[1].losses - b[1].losses
+  )[0];
+  const accuracyPct = accuracyChampion
+    ? (accuracyChampion.accuracy * 100).toFixed(1)
+    : null;
+
+  const lines = [
+    `# 🏆 GENESIS ${seasonYear} SEASON TROPHIES`,
+    "*Presented after the National Championship*",
+    "",
+    accuracyChampion
+      ? `🎯 **Accuracy Champion:** <@${accuracyChampion.discordUserId}> — ${accuracyChampion.wins}-${accuracyChampion.losses}-${accuracyChampion.pushes} · **${accuracyPct}%**`
+      : "🎯 **Accuracy Champion:** No eligible player",
+    bankrollChampion
+      ? `💰 **Bankroll Champion:** <@${bankrollChampion.discordUserId}> — **$${bankrollChampion.bankroll}**`
+      : "💰 **Bankroll Champion:** No wagers recorded",
+    streakChampion?.longestWinStreak
+      ? `🔥 **Hottest Hand:** <@${streakChampion.discordUserId}> — **${streakChampion.longestWinStreak} straight wins**`
+      : "🔥 **Hottest Hand:** No winning streak recorded",
+    biggestWin && biggestWin.wager > 0
+      ? `💵 **Biggest Wager Win:** <@${biggestWin.discordUserId}> — **$${biggestWin.wager}** on ${biggestWin.team}`
+      : "💵 **Biggest Wager Win:** No winning wager recorded",
+    gameOfWeekChampion
+      ? `⭐ **Game of the Week Champion:** <@${gameOfWeekChampion[0]}> — **${gameOfWeekChampion[1].wins}-${gameOfWeekChampion[1].losses}**`
+      : "⭐ **Game of the Week Champion:** No Game of the Week picks recorded",
+    "",
+    `Eligibility for the accuracy trophy required at least **${minimumPicks}** graded pick${minimumPicks === 1 ? "" : "s"}.`,
+  ];
 
   return lines.join("\n").slice(0, 2000);
 }
@@ -1467,6 +1796,157 @@ async function findOrCreateLeaderboardChannel(
   }
 
   return { channel: (await createResponse.json()) as DiscordChannel };
+}
+
+export async function postGenesisWeeklyRecap(input: {
+  seasonData: SeasonData;
+  matchups: GenesisPickMatchup[];
+  dateLabel: string;
+}): Promise<{
+  seasonData: SeasonData;
+  posted: boolean;
+  warning?: string;
+}> {
+  if (!input.matchups.length) {
+    return { seasonData: input.seasonData, posted: false };
+  }
+
+  const state: GenesisPicksState = input.seasonData.genesisPicks || {
+    matchups: [],
+  };
+  const channelResult = await findOrCreateLeaderboardChannel(
+    state.leaderboardChannelId
+  );
+  if (!channelResult.channel) {
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning: channelResult.warning,
+    };
+  }
+
+  const response = await discordApi(
+    `/channels/${channelResult.channel.id}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: buildGenesisWeeklyRecapContent(
+          input.seasonData,
+          input.matchups,
+          input.dateLabel
+        ),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning: `Could not post the Genesis weekly recap: ${body || response.statusText}`,
+    };
+  }
+
+  return {
+    seasonData: {
+      ...input.seasonData,
+      genesisPicks: {
+        ...state,
+        leaderboardChannelId: channelResult.channel.id,
+      },
+    },
+    posted: true,
+  };
+}
+
+export async function maybePostGenesisSeasonTrophies(input: {
+  seasonData: SeasonData;
+  matchup: GenesisPickMatchup;
+}): Promise<{ seasonData: SeasonData; posted: boolean; warning?: string }> {
+  const stage = normalize(input.matchup.stage || input.matchup.threadName);
+  if (
+    input.matchup.status !== "settled" ||
+    !stage.includes("national championship")
+  ) {
+    return { seasonData: input.seasonData, posted: false };
+  }
+
+  const state: GenesisPicksState = input.seasonData.genesisPicks || {
+    matchups: [],
+  };
+  const channelResult = await findOrCreateLeaderboardChannel(
+    state.leaderboardChannelId
+  );
+  if (!channelResult.channel) {
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning: channelResult.warning,
+    };
+  }
+
+  const content = buildGenesisSeasonTrophiesContent(
+    input.seasonData,
+    input.matchup.seasonYear
+  );
+  const canEditExisting =
+    state.seasonTrophiesSeasonYear === input.matchup.seasonYear &&
+    Boolean(state.seasonTrophiesMessageId);
+  let messageId = canEditExisting
+    ? state.seasonTrophiesMessageId
+    : undefined;
+
+  if (messageId) {
+    const editResponse = await discordApi(
+      `/channels/${channelResult.channel.id}/messages/${messageId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] as string[] },
+        }),
+      }
+    );
+    if (!editResponse.ok) messageId = undefined;
+  }
+
+  if (!messageId) {
+    const postResponse = await discordApi(
+      `/channels/${channelResult.channel.id}/messages`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          content,
+          allowed_mentions: { parse: [] as string[] },
+        }),
+      }
+    );
+    if (!postResponse.ok) {
+      const body = await postResponse.text();
+      return {
+        seasonData: input.seasonData,
+        posted: false,
+        warning: `Could not post the Genesis season trophies: ${body || postResponse.statusText}`,
+      };
+    }
+    const message = (await postResponse.json()) as { id: string };
+    messageId = message.id;
+  }
+
+  return {
+    seasonData: {
+      ...input.seasonData,
+      genesisPicks: {
+        ...state,
+        leaderboardChannelId: channelResult.channel.id,
+        seasonTrophiesMessageId: messageId,
+        seasonTrophiesSeasonYear: input.matchup.seasonYear,
+        seasonTrophiesPostedAt: new Date().toISOString(),
+      },
+    },
+    posted: true,
+  };
 }
 
 export async function syncGenesisLeaderboard(

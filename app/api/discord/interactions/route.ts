@@ -17,6 +17,7 @@ import {
 } from "@/lib/discordPvpThreads";
 import {
   genesisAvailableBankroll,
+  maybePostGenesisSeasonTrophies,
   postGenesisFinalToThread,
   saveGenesisPick,
   settleGenesisMatchupByScore,
@@ -1856,7 +1857,19 @@ export async function POST(request: Request) {
       }
 
       const leaderboard = await syncGenesisLeaderboard(settledSeasonData);
-      const nextSeasonData = leaderboard.seasonData;
+      let nextSeasonData = leaderboard.seasonData;
+      let trophyWarning: string | undefined;
+      const championshipMatchup = nextSeasonData.genesisPicks?.matchups.find(
+        (item) => item.id === matchupId
+      );
+      if (championshipMatchup) {
+        const trophies = await maybePostGenesisSeasonTrophies({
+          seasonData: nextSeasonData,
+          matchup: championshipMatchup,
+        });
+        nextSeasonData = trophies.seasonData;
+        trophyWarning = trophies.warning;
+      }
 
       const { error: updateError } = await admin
         .from("seasons")
@@ -1881,8 +1894,8 @@ export async function POST(request: Request) {
 
       return ephemeral(
         isCorrection
-          ? `✏️ Final corrected: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks were re-graded, the leaderboard recalculated, and the corrected result saved for future lines.`
-          : `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded, the leaderboard updated, and the result saved for future lines.`
+          ? `✏️ Final corrected: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks were re-graded, the leaderboard recalculated, and the corrected result saved for future lines.${trophyWarning ? ` Trophy warning: ${trophyWarning}` : ""}`
+          : `🏁 Final saved: **${matchup.awayTeam} ${awayScore} – ${matchup.homeTeam} ${homeScore}**. Genesis picks have been graded, the leaderboard updated, and the result saved for future lines.${trophyWarning ? ` Trophy warning: ${trophyWarning}` : ""}`
       );
     }
 

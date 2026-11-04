@@ -6,6 +6,7 @@ import {
   postGenesisFinalScorePrompt,
   postGenesisKickoffReminder,
   postGenesisScheduledLockNotice,
+  postGenesisWeeklyRecap,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
   syncGenesisStarterButtons,
@@ -31,6 +32,7 @@ import {
 const FIRE_WINDOW_MINUTES = 90;
 const GENESIS_FINAL_PROMPT_DELAY_MS = 60 * 60 * 1000;
 const GENESIS_KICKOFF_REMINDER_LEAD_MS = 30 * 60 * 1000;
+const GENESIS_WEEKLY_RECAP_MINUTE = 9 * 60;
 
 function nowInTimeZone(timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -68,6 +70,38 @@ function nowInTimeZone(timeZone: string) {
 function timeToMinutes(time: string) {
   const [hour, minute] = time.split(":").map(Number);
   return hour * 60 + (minute || 0);
+}
+
+function dateKeyForTimestamp(timestamp: string, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(timestamp));
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function shiftDateKey(dateKey: string, days: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days, 12))
+    .toISOString()
+    .slice(0, 10);
+}
+
+function recapDateLabel(startDateKey: string, endDateKey: string) {
+  const format = (dateKey: string, includeYear: boolean) => {
+    const [year, month, day] = dateKey.split("-").map(Number);
+    return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      ...(includeYear ? { year: "numeric" } : {}),
+      timeZone: "UTC",
+    }).format(new Date(Date.UTC(year, month - 1, day, 12)));
+  };
+  return `${format(startDateKey, false)} – ${format(endDateKey, true)}`;
 }
 
 function isDue(
@@ -123,6 +157,7 @@ export async function GET(request: Request) {
   let genesisFinalPromptCount = 0;
   let genesisKickoffReminderCount = 0;
   let genesisScheduledLockCount = 0;
+  let genesisWeeklyRecapCount = 0;
   const nowMs = Date.now();
 
   for (const row of seasons || []) {
@@ -279,6 +314,40 @@ export async function GET(request: Request) {
       }
     }
 
+    const weeklyRecapDue =
+      dayOfWeek === 1 &&
+      minutesOfDay >= GENESIS_WEEKLY_RECAP_MINUTE &&
+      minutesOfDay < GENESIS_WEEKLY_RECAP_MINUTE + FIRE_WINDOW_MINUTES &&
+      nextGenesisPicks?.weeklyRecapLastSentDate !== dateKey;
+
+    if (weeklyRecapDue && nextGenesisPicks) {
+      const weekStartDateKey = shiftDateKey(dateKey, -7);
+      const weekEndDateKey = shiftDateKey(dateKey, -1);
+      const recapMatchups = nextGenesisPicks.matchups.filter((matchup) => {
+        if (matchup.status !== "settled" || !matchup.settledAt) return false;
+        const settledDateKey = dateKeyForTimestamp(
+          matchup.settledAt,
+          REMINDER_TIMEZONE
+        );
+        return settledDateKey >= weekStartDateKey && settledDateKey < dateKey;
+      });
+      const recap = await postGenesisWeeklyRecap({
+        seasonData: { ...seasonData, genesisPicks: nextGenesisPicks },
+        matchups: recapMatchups,
+        dateLabel: recapDateLabel(weekStartDateKey, weekEndDateKey),
+      });
+
+      if (recap.posted || recapMatchups.length === 0) {
+        nextGenesisPicks = {
+          ...nextGenesisPicks,
+          ...recap.seasonData.genesisPicks,
+          weeklyRecapLastSentDate: dateKey,
+        };
+        if (recap.posted) genesisWeeklyRecapCount++;
+        changed = true;
+      }
+    }
+
     if (changed) {
       await admin
         .from("seasons")
@@ -299,5 +368,6 @@ export async function GET(request: Request) {
     genesisFinalPrompts: genesisFinalPromptCount,
     genesisKickoffReminders: genesisKickoffReminderCount,
     genesisScheduledLocks: genesisScheduledLockCount,
+    genesisWeeklyRecaps: genesisWeeklyRecapCount,
   });
 }

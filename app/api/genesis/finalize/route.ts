@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import type { SeasonData } from "@/lib/season";
 import {
+  maybePostGenesisSeasonTrophies,
   postGenesisFinalToThread,
   settleGenesisMatchupByScore,
   syncGenesisLeaderboard,
@@ -152,6 +153,18 @@ export async function POST(request: Request) {
 
   const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
   nextSeasonData = leaderboard.seasonData;
+  let trophyWarning: string | undefined;
+  const championshipMatchup = nextSeasonData.genesisPicks?.matchups.find(
+    (item) => item.id === matchupId
+  );
+  if (championshipMatchup) {
+    const trophies = await maybePostGenesisSeasonTrophies({
+      seasonData: nextSeasonData,
+      matchup: championshipMatchup,
+    });
+    nextSeasonData = trophies.seasonData;
+    trophyWarning = trophies.warning;
+  }
 
   const { error: updateError } = await admin
     .from("seasons")
@@ -182,5 +195,6 @@ export async function POST(request: Request) {
     historyGameId: settled.matchup.sourceGameId,
     leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
     leaderboardWarning: leaderboard.warning,
+    trophyWarning,
   });
 }

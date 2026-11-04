@@ -31,6 +31,7 @@ type PvpThreadPayload = {
   stage?: string;
   seasonYear?: number;
   awayLineOverride?: number;
+  isGameOfWeek?: boolean;
   postStreamInstructions?: boolean;
 };
 
@@ -152,8 +153,12 @@ export async function POST(request: Request) {
         ? buildGenesisPickComponents(seasonId, matchupId, line)
         : [];
 
+    const lineMovement =
+      generatedLine && line
+        ? `📈 **Line movement:** Model **${generatedLine.displayLine}** → Final **${line.displayLine}**`
+        : null;
     const starterMessage = line
-      ? `${genesisStarterMessage(threadName, line)}\n\n🎯 **Make your pick and wager:** choose a side, then enter a whole-dollar wager from your available **$500 starting bankroll**. 🔒 Your side and wager lock immediately.\n👀 **Public wagers:** after submission, your selected side and exact wager amount appear in the shared picks-and-wagers summary for everyone.\n💵 **Bankroll recovery:** your actual league team earns you **+$25 for a PvP win** or **+$5 for a CPU win**.\n🚫 If your team is playing in this matchup, you cannot wager on this game.`
+      ? `${payload.isGameOfWeek ? "⭐ **GENESIS GAME OF THE WEEK**\n\n" : ""}${genesisStarterMessage(threadName, line)}${lineMovement ? `\n\n${lineMovement}` : ""}\n\n🎯 **Make your pick and wager:** choose a side, then enter a whole-dollar wager from your available **$500 starting bankroll**. 🔒 Your side and wager lock immediately.\n👀 **Public wagers:** after submission, your selected side and exact wager amount appear in the shared picks-and-wagers summary for everyone.\n💵 **Bankroll recovery:** your actual league team earns you **+$25 for a PvP win** or **+$5 for a CPU win**.\n🚫 If your team is playing in this matchup, you cannot wager on this game.`
       : undefined;
 
     const mappedAwayRoleId = awayTeam
@@ -243,13 +248,36 @@ export async function POST(request: Request) {
           seasonWeek: nextSeasonData.currentWeek,
           stage,
           line,
+          modelLine: generatedLine,
+          isGameOfWeek: Boolean(payload.isGameOfWeek),
           starterMessageId: result.starterMessageId,
         }),
         teamRoleIds: result.taggedRoleIds,
       };
 
       const summary = await syncGenesisPickSummary(matchup);
-      pickSummaryWarning = summary.warning;
+      const summaryWarnings = summary.warning ? [summary.warning] : [];
+      const priorMatchups = payload.isGameOfWeek
+        ? await Promise.all(
+            currentPicks.matchups.map(async (item) => {
+              if (
+                item.seasonWeek !== nextSeasonData.currentWeek ||
+                !item.isGameOfWeek
+              ) {
+                return item;
+              }
+              const displaced = await syncGenesisPickSummary(
+                { ...item, isGameOfWeek: false },
+                { createIfMissing: false }
+              );
+              if (displaced.warning) summaryWarnings.push(displaced.warning);
+              return displaced.matchup;
+            })
+          )
+        : currentPicks.matchups;
+      pickSummaryWarning = summaryWarnings.length
+        ? summaryWarnings.join(" ")
+        : undefined;
 
       nextSeasonData = {
         ...nextSeasonData,
@@ -257,7 +285,7 @@ export async function POST(request: Request) {
           ...currentPicks,
           bankrollStartedAt:
             currentPicks.bankrollStartedAt || new Date().toISOString(),
-          matchups: [...currentPicks.matchups, summary.matchup],
+          matchups: [...priorMatchups, summary.matchup],
         },
       };
     }
@@ -287,6 +315,7 @@ export async function POST(request: Request) {
       taggedPlayers: result.taggedUserIds.length,
       taggedTeamRoles: result.taggedRoleIds.length,
       line,
+      isGameOfWeek: Boolean(payload.isGameOfWeek),
       leaderboardChannelId: nextSeasonData.genesisPicks?.leaderboardChannelId,
       leaderboardWarning: leaderboard.warning,
       streamInstructionsPosted,

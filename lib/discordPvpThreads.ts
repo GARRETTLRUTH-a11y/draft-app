@@ -55,6 +55,26 @@ export async function deleteGenesisPvpThread(threadId: string) {
   );
 }
 
+export function genesisPvpSidebarThreadName(
+  threadName: string,
+  isGameOfWeek: boolean
+) {
+  const baseName = threadName.replace(/^⭐\s*/u, "").trim();
+  return `${isGameOfWeek ? "⭐ " : ""}${baseName}`.slice(0, 100);
+}
+
+export async function renameGenesisPvpThread(
+  threadId: string,
+  threadName: string
+) {
+  const response = await discordApi(`/channels/${threadId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: threadName.slice(0, 100) }),
+  });
+
+  return response.ok;
+}
+
 export type PvpThreadCreateResult = {
   thread: { id: string; name?: string };
   starterMessageId?: string;

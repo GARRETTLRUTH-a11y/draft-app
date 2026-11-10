@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import {
   createGenesisPvpThread,
+  genesisPvpSidebarThreadName,
   postGenesisPvpThreadMessage,
 } from "@/lib/discordPvpThreads";
 import {
@@ -160,6 +161,10 @@ export async function POST(request: Request) {
     const starterMessage = line
       ? `${payload.isGameOfWeek ? "⭐ **GENESIS GAME OF THE WEEK**\n\n" : ""}${genesisStarterMessage(threadName, line)}${lineMovement ? `\n\n${lineMovement}` : ""}\n\n🎯 **Make your pick and wager:** choose a side, then enter a whole-dollar wager from your available **$500 starting bankroll**. 🔒 Your side and wager lock immediately.\n👀 **Public wagers:** after submission, your selected side and exact wager amount appear in the shared picks-and-wagers summary for everyone.\n💵 **Bankroll recovery:** your actual league team earns you **+$25 for a PvP win** or **+$5 for a CPU win**.\n🚫 If your team is playing in this matchup, you cannot wager on this game.`
       : undefined;
+    const sidebarThreadName = genesisPvpSidebarThreadName(
+      threadName,
+      Boolean(payload.isGameOfWeek)
+    );
 
     const mappedAwayRoleId = awayTeam
       ? nextSeasonData.discordTeamRoleIds?.[awayTeam]
@@ -177,7 +182,7 @@ export async function POST(request: Request) {
     ].filter((value): value is string => Boolean(value));
 
     const result = await createGenesisPvpThread(
-      threadName,
+      sidebarThreadName,
       starterMessage,
       [],
       pickComponents,

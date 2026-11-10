@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { buildDiscordMessage } from "@/lib/discordMessages";
 import { sendDiscordMessage } from "@/lib/discordSend";
 import {
+  genesisPvpSidebarThreadName,
+  renameGenesisPvpThread,
+} from "@/lib/discordPvpThreads";
+import {
   postGenesisFinalScorePrompt,
   postGenesisKickoffReminder,
   postGenesisScheduledLockNotice,
@@ -158,6 +162,7 @@ export async function GET(request: Request) {
   let genesisKickoffReminderCount = 0;
   let genesisScheduledLockCount = 0;
   let genesisWeeklyRecapCount = 0;
+  let genesisGameOfWeekRenameCount = 0;
   const nowMs = Date.now();
 
   for (const row of seasons || []) {
@@ -228,6 +233,22 @@ export async function GET(request: Request) {
 
       for (const originalMatchup of seasonData.genesisPicks.matchups) {
         let matchup = originalMatchup;
+
+        const desiredSidebarName = genesisPvpSidebarThreadName(
+          matchup.threadName,
+          Boolean(matchup.isGameOfWeek)
+        );
+        if (desiredSidebarName !== matchup.threadName) {
+          const renamed = await renameGenesisPvpThread(
+            matchup.threadId,
+            desiredSidebarName
+          );
+          if (renamed) {
+            matchup = { ...matchup, threadName: desiredSidebarName };
+            genesisGameOfWeekRenameCount++;
+            changed = true;
+          }
+        }
 
         const kickoffMs = matchup.scheduledKickoffAt
           ? new Date(matchup.scheduledKickoffAt).getTime()
@@ -369,5 +390,6 @@ export async function GET(request: Request) {
     genesisKickoffReminders: genesisKickoffReminderCount,
     genesisScheduledLocks: genesisScheduledLockCount,
     genesisWeeklyRecaps: genesisWeeklyRecapCount,
+    genesisGameOfWeekRenames: genesisGameOfWeekRenameCount,
   });
 }

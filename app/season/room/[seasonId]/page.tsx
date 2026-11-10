@@ -3734,7 +3734,7 @@ export default function SeasonRoomPage() {
                     Post /stream instructions in the game thread
                   </span>
                   <span className="mt-0.5 block text-xs text-slate-400">
-                    RTA will remind the matchup players to use /stream with their YouTube/Twitch link when the game starts, which closes Genesis voting at the locked line.
+                    RTA will let either matchup player or the commissioner use /stream with a YouTube/Twitch link when the game starts, which closes Genesis voting at the locked line.
                   </span>
                 </span>
               </label>

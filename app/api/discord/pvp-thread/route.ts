@@ -220,7 +220,7 @@ export async function POST(request: Request) {
             "Either matchup player or the commissioner can use **/schedule** in this thread to set or update kickoff. **/kickoff** remains available as an alias. Choose the date, time, and time zone when you run the command.",
             "RTA will show the kickoff in each Discord user's local time, post a reminder about 30 minutes before kickoff, and auto-lock Genesis picks at kickoff unless the commissioner disabled auto-lock.",
             "",
-            "When the game is about to start, one of the two matchup players should use **/stream** in this thread and paste the YouTube or Twitch link.",
+            "When the game is about to start, either matchup player or the commissioner can use **/stream** in this thread and paste the YouTube or Twitch link.",
             "",
             "Using **/stream** will:",
             "• post the stream publicly in this game thread",

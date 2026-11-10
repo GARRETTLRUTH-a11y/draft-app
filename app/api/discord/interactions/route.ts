@@ -1098,7 +1098,8 @@ export async function POST(request: Request) {
   }
 
   // Slash command: /stream <YouTube/Twitch URL>
-  // Must be run by one of the two matchup players inside that game's thread.
+  // May be run by the season commissioner or one of the two matchup players
+  // inside that game's thread. Posting the link immediately locks all picks.
   if (interaction.type === 2 && interaction.data?.name === "stream") {
     if (!discordUserId) {
       return ephemeral("Couldn't identify your Discord account.");
@@ -1123,12 +1124,20 @@ export async function POST(request: Request) {
     );
     if ("error" in resolved) return respondToResolveError(resolved);
 
-    const { seasonId, seasonData, matchup } = resolved;
-    const roleAuth = await authorizeGenesisMatchupRole(
+    const {
+      seasonId,
+      commissionerUserId,
+      seasonData,
+      matchup,
+    } = resolved;
+    const roleAuth = await authorizeGenesisScheduleOrFinal(
+      admin,
       matchup,
       interaction.guild_id,
       interaction.member?.roles,
-      seasonData.discordTeamRoleIds
+      seasonData.discordTeamRoleIds,
+      commissionerUserId,
+      discordUserId
     );
     if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -1291,11 +1300,14 @@ export async function POST(request: Request) {
       if ("error" in resolved) return respondToResolveError(resolved);
 
       const matchup = resolved.matchup;
-      const roleAuth = await authorizeGenesisMatchupRole(
+      const roleAuth = await authorizeGenesisScheduleOrFinal(
+        admin,
         matchup,
         interaction.guild_id,
         interaction.member?.roles,
-        resolved.seasonData.discordTeamRoleIds
+        resolved.seasonData.discordTeamRoleIds,
+        resolved.commissionerUserId,
+        discordUserId
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 
@@ -1938,11 +1950,14 @@ export async function POST(request: Request) {
         return ephemeral("That Genesis matchup could not be found.");
       }
 
-      const roleAuth = await authorizeGenesisMatchupRole(
+      const roleAuth = await authorizeGenesisScheduleOrFinal(
+        admin,
         matchup,
         interaction.guild_id,
         interaction.member?.roles,
-        resolved.seasonData.discordTeamRoleIds
+        resolved.seasonData.discordTeamRoleIds,
+        resolved.commissionerUserId,
+        discordUserId
       );
       if (!roleAuth.ok) return ephemeral(roleAuth.error);
 

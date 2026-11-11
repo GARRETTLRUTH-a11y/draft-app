@@ -74,8 +74,9 @@ export async function registerGenesisStreamCommand() {
         {
           type: 3,
           name: "date",
-          description: "Kickoff date, e.g. 2026-10-10 or 10/10/2026",
+          description: "Choose Today/Tomorrow or enter a specific kickoff date",
           required: true,
+          autocomplete: true,
         },
         {
           type: 3,
@@ -108,8 +109,9 @@ export async function registerGenesisStreamCommand() {
         {
           type: 3,
           name: "date",
-          description: "Kickoff date, e.g. 2026-10-10 or 10/10/2026",
+          description: "Choose Today/Tomorrow or enter a specific kickoff date",
           required: true,
+          autocomplete: true,
         },
         {
           type: 3,

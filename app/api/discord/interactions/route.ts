@@ -216,6 +216,52 @@ function parseModalDate(raw: string): string | null {
   return null;
 }
 
+function relativeDateInTimeZone(daysFromToday: number, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  const parts = Object.fromEntries(
+    formatter
+      .formatToParts(new Date())
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value])
+  );
+  const date = new Date(
+    Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + daysFromToday)
+  );
+  return date.toISOString().slice(0, 10);
+}
+
+function parseKickoffDate(raw: string, timeZone: string): string | null {
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === "today") return relativeDateInTimeZone(0, timeZone);
+  if (normalized === "tomorrow") return relativeDateInTimeZone(1, timeZone);
+  return parseModalDate(raw);
+}
+
+function kickoffDateAutocomplete(timeZone: string, query: string) {
+  const choices = [
+    {
+      name: `Today — ${relativeDateInTimeZone(0, timeZone)}`,
+      value: relativeDateInTimeZone(0, timeZone),
+    },
+    {
+      name: `Tomorrow — ${relativeDateInTimeZone(1, timeZone)}`,
+      value: relativeDateInTimeZone(1, timeZone),
+    },
+  ];
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return choices;
+  return choices.filter(
+    (choice) =>
+      choice.name.toLowerCase().includes(normalized) ||
+      choice.value.startsWith(normalized)
+  );
+}
+
 const GENESIS_KICKOFF_TIME_ZONES = new Set([
   "America/New_York",
   "America/Chicago",
@@ -366,7 +412,12 @@ type DiscordInteraction = {
   data?: {
     name?: string;
     custom_id?: string;
-    options?: { name?: string; type?: number; value?: string | number | boolean }[];
+    options?: {
+      name?: string;
+      type?: number;
+      value?: string | number | boolean;
+      focused?: boolean;
+    }[];
     components?: { components?: { custom_id?: string; value?: string }[] }[];
   };
 };
@@ -874,6 +925,31 @@ export async function POST(request: Request) {
     return NextResponse.json({ type: 1 });
   }
 
+  // Date autocomplete for /schedule and /kickoff. Discord still accepts any
+  // manually entered date; these are simply fast, clickable suggestions.
+  if (
+    interaction.type === 4 &&
+    (interaction.data?.name === "kickoff" || interaction.data?.name === "schedule")
+  ) {
+    const focused = interaction.data.options?.find((option) => option.focused);
+    if (focused?.name === "date") {
+      const selectedTimeZone = interaction.data.options?.find(
+        (option) => option.name === "timezone"
+      )?.value;
+      const timeZone =
+        typeof selectedTimeZone === "string" &&
+        GENESIS_KICKOFF_TIME_ZONES.has(selectedTimeZone)
+          ? selectedTimeZone
+          : "America/New_York";
+      const query = typeof focused.value === "string" ? focused.value : "";
+      return NextResponse.json({
+        type: 8,
+        data: { choices: kickoffDateAutocomplete(timeZone, query) },
+      });
+    }
+    return NextResponse.json({ type: 8, data: { choices: [] } });
+  }
+
   const discordUser = interaction.member?.user ?? interaction.user;
   const discordUserId = discordUser?.id;
   const discordUsername = discordUser?.username;
@@ -935,19 +1011,24 @@ export async function POST(request: Request) {
       (option) => option.name === "timezone"
     )?.value;
 
-    const date =
-      typeof rawDate === "string" ? parseModalDate(rawDate) : null;
-    const time =
-      typeof rawTime === "string" ? parseKickoffTime(rawTime) : null;
     const timeZone =
       typeof rawTimeZone === "string" &&
       GENESIS_KICKOFF_TIME_ZONES.has(rawTimeZone)
         ? rawTimeZone
         : null;
+    const date =
+      typeof rawDate === "string" && timeZone
+        ? parseKickoffDate(rawDate, timeZone)
+        : null;
+    const time =
+      typeof rawTime === "string" ? parseKickoffTime(rawTime) : null;
 
+    if (!timeZone) {
+      return ephemeral("Choose a kickoff time zone from the list.");
+    }
     if (!date) {
       return ephemeral(
-        "Enter the kickoff date as YYYY-MM-DD or M/D/YYYY."
+        "Choose Today or Tomorrow, or enter the kickoff date as YYYY-MM-DD or M/D/YYYY."
       );
     }
     if (!time) {
@@ -955,10 +1036,6 @@ export async function POST(request: Request) {
         "Enter the kickoff time as HH:MM (24-hour) or H:MM AM/PM."
       );
     }
-    if (!timeZone) {
-      return ephemeral("Choose a kickoff time zone from the list.");
-    }
-
     const resolved = await resolveGenesisMatchupForThread(
       admin,
       interaction.channel_id

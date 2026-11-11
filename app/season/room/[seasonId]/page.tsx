@@ -1115,6 +1115,10 @@ export default function SeasonRoomPage() {
         lastSyncedAt?: string;
         achievements?: number;
         syncMode?: "full" | "incremental";
+        newCpuWinCredits?: number;
+        cpuWinCreditDollars?: number;
+        bankrollLeaderboardUpdated?: boolean;
+        leaderboardWarning?: string;
       } = {};
 
       if (responseText) {
@@ -1137,12 +1141,26 @@ export default function SeasonRoomPage() {
       await loadRoomSeason(season.id);
 
       if (result.syncMode === "incremental") {
+        const cpuCreditText =
+          (result.newCpuWinCredits ?? 0) > 0
+            ? ` · added ${result.newCpuWinCredits} CPU-win credit${result.newCpuWinCredits === 1 ? "" : "s"} (+$${result.cpuWinCreditDollars ?? (result.newCpuWinCredits ?? 0) * 5})`
+            : "";
+        const leaderboardText = result.bankrollLeaderboardUpdated
+          ? " · #genesis-picks balances updated"
+          : "";
         setGenesisHistoryStatus(
-          `✅ Checked for new history: scanned ${result.messagesScanned ?? 0} new Discord message${(result.messagesScanned ?? 0) === 1 ? "" : "s"} · ${result.games ?? 0} total games and ${result.achievements ?? 0} postseason achievements stored.`
+          `✅ Checked for new history: scanned ${result.messagesScanned ?? 0} new Discord message${(result.messagesScanned ?? 0) === 1 ? "" : "s"} · ${result.games ?? 0} total games and ${result.achievements ?? 0} postseason achievements stored${cpuCreditText}${leaderboardText}.${
+            result.leaderboardWarning ? ` ${result.leaderboardWarning}` : ""
+          }`
         );
       } else {
+        const leaderboardText = result.bankrollLeaderboardUpdated
+          ? " · #genesis-picks balances updated"
+          : "";
         setGenesisHistoryStatus(
-          `✅ Full history sync complete: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages.`
+          `✅ Full history sync complete: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages${leaderboardText}.${
+            result.leaderboardWarning ? ` ${result.leaderboardWarning}` : ""
+          }`
         );
       }
     } catch (error) {

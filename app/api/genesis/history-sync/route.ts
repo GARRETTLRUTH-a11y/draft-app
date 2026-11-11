@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { syncGenesisHistory } from "@/lib/genesisLines";
 import {
+  genesisBankrollRows,
   settleGenesisPicksFromHistory,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
@@ -69,12 +70,16 @@ export async function POST(request: Request) {
 
   try {
     const seasonData = season.season_data as SeasonData;
+    const previousBankrollRows = genesisBankrollRows(seasonData);
+    const previousCpuWins = new Map(
+      previousBankrollRows.map((row) => [row.discordUserId, row.cpuWins])
+    );
     const requestedMode = payload.mode === "incremental" ? "incremental" : "full";
     const history = await syncGenesisHistory(seasonData, { mode: requestedMode });
     const withHistory: SeasonData = { ...seasonData, genesisHistory: history };
     const settled = settleGenesisPicksFromHistory(withHistory);
     let nextSeasonData = settled.seasonData;
-    let leaderboardWarning: string | undefined;
+    let bankrollLeaderboardUpdated = false;
 
     for (const matchupId of settled.settledMatchupIds) {
       const settledMatchup = nextSeasonData.genesisPicks?.matchups.find(
@@ -108,11 +113,21 @@ export async function POST(request: Request) {
       );
     }
 
-    if (settled.settledCount > 0 || nextSeasonData.genesisPicks?.leaderboardChannelId) {
-      const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
-      nextSeasonData = leaderboard.seasonData;
-      leaderboardWarning = leaderboard.warning;
-    }
+    // History is the source of truth for the $5 CPU-win recovery credit.
+    // Always republish the Discord leaderboards after a manual history check,
+    // even when this pass did not settle a PvP wager. This makes the public
+    // #genesis-picks balances reflect newly imported CPU results immediately.
+    const leaderboard = await syncGenesisLeaderboard(nextSeasonData);
+    nextSeasonData = leaderboard.seasonData;
+    const leaderboardWarning = leaderboard.warning;
+    bankrollLeaderboardUpdated = leaderboard.bankrollUpdated;
+
+    const updatedBankrollRows = genesisBankrollRows(nextSeasonData);
+    const newCpuWinCredits = updatedBankrollRows.reduce(
+      (total, row) =>
+        total + Math.max(0, row.cpuWins - (previousCpuWins.get(row.discordUserId) || 0)),
+      0
+    );
 
     const { error: updateError } = await admin
       .from("seasons")
@@ -135,6 +150,9 @@ export async function POST(request: Request) {
       achievements: history.postseasonAchievements?.length ?? 0,
       syncMode: history.lastSyncMode,
       settledPicks: settled.settledCount,
+      newCpuWinCredits,
+      cpuWinCreditDollars: newCpuWinCredits * 5,
+      bankrollLeaderboardUpdated,
       leaderboardWarning,
     });
   } catch (error) {

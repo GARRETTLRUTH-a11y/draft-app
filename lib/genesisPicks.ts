@@ -1951,14 +1951,24 @@ export async function maybePostGenesisSeasonTrophies(input: {
 
 export async function syncGenesisLeaderboard(
   seasonData: SeasonData
-): Promise<{ seasonData: SeasonData; warning?: string }> {
+): Promise<{
+  seasonData: SeasonData;
+  warning?: string;
+  accuracyUpdated: boolean;
+  bankrollUpdated: boolean;
+}> {
   const state: GenesisPicksState = seasonData.genesisPicks || { matchups: [] };
   const channelResult = await findOrCreateLeaderboardChannel(
     state.leaderboardChannelId
   );
 
   if (!channelResult.channel) {
-    return { seasonData, warning: channelResult.warning };
+    return {
+      seasonData,
+      warning: channelResult.warning,
+      accuracyUpdated: false,
+      bankrollUpdated: false,
+    };
   }
 
   const channelId = channelResult.channel.id;
@@ -2044,5 +2054,7 @@ export async function syncGenesisLeaderboard(
       },
     },
     warning: warnings.length ? warnings.join(" ") : undefined,
+    accuracyUpdated: !accuracyResult.warning,
+    bankrollUpdated: !bankrollResult.warning,
   };
 }

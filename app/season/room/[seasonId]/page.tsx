@@ -1078,7 +1078,12 @@ export default function SeasonRoomPage() {
     }
   }
 
-  async function syncGenesisHistory(mode: "full" | "incremental" = "full") {
+  async function syncGenesisHistory(
+    mode: "full" | "incremental" = "full",
+    trigger: "manual" | "advance" = "manual",
+    fromStage?: string,
+    toStage?: string
+  ) {
     if (!season) return;
 
     setIsSyncingGenesisHistory(true);
@@ -1104,7 +1109,13 @@ export default function SeasonRoomPage() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ seasonId: season.id, mode }),
+        body: JSON.stringify({
+          seasonId: season.id,
+          mode,
+          trigger,
+          fromStage,
+          toStage,
+        }),
       });
 
       const responseText = await response.text();
@@ -1115,8 +1126,11 @@ export default function SeasonRoomPage() {
         lastSyncedAt?: string;
         achievements?: number;
         syncMode?: "full" | "incremental";
+        newPvpWinCredits?: number;
+        pvpWinCreditDollars?: number;
         newCpuWinCredits?: number;
         cpuWinCreditDollars?: number;
+        historyMoneyNotificationPosted?: boolean;
         bankrollLeaderboardUpdated?: boolean;
         leaderboardWarning?: string;
       } = {};
@@ -1141,15 +1155,22 @@ export default function SeasonRoomPage() {
       await loadRoomSeason(season.id);
 
       if (result.syncMode === "incremental") {
+        const pvpCreditText =
+          (result.newPvpWinCredits ?? 0) > 0
+            ? ` · added ${result.newPvpWinCredits} PvP-win credit${result.newPvpWinCredits === 1 ? "" : "s"} (+${result.pvpWinCreditDollars ?? (result.newPvpWinCredits ?? 0) * 25})`
+            : "";
         const cpuCreditText =
           (result.newCpuWinCredits ?? 0) > 0
-            ? ` · added ${result.newCpuWinCredits} CPU-win credit${result.newCpuWinCredits === 1 ? "" : "s"} (+$${result.cpuWinCreditDollars ?? (result.newCpuWinCredits ?? 0) * 5})`
+            ? ` · added ${result.newCpuWinCredits} CPU-win credit${result.newCpuWinCredits === 1 ? "" : "s"} (+${result.cpuWinCreditDollars ?? (result.newCpuWinCredits ?? 0) * 5})`
             : "";
+        const moneyNoticeText = result.historyMoneyNotificationPosted
+          ? " · money summary posted to #genesis-picks"
+          : "";
         const leaderboardText = result.bankrollLeaderboardUpdated
           ? " · #genesis-picks balances updated"
           : "";
         setGenesisHistoryStatus(
-          `✅ Checked for new history: scanned ${result.messagesScanned ?? 0} new Discord message${(result.messagesScanned ?? 0) === 1 ? "" : "s"} · ${result.games ?? 0} total games and ${result.achievements ?? 0} postseason achievements stored${cpuCreditText}${leaderboardText}.${
+          `✅ Checked for new history: scanned ${result.messagesScanned ?? 0} new Discord message${(result.messagesScanned ?? 0) === 1 ? "" : "s"} · ${result.games ?? 0} total games and ${result.achievements ?? 0} postseason achievements stored${pvpCreditText}${cpuCreditText}${leaderboardText}${moneyNoticeText}.${
             result.leaderboardWarning ? ` ${result.leaderboardWarning}` : ""
           }`
         );
@@ -1157,18 +1178,24 @@ export default function SeasonRoomPage() {
         const leaderboardText = result.bankrollLeaderboardUpdated
           ? " · #genesis-picks balances updated"
           : "";
+        const moneyNoticeText = result.historyMoneyNotificationPosted
+          ? " · money summary posted to #genesis-picks"
+          : "";
         setGenesisHistoryStatus(
-          `✅ Full history sync complete: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages${leaderboardText}.${
+          `✅ Full history sync complete: ${result.games ?? 0} games and ${result.achievements ?? 0} postseason achievements stored from ${result.messagesScanned ?? 0} Discord messages${leaderboardText}${moneyNoticeText}.${
             result.leaderboardWarning ? ` ${result.leaderboardWarning}` : ""
           }`
         );
       }
+
+      return result;
     } catch (error) {
       setGenesisHistoryStatus(
         error instanceof Error
           ? `Could not sync Genesis history: ${error.message}`
           : "Could not sync Genesis history. Try again."
       );
+      return null;
     } finally {
       setIsSyncingGenesisHistory(false);
       setGenesisHistorySyncMode(null);
@@ -2851,7 +2878,29 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    setMessage(`Advanced to ${formatWeekLabel(updated.currentWeek)}. Posting to Discord...`);
+    const fromStage =
+      seasonData.periodLabel?.trim() || formatWeekLabel(currentWeek);
+    const toStage =
+      updated.periodLabel?.trim() || formatWeekLabel(updated.currentWeek);
+
+    setMessage(
+      `Advanced to ${formatWeekLabel(updated.currentWeek)}. Updating league history...`
+    );
+
+    // Advancing always performs the same incremental Genesis history refresh
+    // as the commissioner history control. This imports newly posted PvP/CPU
+    // finals, updates bankroll recovery bonuses, refreshes #genesis-picks,
+    // and posts the money-added summary there before the new-week nudge.
+    const historyResult = await syncGenesisHistory(
+      "incremental",
+      "advance",
+      fromStage,
+      toStage
+    );
+
+    setMessage(
+      `Advanced to ${formatWeekLabel(updated.currentWeek)}. Posting new-week prompt to Discord...`
+    );
 
     // Auto-post so everyone gets a fresh "I'm Ready" prompt for the new
     // week immediately, instead of waiting on the next scheduled reminder.
@@ -2865,10 +2914,14 @@ export default function SeasonRoomPage() {
       pingEveryone: true,
     });
 
+    const historyText = historyResult
+      ? " League history was updated and the Genesis money summary was sent to #genesis-picks."
+      : " League history refresh failed; use Update League History to retry.";
+
     setMessage(
       posted
-        ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.`
-        : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post to Discord.`
+        ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.${historyText}`
+        : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post the new-week prompt to Discord.${historyText}`
     );
   }
 

@@ -1328,6 +1328,53 @@ export function genesisBankrollRows(
   );
 }
 
+export type GenesisWinBonusDelta = {
+  discordUserId: string;
+  discordUsername: string;
+  pvpWinsAdded: number;
+  cpuWinsAdded: number;
+  pvpDollarsAdded: number;
+  cpuDollarsAdded: number;
+  totalDollarsAdded: number;
+};
+
+export function genesisWinBonusDeltas(
+  previousSeasonData: SeasonData,
+  nextSeasonData: SeasonData
+): GenesisWinBonusDelta[] {
+  const previous = new Map(
+    genesisBankrollRows(previousSeasonData).map((row) => [
+      row.discordUserId,
+      row,
+    ])
+  );
+
+  return genesisBankrollRows(nextSeasonData)
+    .map((row) => {
+      const before = previous.get(row.discordUserId);
+      const pvpWinsAdded = Math.max(0, row.pvpWins - (before?.pvpWins || 0));
+      const cpuWinsAdded = Math.max(0, row.cpuWins - (before?.cpuWins || 0));
+      const pvpDollarsAdded = pvpWinsAdded * 25;
+      const cpuDollarsAdded = cpuWinsAdded * 5;
+
+      return {
+        discordUserId: row.discordUserId,
+        discordUsername: row.discordUsername,
+        pvpWinsAdded,
+        cpuWinsAdded,
+        pvpDollarsAdded,
+        cpuDollarsAdded,
+        totalDollarsAdded: pvpDollarsAdded + cpuDollarsAdded,
+      };
+    })
+    .filter((row) => row.totalDollarsAdded > 0)
+    .sort(
+      (a, b) =>
+        b.totalDollarsAdded - a.totalDollarsAdded ||
+        a.discordUsername.localeCompare(b.discordUsername)
+    );
+}
+
 export function genesisAvailableBankroll(
   seasonData: SeasonData,
   discordUserId: string
@@ -1796,6 +1843,128 @@ async function findOrCreateLeaderboardChannel(
   }
 
   return { channel: (await createResponse.json()) as DiscordChannel };
+}
+
+export async function postGenesisHistoryMoneyUpdate(input: {
+  seasonData: SeasonData;
+  deltas: GenesisWinBonusDelta[];
+  trigger: "manual" | "advance";
+  fromStage?: string;
+  toStage?: string;
+}): Promise<{
+  seasonData: SeasonData;
+  posted: boolean;
+  warning?: string;
+}> {
+  const state: GenesisPicksState = input.seasonData.genesisPicks || {
+    matchups: [],
+  };
+  const channelResult = await findOrCreateLeaderboardChannel(
+    state.leaderboardChannelId
+  );
+
+  if (!channelResult.channel) {
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning: channelResult.warning,
+    };
+  }
+
+  const pvpWinsAdded = input.deltas.reduce(
+    (total, row) => total + row.pvpWinsAdded,
+    0
+  );
+  const cpuWinsAdded = input.deltas.reduce(
+    (total, row) => total + row.cpuWinsAdded,
+    0
+  );
+  const pvpDollarsAdded = input.deltas.reduce(
+    (total, row) => total + row.pvpDollarsAdded,
+    0
+  );
+  const cpuDollarsAdded = input.deltas.reduce(
+    (total, row) => total + row.cpuDollarsAdded,
+    0
+  );
+  const totalDollarsAdded = pvpDollarsAdded + cpuDollarsAdded;
+
+  const lines = [
+    input.trigger === "advance"
+      ? "⏭️ **WEEK ADVANCED — LEAGUE HISTORY UPDATED**"
+      : "🔄 **LEAGUE HISTORY UPDATED**",
+  ];
+
+  if (input.trigger === "advance" && (input.fromStage || input.toStage)) {
+    lines.push(
+      `**${input.fromStage || "Previous stage"} → ${input.toStage || "Next stage"}**`
+    );
+  }
+
+  lines.push(
+    "",
+    "💵 **Bankroll recovery money added**",
+    `PvP wins: **+${pvpDollarsAdded}** · ${pvpWinsAdded} win${pvpWinsAdded === 1 ? "" : "s"} × $25`,
+    `CPU wins: **+${cpuDollarsAdded}** · ${cpuWinsAdded} win${cpuWinsAdded === 1 ? "" : "s"} × $5`,
+    `**Total added: +${totalDollarsAdded}**`
+  );
+
+  if (input.deltas.length) {
+    lines.push("", "**Player credits**");
+    for (const row of input.deltas.slice(0, 25)) {
+      const parts: string[] = [];
+      if (row.pvpDollarsAdded > 0) {
+        parts.push(
+          `+${row.pvpDollarsAdded} PvP (${row.pvpWinsAdded})`
+        );
+      }
+      if (row.cpuDollarsAdded > 0) {
+        parts.push(
+          `+${row.cpuDollarsAdded} CPU (${row.cpuWinsAdded})`
+        );
+      }
+      lines.push(
+        `• <@${row.discordUserId}> — **+${row.totalDollarsAdded}** · ${parts.join(" · ")}`
+      );
+    }
+  } else {
+    lines.push(
+      "",
+      "No new PvP or CPU win bonuses were found in this history refresh."
+    );
+  }
+
+  const response = await discordApi(
+    `/channels/${channelResult.channel.id}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: lines.join("\n").slice(0, 2000),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning:
+        `Could not post the Genesis history money update: ${body || response.statusText}`,
+    };
+  }
+
+  return {
+    seasonData: {
+      ...input.seasonData,
+      genesisPicks: {
+        ...state,
+        leaderboardChannelId: channelResult.channel.id,
+      },
+    },
+    posted: true,
+  };
 }
 
 export async function postGenesisWeeklyRecap(input: {

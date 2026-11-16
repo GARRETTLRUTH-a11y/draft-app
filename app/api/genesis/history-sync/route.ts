@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabaseClient";
 import { syncGenesisHistory } from "@/lib/genesisLines";
 import {
-  genesisBankrollRows,
+  genesisWinBonusDeltas,
+  postGenesisHistoryMoneyUpdate,
   settleGenesisPicksFromHistory,
   syncGenesisLeaderboard,
   syncGenesisPickSummary,
@@ -16,6 +17,9 @@ export const maxDuration = 300;
 type Payload = {
   seasonId?: string;
   mode?: "full" | "incremental";
+  trigger?: "manual" | "advance";
+  fromStage?: string;
+  toStage?: string;
 };
 
 export async function POST(request: Request) {
@@ -70,10 +74,6 @@ export async function POST(request: Request) {
 
   try {
     const seasonData = season.season_data as SeasonData;
-    const previousBankrollRows = genesisBankrollRows(seasonData);
-    const previousCpuWins = new Map(
-      previousBankrollRows.map((row) => [row.discordUserId, row.cpuWins])
-    );
     const requestedMode = payload.mode === "incremental" ? "incremental" : "full";
     const history = await syncGenesisHistory(seasonData, { mode: requestedMode });
     const withHistory: SeasonData = { ...seasonData, genesisHistory: history };
@@ -122,12 +122,40 @@ export async function POST(request: Request) {
     const leaderboardWarning = leaderboard.warning;
     bankrollLeaderboardUpdated = leaderboard.bankrollUpdated;
 
-    const updatedBankrollRows = genesisBankrollRows(nextSeasonData);
-    const newCpuWinCredits = updatedBankrollRows.reduce(
-      (total, row) =>
-        total + Math.max(0, row.cpuWins - (previousCpuWins.get(row.discordUserId) || 0)),
+    const winBonusDeltas = genesisWinBonusDeltas(
+      seasonData,
+      nextSeasonData
+    );
+    const newPvpWinCredits = winBonusDeltas.reduce(
+      (total, row) => total + row.pvpWinsAdded,
       0
     );
+    const newCpuWinCredits = winBonusDeltas.reduce(
+      (total, row) => total + row.cpuWinsAdded,
+      0
+    );
+    const pvpWinCreditDollars = winBonusDeltas.reduce(
+      (total, row) => total + row.pvpDollarsAdded,
+      0
+    );
+    const cpuWinCreditDollars = winBonusDeltas.reduce(
+      (total, row) => total + row.cpuDollarsAdded,
+      0
+    );
+
+    const moneyNotice = await postGenesisHistoryMoneyUpdate({
+      seasonData: nextSeasonData,
+      deltas: winBonusDeltas,
+      trigger: payload.trigger === "advance" ? "advance" : "manual",
+      fromStage: payload.fromStage?.trim() || undefined,
+      toStage: payload.toStage?.trim() || undefined,
+    });
+    nextSeasonData = moneyNotice.seasonData;
+
+    const combinedWarnings = [
+      leaderboardWarning,
+      moneyNotice.warning,
+    ].filter((warning): warning is string => Boolean(warning));
 
     const { error: updateError } = await admin
       .from("seasons")
@@ -150,10 +178,15 @@ export async function POST(request: Request) {
       achievements: history.postseasonAchievements?.length ?? 0,
       syncMode: history.lastSyncMode,
       settledPicks: settled.settledCount,
+      newPvpWinCredits,
+      pvpWinCreditDollars,
       newCpuWinCredits,
-      cpuWinCreditDollars: newCpuWinCredits * 5,
+      cpuWinCreditDollars,
+      historyMoneyNotificationPosted: moneyNotice.posted,
       bankrollLeaderboardUpdated,
-      leaderboardWarning,
+      leaderboardWarning: combinedWarnings.length
+        ? combinedWarnings.join(" ")
+        : undefined,
     });
   } catch (error) {
     const message =

@@ -1845,6 +1845,128 @@ async function findOrCreateLeaderboardChannel(
   return { channel: (await createResponse.json()) as DiscordChannel };
 }
 
+export async function postGenesisHistoryMoneyUpdate(input: {
+  seasonData: SeasonData;
+  deltas: GenesisWinBonusDelta[];
+  trigger: "manual" | "advance";
+  fromStage?: string;
+  toStage?: string;
+}): Promise<{
+  seasonData: SeasonData;
+  posted: boolean;
+  warning?: string;
+}> {
+  const state: GenesisPicksState = input.seasonData.genesisPicks || {
+    matchups: [],
+  };
+  const channelResult = await findOrCreateLeaderboardChannel(
+    state.leaderboardChannelId
+  );
+
+  if (!channelResult.channel) {
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning: channelResult.warning,
+    };
+  }
+
+  const pvpWinsAdded = input.deltas.reduce(
+    (total, row) => total + row.pvpWinsAdded,
+    0
+  );
+  const cpuWinsAdded = input.deltas.reduce(
+    (total, row) => total + row.cpuWinsAdded,
+    0
+  );
+  const pvpDollarsAdded = input.deltas.reduce(
+    (total, row) => total + row.pvpDollarsAdded,
+    0
+  );
+  const cpuDollarsAdded = input.deltas.reduce(
+    (total, row) => total + row.cpuDollarsAdded,
+    0
+  );
+  const totalDollarsAdded = pvpDollarsAdded + cpuDollarsAdded;
+
+  const lines = [
+    input.trigger === "advance"
+      ? "⏭️ **WEEK ADVANCED — LEAGUE HISTORY UPDATED**"
+      : "🔄 **LEAGUE HISTORY UPDATED**",
+  ];
+
+  if (input.trigger === "advance" && (input.fromStage || input.toStage)) {
+    lines.push(
+      `**${input.fromStage || "Previous stage"} → ${input.toStage || "Next stage"}**`
+    );
+  }
+
+  lines.push(
+    "",
+    "💵 **Bankroll recovery money added**",
+    `PvP wins: **+${pvpDollarsAdded}** · ${pvpWinsAdded} win${pvpWinsAdded === 1 ? "" : "s"} × $25`,
+    `CPU wins: **+${cpuDollarsAdded}** · ${cpuWinsAdded} win${cpuWinsAdded === 1 ? "" : "s"} × $5`,
+    `**Total added: +${totalDollarsAdded}**`
+  );
+
+  if (input.deltas.length) {
+    lines.push("", "**Player credits**");
+    for (const row of input.deltas.slice(0, 25)) {
+      const parts: string[] = [];
+      if (row.pvpDollarsAdded > 0) {
+        parts.push(
+          `+${row.pvpDollarsAdded} PvP (${row.pvpWinsAdded})`
+        );
+      }
+      if (row.cpuDollarsAdded > 0) {
+        parts.push(
+          `+${row.cpuDollarsAdded} CPU (${row.cpuWinsAdded})`
+        );
+      }
+      lines.push(
+        `• <@${row.discordUserId}> — **+${row.totalDollarsAdded}** · ${parts.join(" · ")}`
+      );
+    }
+  } else {
+    lines.push(
+      "",
+      "No new PvP or CPU win bonuses were found in this history refresh."
+    );
+  }
+
+  const response = await discordApi(
+    `/channels/${channelResult.channel.id}/messages`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        content: lines.join("\n").slice(0, 2000),
+        allowed_mentions: { parse: [] as string[] },
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    const body = await response.text();
+    return {
+      seasonData: input.seasonData,
+      posted: false,
+      warning:
+        `Could not post the Genesis history money update: ${body || response.statusText}`,
+    };
+  }
+
+  return {
+    seasonData: {
+      ...input.seasonData,
+      genesisPicks: {
+        ...state,
+        leaderboardChannelId: channelResult.channel.id,
+      },
+    },
+    posted: true,
+  };
+}
+
 export async function postGenesisWeeklyRecap(input: {
   seasonData: SeasonData;
   matchups: GenesisPickMatchup[];

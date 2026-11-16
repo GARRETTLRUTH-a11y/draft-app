@@ -1328,6 +1328,53 @@ export function genesisBankrollRows(
   );
 }
 
+export type GenesisWinBonusDelta = {
+  discordUserId: string;
+  discordUsername: string;
+  pvpWinsAdded: number;
+  cpuWinsAdded: number;
+  pvpDollarsAdded: number;
+  cpuDollarsAdded: number;
+  totalDollarsAdded: number;
+};
+
+export function genesisWinBonusDeltas(
+  previousSeasonData: SeasonData,
+  nextSeasonData: SeasonData
+): GenesisWinBonusDelta[] {
+  const previous = new Map(
+    genesisBankrollRows(previousSeasonData).map((row) => [
+      row.discordUserId,
+      row,
+    ])
+  );
+
+  return genesisBankrollRows(nextSeasonData)
+    .map((row) => {
+      const before = previous.get(row.discordUserId);
+      const pvpWinsAdded = Math.max(0, row.pvpWins - (before?.pvpWins || 0));
+      const cpuWinsAdded = Math.max(0, row.cpuWins - (before?.cpuWins || 0));
+      const pvpDollarsAdded = pvpWinsAdded * 25;
+      const cpuDollarsAdded = cpuWinsAdded * 5;
+
+      return {
+        discordUserId: row.discordUserId,
+        discordUsername: row.discordUsername,
+        pvpWinsAdded,
+        cpuWinsAdded,
+        pvpDollarsAdded,
+        cpuDollarsAdded,
+        totalDollarsAdded: pvpDollarsAdded + cpuDollarsAdded,
+      };
+    })
+    .filter((row) => row.totalDollarsAdded > 0)
+    .sort(
+      (a, b) =>
+        b.totalDollarsAdded - a.totalDollarsAdded ||
+        a.discordUsername.localeCompare(b.discordUsername)
+    );
+}
+
 export function genesisAvailableBankroll(
   seasonData: SeasonData,
   discordUserId: string

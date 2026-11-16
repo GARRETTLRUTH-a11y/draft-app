@@ -2878,7 +2878,29 @@ export default function SeasonRoomPage() {
       return;
     }
 
-    setMessage(`Advanced to ${formatWeekLabel(updated.currentWeek)}. Posting to Discord...`);
+    const fromStage =
+      seasonData.periodLabel?.trim() || formatWeekLabel(currentWeek);
+    const toStage =
+      updated.periodLabel?.trim() || formatWeekLabel(updated.currentWeek);
+
+    setMessage(
+      `Advanced to ${formatWeekLabel(updated.currentWeek)}. Updating league history...`
+    );
+
+    // Advancing always performs the same incremental Genesis history refresh
+    // as the commissioner history control. This imports newly posted PvP/CPU
+    // finals, updates bankroll recovery bonuses, refreshes #genesis-picks,
+    // and posts the money-added summary there before the new-week nudge.
+    const historyResult = await syncGenesisHistory(
+      "incremental",
+      "advance",
+      fromStage,
+      toStage
+    );
+
+    setMessage(
+      `Advanced to ${formatWeekLabel(updated.currentWeek)}. Posting new-week prompt to Discord...`
+    );
 
     // Auto-post so everyone gets a fresh "I'm Ready" prompt for the new
     // week immediately, instead of waiting on the next scheduled reminder.
@@ -2892,10 +2914,14 @@ export default function SeasonRoomPage() {
       pingEveryone: true,
     });
 
+    const historyText = historyResult
+      ? " League history was updated and the Genesis money summary was sent to #genesis-picks."
+      : " League history refresh failed; use Update League History to retry.";
+
     setMessage(
       posted
-        ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.`
-        : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post to Discord.`
+        ? `Advanced to ${formatWeekLabel(updated.currentWeek)} and posted to Discord.${historyText}`
+        : `Advanced to ${formatWeekLabel(updated.currentWeek)}, but couldn't post the new-week prompt to Discord.${historyText}`
     );
   }
 
